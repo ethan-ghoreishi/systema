@@ -1,0 +1,11 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="systema">
+  <rect width="512" height="512" fill="#1f6f6b" />
+  <g stroke="#faf9f6" stroke-width="22" stroke-linecap="round" fill="none">
+    <line x1="256" y1="92" x2="256" y2="420" />
+    <line x1="92" y1="256" x2="420" y2="256" />
+    <line x1="150" y1="150" x2="362" y2="362" opacity="0.4" />
+    <line x1="362" y1="150" x2="150" y2="362" opacity="0.4" />
+  </g>
+  <circle cx="256" cy="256" r="48" fill="#faf9f6" />
+  <circle cx="256" cy="256" r="20" fill="#1f6f6b" />
+</svg>
