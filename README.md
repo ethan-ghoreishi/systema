@@ -79,20 +79,18 @@ change `prodBase` to `'/'` in `vite.config.ts`.
 
 ## Deploy
 
-The repo is committed locally on `main`. To publish to GitHub Pages:
+Live at **https://ethan-ghoreishi.github.io/systema/**. The
+[workflow](.github/workflows/deploy.yml) builds and deploys on every push to
+`main` — just `git push`.
 
-```bash
-# Create a private GitHub repo named `systema` (empty — no README/licence), then:
-git remote add origin git@github.com:<you>/systema.git
-git push -u origin main
-```
+Hosting notes:
 
-Then on GitHub: **Settings → Pages → Build and deployment → Source: GitHub
-Actions**. The [workflow](.github/workflows/deploy.yml) builds and deploys on
-every push to `main`; the app lands at `https://<you>.github.io/systema/`.
-
-If the repo name isn't `systema`, set `prodBase` in `vite.config.ts` to
-`/<repo>/` to match.
+- GitHub Pages is free for **public** repos. On the Free plan a **private** repo
+  can't use Pages — either keep it public (this repo has no secrets; the capture
+  URL/token live only on-device) or host the private repo on **Cloudflare Pages**
+  (also free, the brief's named alternative).
+- If the repo name isn't `systema`, set `prodBase` in `vite.config.ts` to
+  `/<repo>/` so the Pages base path matches.
 
 ## Project structure
 
