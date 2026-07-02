@@ -218,16 +218,15 @@
 />
 
 <div class="modal">
-  <button class="modal-backdrop" aria-label="Close" onclick={onClose}></button>
   <div class="modal-sheet">
+    <!-- Action bar pinned at the top: Cancel (left), Save (right). Always
+         reachable, keyboard or not — the native iOS form pattern. -->
     <header class="modal-head">
+      <button class="btn btn--ghost btn--sm modal-cancel" onclick={onClose}>Cancel</button>
       <h2 class="modal-title">{expense && !expense.skeleton ? 'Edit expense' : 'Add expense'}</h2>
-      <div class="modal-head-actions">
-        <!-- Save lives in the header too, so it stays reachable even when the
-             on-screen keyboard covers the footer. -->
-        <button class="btn btn--primary btn--sm" onclick={save} disabled={!canSave}>Save</button>
-        <button class="icon-btn" aria-label="Close" onclick={onClose}><Icon name="back" /></button>
-      </div>
+      <button class="btn btn--primary btn--sm modal-save" onclick={save} disabled={!canSave}
+        >Save</button
+      >
     </header>
 
     <div class="modal-body">
@@ -364,16 +363,12 @@
         {receiptFile ? 'Receipt attached' : 'Add receipt photo'}
         <input type="file" accept="image/*" capture="environment" hidden onchange={onReceipt} />
       </label>
-    </div>
 
-    <footer class="modal-foot">
       {#if expense}
-        <button class="btn btn--danger" onclick={remove} aria-label="Delete expense">
-          <Icon name="trash" size={18} />
+        <button class="btn btn--danger delete-expense" onclick={remove}>
+          <Icon name="trash" size={18} /> Delete {expense.skeleton ? 'row' : 'expense'}
         </button>
       {/if}
-      <button class="btn btn--ghost" onclick={onClose}>Cancel</button>
-      <button class="btn btn--primary" onclick={save} disabled={!canSave}>Save</button>
-    </footer>
+    </div>
   </div>
 </div>

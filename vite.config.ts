@@ -17,6 +17,9 @@ export default defineConfig(({ command, mode }) => {
 
   return {
     base: command === 'build' ? prodBase : '/',
+    // Honour an assigned PORT (the preview harness sets one when 5173 is taken);
+    // fall back to Vite's default otherwise.
+    server: { port: process.env.PORT ? Number(process.env.PORT) : 5173 },
     define: {
       __APP_VERSION__: JSON.stringify(pkg.version),
     },

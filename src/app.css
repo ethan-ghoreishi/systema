@@ -923,85 +923,72 @@ textarea.field {
 
 /* ---------- Capture modal ---------- */
 
+/*
+ * Full-screen capture sheet with the action bar pinned at the TOP (Cancel /
+ * Save). The top bar is the one place that never gets covered by the on-screen
+ * keyboard, and it follows the native iOS "Cancel … Save" form convention.
+ * Height is the dynamic viewport (with a vh fallback for older iOS) so the sheet
+ * fits the visible area exactly rather than running behind the browser chrome.
+ */
 .modal {
   position: fixed;
   inset: 0;
   z-index: 50;
+  height: 100vh;
+  height: 100dvh;
   display: flex;
-  align-items: flex-end;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.4);
-}
-
-.modal-backdrop {
-  position: absolute;
-  inset: 0;
-  background: none;
-  border: none;
-  cursor: default;
+  background: var(--paper);
 }
 
 .modal-sheet {
-  position: relative;
-  z-index: 1;
   width: 100%;
   max-width: var(--app-max);
-  /* vh fallback first — without it, older iOS ignored the cap and the sheet
-     grew past the screen, hiding the Save/Cancel footer. */
-  max-height: 92vh;
-  max-height: 94dvh;
+  height: 100%;
+  min-height: 0;
   background: var(--paper);
-  border-radius: var(--r-lg) var(--r-lg) 0 0;
+  border-inline: 1px solid var(--hairline);
   display: grid;
-  grid-template-rows: auto 1fr auto;
-  overflow: hidden;
-}
-
-.modal-head-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+  grid-template-rows: auto 1fr;
 }
 
 .modal-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 10px 8px 10px 16px;
+  gap: var(--s2);
+  padding: calc(env(safe-area-inset-top) + 10px) 12px 10px;
   border-bottom: 1px solid var(--hairline);
 }
 
 .modal-title {
-  font-size: 17px;
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+  font-size: 16px;
   font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modal-cancel,
+.modal-save {
+  flex: 0 0 auto;
 }
 
 .modal-body {
-  min-height: 0; /* let the 1fr grid row actually shrink so this pane scrolls */
+  min-height: 0; /* let the 1fr grid row shrink so this pane actually scrolls */
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
-  padding: var(--s4) var(--s4) var(--s6);
+  padding: var(--s4) var(--s4) calc(env(safe-area-inset-bottom) + var(--s6));
   display: flex;
   flex-direction: column;
   gap: 14px;
 }
 
-.modal-foot {
-  display: flex;
-  gap: 10px;
-  padding: 12px 16px calc(env(safe-area-inset-bottom) + 12px);
-  border-top: 1px solid var(--hairline);
-}
-
-.modal-foot .btn {
-  flex: 1;
-}
-
-.modal-foot .btn--danger {
-  flex: 0 0 auto;
-  min-width: var(--tap);
-  padding: 0 14px;
+.delete-expense {
+  margin-top: var(--s2);
 }
 
 .amount-display {
