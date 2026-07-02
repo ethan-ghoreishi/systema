@@ -115,6 +115,29 @@ export function categorySummary(expenses: Expense[]): CategoryTotal[] {
 }
 
 /**
+ * Assign Transaction# for the sheet. Rows already synced keep the number they
+ * were sent with (`syncedNo`; legacy rows without one are backfilled by
+ * position), and pending rows continue from the highest number used — so sheet
+ * numbering stays stable even after local deletes or reorders.
+ */
+export function assignTransactionNumbers(real: Expense[]): Map<string, number> {
+  const map = new Map<string, number>();
+  let max = 0;
+  for (const e of real) {
+    if (!e.synced) continue;
+    const n = e.syncedNo ?? max + 1;
+    map.set(e.id, n);
+    if (n > max) max = n;
+  }
+  for (const e of real) {
+    if (e.synced) continue;
+    max += 1;
+    map.set(e.id, max);
+  }
+  return map;
+}
+
+/**
  * Flag an obvious local↔GBP mismatch: a non-GBP expense whose implied rate is
  * wildly different from the one recorded. Deliberately loose — just a nudge.
  */

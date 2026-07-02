@@ -10,12 +10,31 @@ import { formatGBP } from './money';
  * for your own backup, not an AI contract.
  */
 
-/** Build the trip pack Markdown. Pure given the trip's data. */
+/** Minimal photo info the pack needs (no blobs). */
+export interface PackPhoto {
+  stopId: string | null;
+  createdAt: number;
+}
+
+function photoStamp(ms: number): string {
+  const d = new Date(ms);
+  const date = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+  const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  return `${date}, ${time}`;
+}
+
+/**
+ * Build the trip pack Markdown. Pure given the trip's data.
+ *
+ * Photos are listed (stop + time), not embedded: base64 images would bloat the
+ * file far past what can be pasted into a chat, and pasted Markdown can't carry
+ * viewable images anyway. Attach the photos themselves in Claude if wanted.
+ */
 export function buildTripPack(
   trip: Trip,
   stops: Stop[],
   expenses: Expense[],
-  photoCounts: Record<string, number>,
+  photos: PackPhoto[],
 ): string {
   const lines: string[] = [];
   lines.push(`# Trip pack: ${trip.name}`, '');
@@ -28,16 +47,28 @@ export function buildTripPack(
   }
 
   const orderedStops = [...stops].sort((a, b) => a.order - b.order);
+  const stopPhotos = photos.filter((p) => p.stopId != null);
   if (orderedStops.length) {
     lines.push('## Stops', '');
     for (const s of orderedStops) {
       lines.push(`### ${s.name}${s.visited ? ' (visited)' : ''}`);
       for (const item of s.checklist) lines.push(`- [${item.done ? 'x' : ' '}] ${item.text}`);
       if (s.notes.trim()) lines.push('', s.notes.trim());
-      const pc = photoCounts[s.id] ?? 0;
+      const pc = stopPhotos.filter((p) => p.stopId === s.id).length;
       if (pc) lines.push('', `_${pc} photo${pc > 1 ? 's' : ''}_`);
       lines.push('');
     }
+  }
+
+  if (stopPhotos.length) {
+    const nameById = new Map(stops.map((s) => [s.id, s.name]));
+    lines.push('## Photos', '');
+    for (const p of [...stopPhotos].sort((a, b) => a.createdAt - b.createdAt)) {
+      lines.push(
+        `- ${nameById.get(p.stopId as string) ?? 'Unassigned'}: ${photoStamp(p.createdAt)}`,
+      );
+    }
+    lines.push('');
   }
 
   const real = realExpenses(expenses);

@@ -39,13 +39,23 @@ subscription.**
 
 ## App shape
 
-- **Home** — list of trips; create one by picking a type.
+- **Home** — current trips up top; trips marked Done shelve into a **Past trips**
+  journal section (everything kept: plan, stops, notes, photos, expenses,
+  journal).
 - Inside a trip, four tabs only:
   1. **Plan** — your pasted itinerary, rendered and readable offline, with an
-     auto contents list and a departure-time countdown at the top.
+     auto contents list and a departure-time countdown at the top. A
+     **Research prompt** builder pre-fills a copy-ready Claude prompt from the
+     trip's details and asks for a route format the app imports automatically.
+     Once a journal is saved, the tab grows a Plan | Journal toggle.
   2. **Stops** — an ordered, tickable checklist of places with notes and photos.
+     One tap **extracts the stops (with notes) from the pasted plan** —
+     deterministic heading parsing, deduped, re-runnable.
   3. **Expenses** — two-tap capture and a running total, matching your sheet.
-  4. **Export** — a trip pack for journaling, plus a full JSON backup.
+     Rows can be edited or deleted; the capture sheet is append-only, so the
+     app flags rows edited/deleted after sync for manual reconciliation.
+  4. **Export** — journaling prompt prefilled with the trip pack, journal
+     paste-back, plus a full JSON backup/import.
 - **Settings** (gear on Home) — the capture web app URL/token and storage status.
 
 ## Develop
@@ -134,8 +144,9 @@ src/
     vocab.ts               Expense controlled vocabularies
     fx.ts                  Frankfurter FX + local cache
     sync.ts                Apps Script POST + offline queue
-    stops.ts               Stop + checklist mutations, heading split
+    stops.ts               Stop + checklist mutations, plan extraction
     photos.ts              Photo blobs (add / delete / offload)
+    prompt.ts              Research-prompt builder (pure text assembly)
     export.ts              Trip pack + JSON backup/import
     download.ts            Clipboard + file download helpers
 apps-script/Code.gs        Capture web app (append-only, one sheet)

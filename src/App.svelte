@@ -6,6 +6,7 @@
   import Settings from './routes/Settings.svelte';
   import Trip from './routes/Trip.svelte';
   import TripEdit from './routes/TripEdit.svelte';
+  import PromptBuilder from './routes/PromptBuilder.svelte';
   import NotFound from './routes/NotFound.svelte';
   import UpdateToast from './components/UpdateToast.svelte';
   import { router } from './lib/router.svelte';
@@ -18,6 +19,7 @@
     | { name: 'settings' }
     | { name: 'trip'; id: string; tab: string }
     | { name: 'tripEdit'; id: string }
+    | { name: 'prompt'; id: string }
     | { name: 'notfound' };
 
   const view = $derived.by<View>(() => {
@@ -27,6 +29,7 @@
     if (seg[0] === 'settings') return { name: 'settings' };
     if (seg[0] === 'trip' && seg[1]) {
       if (seg[2] === 'edit') return { name: 'tripEdit', id: seg[1] };
+      if (seg[2] === 'prompt') return { name: 'prompt', id: seg[1] };
       return { name: 'trip', id: seg[1], tab: seg[2] ?? 'plan' };
     }
     return { name: 'notfound' };
@@ -56,6 +59,10 @@
   {:else if view.name === 'tripEdit'}
     {#key view.id}
       <TripEdit id={view.id} />
+    {/key}
+  {:else if view.name === 'prompt'}
+    {#key view.id}
+      <PromptBuilder id={view.id} />
     {/key}
   {:else}
     <NotFound />

@@ -27,6 +27,7 @@
   const total = $derived(tripTotalGBP(expenses));
   const summary = $derived(categorySummary(expenses));
   const pending = $derived(real.filter((e) => !e.synced).length);
+  const editedCount = $derived(real.filter((e) => e.synced && e.editedAfterSync).length);
 
   const hasUrl = $derived(settingsStore.current.webAppUrl.trim() !== '');
   const presetSkeletonCount = $derived(presetByType(trip.type).skeleton.length);
@@ -115,6 +116,12 @@
         Append subtotal row
       </button>
     </div>
+    {#if editedCount > 0}
+      <p class="hint hint--warn">
+        {editedCount} row{editedCount > 1 ? 's were' : ' was'} edited after syncing. The sheet is append-only,
+        so amend {editedCount > 1 ? 'those rows' : 'that row'} there when you reconcile.
+      </p>
+    {/if}
     {#if statusMsg}<p class="hint">{statusMsg}</p>{/if}
   </div>
 
@@ -140,6 +147,11 @@
             {/if}
           </span>
           {#if looksAnomalous(e)}<span class="flag" title="Local/GBP look mismatched">!</span>{/if}
+          {#if e.synced && e.editedAfterSync}
+            <span class="pill pill--edited" title="Edited after sync — amend the sheet row"
+              >edited</span
+            >
+          {/if}
           {#if !e.synced}<span class="dot-pending" title="Not yet synced"></span>{/if}
         </button>
       {/each}

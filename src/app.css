@@ -138,6 +138,8 @@ a {
 .app-shell {
   max-width: var(--app-max);
   margin: 0 auto;
+  /* vh fallback first: older iOS Safari has no dvh, which silently broke heights. */
+  height: 100vh;
   height: 100dvh;
   background: var(--paper);
   border-inline: 1px solid var(--hairline);
@@ -944,12 +946,21 @@ textarea.field {
   z-index: 1;
   width: 100%;
   max-width: var(--app-max);
+  /* vh fallback first — without it, older iOS ignored the cap and the sheet
+     grew past the screen, hiding the Save/Cancel footer. */
+  max-height: 92vh;
   max-height: 94dvh;
   background: var(--paper);
   border-radius: var(--r-lg) var(--r-lg) 0 0;
   display: grid;
   grid-template-rows: auto 1fr auto;
   overflow: hidden;
+}
+
+.modal-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .modal-head {
@@ -966,9 +977,11 @@ textarea.field {
 }
 
 .modal-body {
+  min-height: 0; /* let the 1fr grid row actually shrink so this pane scrolls */
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
-  padding: var(--s4);
+  overscroll-behavior: contain;
+  padding: var(--s4) var(--s4) var(--s6);
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -983,6 +996,12 @@ textarea.field {
 
 .modal-foot .btn {
   flex: 1;
+}
+
+.modal-foot .btn--danger {
+  flex: 0 0 auto;
+  min-width: var(--tap);
+  padding: 0 14px;
 }
 
 .amount-display {
@@ -1268,6 +1287,80 @@ textarea.field {
 .btn--disabled {
   opacity: 0.5;
   pointer-events: none;
+}
+
+/* ---------- Autosave indicator, segmented control, badges ---------- */
+
+.detail-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  min-height: 24px;
+}
+
+.autosave {
+  font-size: 12px;
+  color: var(--ink-faint);
+  transition: color 0.2s;
+}
+
+.autosave--on {
+  color: var(--ok);
+  font-weight: 600;
+}
+
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-pill);
+  padding: 2px;
+  background: var(--surface);
+}
+
+.segment {
+  min-height: 36px;
+  padding: 6px 16px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.segment--on {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.pill--edited {
+  flex: 0 0 auto;
+  background: var(--surface-sunken);
+  color: var(--warn);
+  border: 1px solid var(--hairline);
+  font-size: 11px;
+}
+
+.past-title {
+  margin-top: var(--s2);
+}
+
+.trip-card--past {
+  opacity: 0.85;
+}
+
+/* Short phones: compact the keypad so the capture sheet fits comfortably. */
+@media (max-height: 700px) {
+  .key {
+    min-height: 44px;
+    font-size: 19px;
+  }
+
+  .amount-local {
+    font-size: 32px;
+  }
 }
 
 /* ---------- Update / offline toast ---------- */

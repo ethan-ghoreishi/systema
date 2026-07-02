@@ -11,6 +11,23 @@ import Dexie, { type Table } from 'dexie';
 export type TripType = 'same-day' | 'airport-sleep' | 'weekend' | 'custom';
 export type TripStatus = 'planning' | 'active' | 'done';
 
+/** Saved answers for the research prompt builder (all optional, per trip). */
+export interface PromptPrefs {
+  destination: string;
+  arrival: string; // free text, e.g. "20 June 2026, 8:40am"
+  departure: string;
+  durationLabel: string; // e.g. 'one-day' | 'two-day' | 'three-day'
+  pace: string;
+  budget: string;
+  companions: string;
+  interests: string[];
+  museumsMax: number;
+  hotel: string;
+  constraints: string;
+  pastVisits: string;
+  notes: string;
+}
+
 export interface Trip {
   id: string;
   name: string;
@@ -22,6 +39,10 @@ export interface Trip {
   accommodation: boolean;
   status: TripStatus;
   planText: string; // the pasted itinerary (Markdown)
+  /** Post-trip journal pasted back from Claude (optional; shown on the Plan tab). */
+  journalText?: string;
+  /** Saved research-prompt-builder answers (optional). */
+  promptPrefs?: PromptPrefs;
   order: number;
   createdAt: number;
   updatedAt: number;
@@ -85,6 +106,10 @@ export interface Expense {
   currency: string;
   fxRate: number | null;
   synced: boolean;
+  /** Transaction# recorded at sync time, so sheet numbering stays stable. */
+  syncedNo?: number;
+  /** Edited locally after it was sent — the sheet row needs a manual amend. */
+  editedAfterSync?: boolean;
   skeleton: boolean; // pre-seeded placeholder row vs. a real entry
   order: number;
   createdAt: number;

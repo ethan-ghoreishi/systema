@@ -10,6 +10,7 @@
   import { copyText, downloadText } from '../../lib/download';
   import { settingsStore } from '../../lib/settings.svelte';
   import { todayIso } from '../../lib/sheet';
+  import { updateTrip } from '../../lib/trips';
 
   let { trip }: { trip: Trip } = $props();
 
@@ -20,17 +21,34 @@
   const expenses = $derived($expensesQ ?? []);
   const allPhotos = $derived($photosQ ?? []);
 
-  const photoCounts = $derived.by(() => {
-    const m: Record<string, number> = {};
-    for (const p of allPhotos) if (p.stopId) m[p.stopId] = (m[p.stopId] ?? 0) + 1;
-    return m;
-  });
-
-  const pack = $derived(buildTripPack(trip, stops, expenses, photoCounts));
+  const pack = $derived(
+    buildTripPack(
+      trip,
+      stops,
+      expenses,
+      allPhotos.map((p) => ({ stopId: p.stopId, createdAt: p.createdAt })),
+    ),
+  );
   const prompt = $derived(buildJournalingPrompt(pack));
 
   let status = $state('');
   let busy = $state(false);
+
+  // Journal paste-back: keeps the finished journal with the trip (Plan tab
+  // grows a Plan | Journal toggle once saved).
+  let journalDraft = $state('');
+  let journalFor = $state<string | null>(null);
+  $effect(() => {
+    if (journalFor !== trip.id) {
+      journalDraft = trip.journalText ?? '';
+      journalFor = trip.id;
+    }
+  });
+
+  async function saveJournal() {
+    await updateTrip(trip.id, { journalText: journalDraft });
+    status = journalDraft.trim() ? 'Journal saved — view it on the Plan tab.' : 'Journal cleared.';
+  }
 
   function slug(): string {
     return (
@@ -98,6 +116,24 @@
       <summary>Preview trip pack</summary>
       <pre class="pack-preview">{pack}</pre>
     </details>
+    <p class="hint">
+      Photos are listed by stop and time, not embedded — an embedded pack would be too large to
+      paste into a chat. Attach the photos themselves in Claude if you want them considered.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2 class="section-title">Keep the journal</h2>
+    <p class="hint">
+      Paste the journal Claude wrote back here to keep it with the trip — it appears as a Journal
+      view on the Plan tab, and past trips become a browsable trip journal on the home screen.
+    </p>
+    <textarea
+      class="field"
+      rows="6"
+      placeholder="Paste the finished journal here…"
+      bind:value={journalDraft}></textarea>
+    <button class="btn btn--primary" onclick={saveJournal}>Save journal</button>
   </div>
 
   <div class="card">

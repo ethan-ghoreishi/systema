@@ -8,8 +8,14 @@
 
   let editing = $state(false);
   let draft = $state('');
+  // 'plan' | 'journal' — the journal view exists once a journal is saved (Export tab).
+  let view = $state<'plan' | 'journal'>('plan');
 
-  const rendered = $derived(trip.planText.trim() ? renderPlan(trip.planText) : null);
+  const hasJournal = $derived((trip.journalText ?? '').trim() !== '');
+  const shownText = $derived(
+    view === 'journal' && hasJournal ? (trip.journalText ?? '') : trip.planText,
+  );
+  const rendered = $derived(shownText.trim() ? renderPlan(shownText) : null);
 
   // Live departure countdown, ticking once a second while a return time is set.
   let now = $state(Date.now());
@@ -31,6 +37,7 @@
 
   function startEdit() {
     draft = trip.planText;
+    view = 'plan';
     editing = true;
   }
 
@@ -71,7 +78,28 @@
     </div>
   {:else if rendered}
     <div class="plan-toolbar">
-      <button class="btn btn--ghost" onclick={startEdit}>Edit plan</button>
+      {#if hasJournal}
+        <div class="segmented" role="tablist" aria-label="Plan or journal">
+          <button
+            class="segment"
+            class:segment--on={view === 'plan'}
+            role="tab"
+            aria-selected={view === 'plan'}
+            onclick={() => (view = 'plan')}>Plan</button
+          >
+          <button
+            class="segment"
+            class:segment--on={view === 'journal'}
+            role="tab"
+            aria-selected={view === 'journal'}
+            onclick={() => (view = 'journal')}>Journal</button
+          >
+        </div>
+      {/if}
+      <a class="btn btn--ghost" href={`#/trip/${trip.id}/prompt`}>Research prompt</a>
+      {#if view === 'plan'}
+        <button class="btn btn--ghost" onclick={startEdit}>Edit plan</button>
+      {/if}
     </div>
     {#if rendered.toc.length > 1}
       <nav class="toc card" aria-label="Contents">
@@ -93,10 +121,13 @@
     <div class="card empty-state">
       <p class="empty-title">No plan yet</p>
       <p class="hint">
-        Paste the itinerary you generated in Claude. It renders cleanly offline with an auto
-        contents list. You can edit it any time.
+        Build a research prompt from this trip's details, run it in Claude, then paste the result
+        here. It renders cleanly offline, and the Stops tab can extract the route automatically.
       </p>
-      <button class="btn btn--primary" onclick={startEdit}>Add plan</button>
+      <div class="cluster">
+        <a class="btn btn--primary" href={`#/trip/${trip.id}/prompt`}>Build research prompt</a>
+        <button class="btn btn--ghost" onclick={startEdit}>Paste plan</button>
+      </div>
     </div>
   {/if}
 </div>

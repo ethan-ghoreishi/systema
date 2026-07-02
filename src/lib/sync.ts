@@ -1,7 +1,7 @@
 import { db } from './db';
 import { settingsStore } from './settings.svelte';
 import { expenseToRow, subtotalRow, type SheetRow } from './sheet';
-import { realExpenses, tripTotalGBP } from './expenses';
+import { assignTransactionNumbers, realExpenses, tripTotalGBP } from './expenses';
 
 /**
  * Sync to the Apps Script capture web app. The sheet is a write buffer you
@@ -41,15 +41,19 @@ export async function syncTrip(tripId: string): Promise<SyncResult> {
   const pending = real.filter((e) => !e.synced);
   if (pending.length === 0) return { ok: true, synced: 0 };
 
-  // Transaction# = 1-based position among ALL real rows, so numbers stay
-  // sequential even when syncing incrementally.
-  const numberById = new Map(real.map((e, i) => [e.id, i + 1]));
+  const numberById = assignTransactionNumbers(real);
   const rows = pending.map((e) => expenseToRow(e, numberById.get(e.id) ?? 0));
 
   try {
     await postRows(rows);
     await db.transaction('rw', db.expenses, async () => {
-      for (const e of pending) await db.expenses.update(e.id, { synced: true });
+      for (const e of pending) {
+        await db.expenses.update(e.id, {
+          synced: true,
+          syncedNo: numberById.get(e.id),
+          editedAfterSync: false,
+        });
+      }
     });
     return { ok: true, synced: pending.length };
   } catch (err) {

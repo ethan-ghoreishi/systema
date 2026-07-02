@@ -18,8 +18,17 @@
   let newCityName = $state('');
   let newCityCurrency = $state('EUR');
 
+  // Everything on this screen autosaves; the indicator makes that visible.
+  let savedAt = $state<number | null>(null);
+  let savedTimer: ReturnType<typeof setTimeout> | null = null;
+  function flashSaved() {
+    savedAt = Date.now();
+    if (savedTimer) clearTimeout(savedTimer);
+    savedTimer = setTimeout(() => (savedAt = null), 2000);
+  }
+
   function patch(p: Parameters<typeof updateTrip>[1]) {
-    void updateTrip(id, p);
+    void updateTrip(id, p).then(flashSaved);
   }
 
   async function addCityNow() {
@@ -32,7 +41,12 @@
 
   async function removeTrip() {
     if (
-      confirm('Delete this trip and all its cities, stops and expenses? This cannot be undone.')
+      confirm(
+        'Delete this trip and all its cities, stops, photos and expenses from this device? ' +
+          'This cannot be undone. Rows already synced to your capture sheet stay in the sheet ' +
+          '(it is append-only) — remove them there if needed. ' +
+          'Tip: past trips can be kept instead by setting Status to Done.',
+      )
     ) {
       await deleteTrip(id);
       navigate('/');
@@ -45,6 +59,12 @@
     <TopBar title="Edit trip" back={`#/trip/${id}/plan`} />
 
     <div class="screen-body">
+      <div class="detail-bar">
+        <span class="autosave" class:autosave--on={savedAt}>
+          {savedAt ? 'Saved ✓' : 'Changes save automatically'}
+        </span>
+      </div>
+
       <div class="card">
         <div>
           <label class="label" for="t-name">Name</label>
@@ -200,7 +220,10 @@
         </datalist>
       </div>
 
-      <button class="btn btn--danger" onclick={removeTrip}>Delete trip</button>
+      <div class="save-bar">
+        <a class="btn btn--primary grow" href={`#/trip/${id}/plan`}>Done</a>
+        <button class="btn btn--danger" onclick={removeTrip}>Delete trip</button>
+      </div>
     </div>
   </div>
 {/if}

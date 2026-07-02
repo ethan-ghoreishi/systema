@@ -3,7 +3,7 @@
   import { db, type City, type Expense, type Trip } from '../lib/db';
   import { newId } from '../lib/ids';
   import { getRate } from '../lib/fx';
-  import { addExpense, updateExpense } from '../lib/expenses';
+  import { addExpense, deleteExpense, updateExpense } from '../lib/expenses';
   import { syncTrip } from '../lib/sync';
   import { categories, subcategories, paymentMethods } from '../lib/vocab';
   import { formatAmount, formatGBP, perPersonNote } from '../lib/money';
@@ -166,7 +166,16 @@
 
     let expenseId: string;
     if (expense) {
-      await updateExpense(expense.id, { ...fields, skeleton: false, synced: false });
+      // The sheet is append-only: a row already sent can't be updated remotely.
+      // Keep it marked synced (so it isn't re-sent as a duplicate) and flag it
+      // as edited so the list shows the sheet needs a manual amend.
+      const wasSynced = expense.synced && !expense.skeleton;
+      await updateExpense(expense.id, {
+        ...fields,
+        skeleton: false,
+        synced: wasSynced,
+        editedAfterSync: wasSynced ? true : (expense.editedAfterSync ?? false),
+      });
       expenseId = expense.id;
     } else {
       expenseId = await addExpense(trip.id, fields);
@@ -187,6 +196,19 @@
     if (navigator.onLine) void syncTrip(trip.id);
     onClose();
   }
+
+  async function remove() {
+    if (!expense) return;
+    const msg = expense.skeleton
+      ? 'Remove this skeleton row?'
+      : expense.synced
+        ? 'Delete this expense? The row already sent to your capture sheet stays there — remove it in the sheet when you reconcile.'
+        : 'Delete this expense? It has not been synced, so nothing changes in the sheet.';
+    if (confirm(msg)) {
+      await deleteExpense(expense.id);
+      onClose();
+    }
+  }
 </script>
 
 <svelte:window
@@ -200,7 +222,12 @@
   <div class="modal-sheet">
     <header class="modal-head">
       <h2 class="modal-title">{expense && !expense.skeleton ? 'Edit expense' : 'Add expense'}</h2>
-      <button class="icon-btn" aria-label="Close" onclick={onClose}><Icon name="back" /></button>
+      <div class="modal-head-actions">
+        <!-- Save lives in the header too, so it stays reachable even when the
+             on-screen keyboard covers the footer. -->
+        <button class="btn btn--primary btn--sm" onclick={save} disabled={!canSave}>Save</button>
+        <button class="icon-btn" aria-label="Close" onclick={onClose}><Icon name="back" /></button>
+      </div>
     </header>
 
     <div class="modal-body">
@@ -340,6 +367,11 @@
     </div>
 
     <footer class="modal-foot">
+      {#if expense}
+        <button class="btn btn--danger" onclick={remove} aria-label="Delete expense">
+          <Icon name="trash" size={18} />
+        </button>
+      {/if}
       <button class="btn btn--ghost" onclick={onClose}>Cancel</button>
       <button class="btn btn--primary" onclick={save} disabled={!canSave}>Save</button>
     </footer>

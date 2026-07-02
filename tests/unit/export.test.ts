@@ -61,8 +61,13 @@ function exp(over: Partial<Expense> = {}): Expense {
 }
 
 describe('buildTripPack', () => {
-  it('includes title, plan, ticked stops with notes, photo count and expense total', () => {
-    const md = buildTripPack(trip(), [stop()], [exp()], { s: 2 });
+  const twoPhotos = [
+    { stopId: 's', createdAt: Date.UTC(2026, 5, 27, 14, 32) },
+    { stopId: 's', createdAt: Date.UTC(2026, 5, 27, 15, 10) },
+  ];
+
+  it('includes title, plan, ticked stops with notes, photos and expense total', () => {
+    const md = buildTripPack(trip(), [stop()], [exp()], twoPhotos);
     expect(md).toContain('# Trip pack: Copenhagen');
     expect(md).toContain('## Plan');
     expect(md).toContain('Trust designed into surfaces.');
@@ -70,19 +75,22 @@ describe('buildTripPack', () => {
     expect(md).toContain('- [x] inscription');
     expect(md).toContain('system reading');
     expect(md).toContain('_2 photos_');
+    expect(md).toContain('## Photos');
+    expect(md).toContain('- Carlsberg:');
     expect(md).toContain('**Total:** £5.00');
     expect(md).toContain('- Food: £5.00');
   });
 
   it('omits empty sections', () => {
-    const md = buildTripPack(trip({ planText: '' }), [], [], {});
+    const md = buildTripPack(trip({ planText: '' }), [], [], []);
     expect(md).not.toContain('## Plan');
     expect(md).not.toContain('## Stops');
+    expect(md).not.toContain('## Photos');
     expect(md).not.toContain('## Expenses');
   });
 
   it('does not use em-dashes', () => {
-    const md = buildTripPack(trip(), [stop()], [exp()], {});
+    const md = buildTripPack(trip(), [stop()], [exp()], twoPhotos);
     expect(md).not.toContain('—');
   });
 });
