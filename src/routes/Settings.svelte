@@ -5,6 +5,9 @@
   import { connectivity } from '../lib/connectivity.svelte';
   import { isLikelyAppsScriptUrl } from '../lib/format';
   import { nasBackup } from '../lib/nas.svelte';
+  import { buildBackup, importBackup } from '../lib/export';
+  import { downloadText } from '../lib/download';
+  import { todayIso } from '../lib/sheet';
 
   const s = settingsStore;
   const version = __APP_VERSION__;
@@ -48,6 +51,63 @@
     await deferredPrompt.userChoice;
     deferredPrompt = null;
     canInstall = false;
+  }
+
+  // ---- Data: restore / import / paste / download ----
+  let dataStatus = $state('');
+  let dataBusy = $state(false);
+
+  async function restoreFromNas(): Promise<void> {
+    dataBusy = true;
+    dataStatus = 'Restoring from NAS…';
+    const r = await nasBackup.restore();
+    dataStatus = r.ok ? r.message : `Restore failed: ${r.message}`;
+    dataBusy = false;
+  }
+
+  async function importData(raw: string): Promise<void> {
+    dataBusy = true;
+    try {
+      const r = await importBackup(JSON.parse(raw));
+      await settingsStore.load();
+      dataStatus = `Imported ${r.trips} trip(s), ${r.stops} stop(s), ${r.expenses} expense(s), ${r.photos} photo(s).`;
+    } catch (err) {
+      dataStatus = `Import failed: ${err instanceof Error ? err.message : String(err)}`;
+    } finally {
+      dataBusy = false;
+    }
+  }
+
+  async function onImportFile(e: Event): Promise<void> {
+    const input = e.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    if (file) await importData(await file.text());
+  }
+
+  async function pasteImport(): Promise<void> {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (!text.trim()) {
+        dataStatus = 'Clipboard is empty.';
+        return;
+      }
+      await importData(text);
+    } catch {
+      dataStatus = 'Could not read the clipboard — use the file import instead.';
+    }
+  }
+
+  async function downloadFull(): Promise<void> {
+    dataBusy = true;
+    dataStatus = 'Building backup…';
+    try {
+      const backup = await buildBackup();
+      downloadText(`systema-backup-${todayIso()}.json`, JSON.stringify(backup), 'application/json');
+      dataStatus = 'Backup downloaded.';
+    } finally {
+      dataBusy = false;
+    }
   }
 </script>
 
@@ -126,6 +186,41 @@
           automatically.
         </p>
       {/if}
+    </div>
+
+    <div class="card">
+      <h2 class="section-title">Data on this device</h2>
+      <p class="hint">
+        Getting everything onto a fresh install: <strong>Restore from NAS</strong> pulls the newest snapshot
+        and its photos (needs the receiver above). No receiver yet? Import the backup JSON as a file (Files
+        app → smb://192.168.0.20 → systema-backups) — or copy it on the Mac and paste here via Universal
+        Clipboard.
+      </p>
+
+      <button
+        class="btn btn--primary"
+        onclick={restoreFromNas}
+        disabled={dataBusy || !s.current.nasUrl.trim()}
+      >
+        Restore from NAS
+      </button>
+      <label class="btn btn--ghost" class:btn--disabled={dataBusy}>
+        Import backup file (JSON)
+        <input
+          type="file"
+          accept="application/json,.json"
+          hidden
+          onchange={onImportFile}
+          disabled={dataBusy}
+        />
+      </label>
+      <button class="btn btn--ghost" onclick={pasteImport} disabled={dataBusy}>
+        Paste backup from clipboard
+      </button>
+      <button class="btn btn--ghost" onclick={downloadFull} disabled={dataBusy}>
+        Download full backup (JSON)
+      </button>
+      {#if dataStatus}<p class="hint hint--ok">{dataStatus}</p>{/if}
     </div>
 
     <!-- Legacy, optional: live-append to a Google capture sheet. The app is the

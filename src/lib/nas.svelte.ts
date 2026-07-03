@@ -1,6 +1,6 @@
 import { db } from './db';
 import { settingsStore } from './settings.svelte';
-import { buildDataBackup } from './export';
+import { buildDataBackup, importBackup, type Backup } from './export';
 
 /**
  * Opportunistic NAS backup — the Hess design, built.
@@ -84,6 +84,56 @@ class NasBackup {
     const photos = await db.photos.toArray();
     this.photosTotal = photos.length;
     this.photosBacked = photos.filter((p) => p.backedUp).length;
+  }
+
+  private endpoint(kind: string, extra = ''): string {
+    const { nasUrl, nasToken } = settingsStore.current;
+    const base = nasUrl.trim().replace(/[?#].*$/, '');
+    return `${base}?kind=${kind}&token=${encodeURIComponent(nasToken.trim())}${extra}`;
+  }
+
+  /**
+   * Pull the newest snapshot from the NAS and merge it in, then fetch any
+   * photos it references that this device doesn't hold. This is how a fresh
+   * install (or second device) picks up everything: the NAS is the hub —
+   * every device pushes to it and can restore from it.
+   */
+  async restore(): Promise<{ ok: boolean; message: string }> {
+    if (!this.configured) return { ok: false, message: 'Set the receiver URL and token first.' };
+    if (typeof navigator !== 'undefined' && !navigator.onLine)
+      return { ok: false, message: 'Offline — try again when connected.' };
+    this.running = true;
+    this.lastError = '';
+
+    try {
+      const res = await fetch(this.endpoint('latest'));
+      if (!res.ok) throw new Error(`latest: HTTP ${res.status}`);
+      const data = (await res.json()) as Backup;
+      const r = await importBackup(data);
+      await settingsStore.load(); // snapshot settings may have been merged in
+
+      let fetched = 0;
+      for (const meta of data.photosMeta ?? []) {
+        if (await db.photos.get(meta.id)) continue;
+        const pr = await fetch(this.endpoint('photo', `&id=${meta.id}`));
+        if (!pr.ok) continue; // that photo may simply not be on the NAS yet
+        const blob = await pr.blob();
+        await db.photos.put({ ...meta, blob, backedUp: true });
+        fetched += 1;
+      }
+
+      await this.refreshCounts();
+      const photoNote = fetched ? `, ${fetched} photo${fetched > 1 ? 's' : ''}` : '';
+      return {
+        ok: true,
+        message: `Restored ${r.trips} trips, ${r.stops} stops, ${r.expenses} expenses${photoNote}.`,
+      };
+    } catch (err) {
+      this.lastError = err instanceof Error ? err.message : String(err);
+      return { ok: false, message: this.lastError };
+    } finally {
+      this.running = false;
+    }
   }
 
   /** Push a data snapshot, then any photos not yet on the NAS. */

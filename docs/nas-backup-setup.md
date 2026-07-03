@@ -61,12 +61,22 @@ Until the receiver is up — or any time you want a belt-and-braces copy:
 - **Mac:** download the same file and drop it in the mounted
   `homes/ethan/systema-backups/manual/` folder.
 
-## Restoring
+## Restoring — getting everything onto a (new) phone
 
-Any data snapshot restores through Export → _Import backup (JSON)_ (merge by
-id — safe over existing data). Photos in `photos/` are named by photo id and
-are ordinary image files; they're your archive copies for the journal and can
-be re-attached manually if ever needed.
+The NAS is the hub: every device pushes to it, and any device can restore from
+it. Three routes, best first:
+
+1. **Settings → Data on this device → Restore from NAS** (needs the receiver):
+   pulls the newest snapshot — trips, stops, expenses, journals, settings — and
+   then fetches any photos this device is missing, re-linked to their stops.
+2. **Import backup file**: grab a JSON from `systema-backups/manual/` (iPhone:
+   Files app → Connect to Server → `smb://192.168.0.20`), then Settings →
+   _Import backup file_.
+3. **Paste from clipboard**: on the Mac, open the backup JSON and copy it; on
+   the iPhone (same Apple ID, Handoff on), Settings → _Paste backup from
+   clipboard_.
+
+Imports merge by id — safe to run over existing data, and safe to run twice.
 
 ## Security notes
 

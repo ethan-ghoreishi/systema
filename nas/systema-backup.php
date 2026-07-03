@@ -36,7 +36,44 @@ function reply($code, $payload) {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
-  reply(200, ['ok' => true, 'service' => 'systema-backup']);
+  $kind = $_GET['kind'] ?? '';
+  if ($kind === '') {
+    reply(200, ['ok' => true, 'service' => 'systema-backup']);
+  }
+  if ($TOKEN === '' || ($_GET['token'] ?? '') !== $TOKEN) {
+    reply(403, ['ok' => false, 'error' => 'bad token']);
+  }
+
+  // Newest data snapshot — how a fresh install restores everything.
+  if ($kind === 'latest') {
+    $files = glob($BASE . '/data/systema-data-*.json');
+    if (!$files) {
+      reply(404, ['ok' => false, 'error' => 'no snapshots yet']);
+    }
+    sort($files);
+    readfile(end($files));
+    exit;
+  }
+
+  // One photo by id, so restores can re-fetch images pushed earlier.
+  if ($kind === 'photo') {
+    $id = $_GET['id'] ?? '';
+    if (!preg_match('/^[a-zA-Z0-9-]{8,64}$/', $id)) {
+      reply(400, ['ok' => false, 'error' => 'bad id']);
+    }
+    $matches = glob($BASE . '/photos/' . $id . '.*');
+    if (!$matches) {
+      reply(404, ['ok' => false, 'error' => 'not found']);
+    }
+    $file = $matches[0];
+    $ext = pathinfo($file, PATHINFO_EXTENSION);
+    $types = ['jpg' => 'image/jpeg', 'png' => 'image/png', 'webp' => 'image/webp'];
+    header('Content-Type: ' . ($types[$ext] ?? 'application/octet-stream'));
+    readfile($file);
+    exit;
+  }
+
+  reply(400, ['ok' => false, 'error' => 'unknown kind']);
 }
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
   reply(405, ['ok' => false, 'error' => 'POST only']);

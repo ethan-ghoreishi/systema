@@ -72,10 +72,10 @@
       <div class="card empty-state">
         <p class="empty-title">No trips yet</p>
         <p class="hint">
-          Create a trip, build its research prompt, paste the plan, and run it offline. Tip: build
-          the plan on the phone you'll actually travel with — or move it across later via Export →
-          JSON.
+          Create a trip and build its research prompt — or, if your data lives on another device or
+          the NAS, restore it here first.
         </p>
+        <a class="btn btn--ghost" href="#/settings">Restore a backup</a>
       </div>
     {:else}
       {#if current.length}

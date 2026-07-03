@@ -175,6 +175,9 @@ export interface Backup {
   fxRates: FxRate[];
   settings: { key: string; value: unknown }[];
   photos: BackupPhoto[];
+  /** Photo records without blobs (data snapshots) — lets a restoring device
+   *  know which photo files to fetch from the NAS and how to re-link them. */
+  photosMeta?: Omit<Photo, 'blob'>[];
 }
 
 function blobToDataUrl(blob: Blob): Promise<string> {
@@ -228,13 +231,14 @@ export async function buildBackup(): Promise<Backup> {
  * enough to send after every change. Photos travel separately, one file each.
  */
 export async function buildDataBackup(): Promise<Backup> {
-  const [trips, cities, stops, expenses, fxRates, settings] = await Promise.all([
+  const [trips, cities, stops, expenses, fxRates, settings, photoRows] = await Promise.all([
     db.trips.toArray(),
     db.cities.toArray(),
     db.stops.toArray(),
     db.expenses.toArray(),
     db.fxRates.toArray(),
     db.kv.toArray(),
+    db.photos.toArray(),
   ]);
 
   return {
@@ -248,6 +252,7 @@ export async function buildDataBackup(): Promise<Backup> {
     fxRates,
     settings,
     photos: [],
+    photosMeta: photoRows.map(({ blob: _blob, ...meta }) => meta),
   };
 }
 

@@ -182,7 +182,10 @@ tests/
   travel with, or move a trip across via **Export → JSON** (backup + import).
 - **NAS backup vault:** optional, opportunistic push of data snapshots and
   photos to a Synology at home — token-gated PHP receiver that writes only into
-  its own folder. See [`docs/nas-backup-setup.md`](docs/nas-backup-setup.md).
+  its own folder. Any device can also **Restore from NAS** (Settings → Data):
+  newest snapshot plus missing photos, so a fresh install picks everything up.
+  File-import and clipboard-paste restores work with no NAS setup at all. See
+  [`docs/nas-backup-setup.md`](docs/nas-backup-setup.md).
 - No paid hosting, no metered AI, no paid backend. If a feature would need
   ongoing payment, it isn't built — a free alternative is used or it's flagged.
 
