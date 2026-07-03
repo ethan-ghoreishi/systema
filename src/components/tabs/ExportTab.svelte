@@ -4,9 +4,11 @@
   import {
     buildTripPack,
     buildJournalingPrompt,
+    buildMemoryPrompt,
     buildBackup,
     importBackup,
   } from '../../lib/export';
+  import { buildTripCsv } from '../../lib/csv';
   import { copyText, downloadText } from '../../lib/download';
   import { settingsStore } from '../../lib/settings.svelte';
   import { todayIso } from '../../lib/sheet';
@@ -71,6 +73,18 @@
     status = 'Trip pack downloaded.';
   }
 
+  async function copyMemoryPrompt() {
+    const ok = await copyText(buildMemoryPrompt(trip, stops, expenses));
+    status = ok
+      ? 'Reconstruction prompt copied — Claude interviews you first, then writes the journal. Paste the result back below.'
+      : 'Copy failed.';
+  }
+
+  function downloadCsv() {
+    downloadText(`${slug()}-expenses.csv`, buildTripCsv(expenses), 'text/csv');
+    status = 'CSV downloaded — sheet column format, subtotal row included.';
+  }
+
   async function downloadBackup() {
     busy = true;
     status = 'Building backup…';
@@ -111,7 +125,17 @@
       and expense summary) and paste it into Claude to write your journal.
     </p>
     <button class="btn btn--primary" onclick={copyPrompt}>Copy journaling prompt</button>
+    {#if trip.status === 'done' && !(trip.journalText ?? '').trim()}
+      <button class="btn btn--ghost" onclick={copyMemoryPrompt}>
+        Copy reconstruction prompt (pre-app trip)
+      </button>
+      <p class="hint">
+        For trips from before the app: Claude uses the expense trail as a memory scaffold,
+        interviews you, then writes the journal.
+      </p>
+    {/if}
     <button class="btn btn--ghost" onclick={downloadPack}>Download trip pack (.md)</button>
+    <button class="btn btn--ghost" onclick={downloadCsv}>Download expenses (CSV)</button>
     <details class="pack-details">
       <summary>Preview trip pack</summary>
       <pre class="pack-preview">{pack}</pre>

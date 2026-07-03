@@ -1,6 +1,7 @@
 import { db, type Expense, type Trip } from './db';
 import { presetByType } from './presets';
 import { newId } from './ids';
+import { getRateForDate } from './fx';
 
 /**
  * Expense mutations + pure summaries. Transaction numbers are derived from row
@@ -19,6 +20,7 @@ export interface ExpenseInput {
   amountLocal: number;
   currency: string;
   fxRate: number | null;
+  fxPending?: boolean;
   notes: string;
 }
 
@@ -112,6 +114,35 @@ export function categorySummary(expenses: Expense[]): CategoryTotal[] {
   return [...map.entries()]
     .map(([category, total]) => ({ category, total: round2(total) }))
     .sort((a, b) => b.total - a.total);
+}
+
+/**
+ * Auto-price expenses saved without a rate (frictionless offline capture):
+ * fetch the ECB rate for each row's own date and fill in the GBP amount.
+ * Currencies the ECB doesn't publish (e.g. MAD, AMD) stay pending until a
+ * manual £ amount is entered. Returns how many rows were priced.
+ */
+export async function resolvePendingFx(tripId?: string): Promise<number> {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return 0;
+  const all = tripId
+    ? await db.expenses.where('tripId').equals(tripId).toArray()
+    : await db.expenses.toArray();
+  const pending = all.filter((e) => e.fxPending && !e.skeleton && e.amountLocal > 0);
+
+  let resolved = 0;
+  for (const e of pending) {
+    const rate = await getRateForDate(e.currency, e.date);
+    if (rate == null) continue;
+    const fxNote = `FX: 1 ${e.currency} = £${rate}`;
+    await db.expenses.update(e.id, {
+      amountGBP: round2(e.amountLocal * rate),
+      fxRate: rate,
+      fxPending: false,
+      notes: e.notes.trim() ? `${e.notes.trim()} · ${fxNote}` : fxNote,
+    });
+    resolved += 1;
+  }
+  return resolved;
 }
 
 /**

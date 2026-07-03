@@ -69,6 +69,17 @@ export default defineConfig(({ command, mode }) => {
                       cacheableResponse: { statuses: [0, 200] },
                     },
                   },
+                  {
+                    // Map tiles: cache-first so areas browsed at home still
+                    // render offline in the field.
+                    urlPattern: /^https:\/\/tile\.openstreetmap\.org\/.*/i,
+                    handler: 'CacheFirst',
+                    options: {
+                      cacheName: 'osm-tiles',
+                      expiration: { maxEntries: 600, maxAgeSeconds: 2592000 },
+                      cacheableResponse: { statuses: [0, 200] },
+                    },
+                  },
                 ],
               },
               // Enable the service worker in `vite dev` too, so offline behaviour

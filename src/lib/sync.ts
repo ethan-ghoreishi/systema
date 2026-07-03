@@ -1,7 +1,7 @@
 import { db } from './db';
 import { settingsStore } from './settings.svelte';
 import { expenseToRow, subtotalRow, type SheetRow } from './sheet';
-import { assignTransactionNumbers, realExpenses, tripTotalGBP } from './expenses';
+import { assignTransactionNumbers, realExpenses, resolvePendingFx, tripTotalGBP } from './expenses';
 
 /**
  * Sync to the Apps Script capture web app. The sheet is a write buffer you
@@ -34,11 +34,15 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-/** Push a trip's unsynced (real) expenses to the sheet. */
+/** Push a trip's unsynced (real, priced) expenses to the sheet. */
 export async function syncTrip(tripId: string): Promise<SyncResult> {
+  // Price any rate-pending rows first so they can ride along in this push.
+  await resolvePendingFx(tripId);
+
   const all = await db.expenses.where('tripId').equals(tripId).toArray();
   const real = realExpenses(all);
-  const pending = real.filter((e) => !e.synced);
+  // Rows still awaiting a rate never go to the sheet (they'd write £0).
+  const pending = real.filter((e) => !e.synced && !e.fxPending);
   if (pending.length === 0) return { ok: true, synced: 0 };
 
   const numberById = assignTransactionNumbers(real);
@@ -79,7 +83,9 @@ export async function pendingCount(tripId: string): Promise<number> {
   return realExpenses(all).filter((e) => !e.synced).length;
 }
 
-async function syncAllPending(): Promise<void> {
+/** Price rate-pending rows, then flush every trip's queued rows to the sheet. */
+export async function syncEverything(): Promise<void> {
+  await resolvePendingFx();
   const trips = await db.trips.toArray();
   for (const t of trips) {
     if ((await pendingCount(t.id)) > 0) await syncTrip(t.id);
@@ -90,6 +96,6 @@ async function syncAllPending(): Promise<void> {
 export function initAutoSync(): void {
   if (typeof window === 'undefined') return;
   window.addEventListener('online', () => {
-    void syncAllPending();
+    void syncEverything();
   });
 }

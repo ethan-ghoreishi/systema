@@ -198,6 +198,8 @@ export function buildResearchPrompt(p: PromptPrefs): string {
     '',
     '- Give every stop its own level-3 heading: `### <Stop name>` — the place name only, no numbering.',
     '- Under each stop heading, add 2-5 short bullets: what to notice, the system it reveals, one London and one Esfahan/Iran contrast where meaningful, and any timing note.',
+    '- Then add 2-4 discovery items as Markdown task lines (`- [ ] ...`): concrete, physical things to find, spot, count, or compare on the spot at that exact place (an inscription to find, a detail to notice, a behaviour to watch for). Specific to the stop, never generic.',
+    '- Add one line per stop: `Location: <latitude>, <longitude>` — approximate decimal-degree coordinates of the place, so the app can pin it on the route map.',
     '- Mark day or phase boundaries with a bold line of text such as `**Day 1 - morning**`, never with a heading.',
     '- Use level-3 headings for stops only — nowhere else in the document.',
     '- Order the stops as they should be walked.',

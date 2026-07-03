@@ -17,8 +17,12 @@
   import { addPhoto, deletePhoto, downloadPhoto } from '../../lib/photos';
   import { router, navigate } from '../../lib/router.svelte';
   import Icon from '../Icon.svelte';
+  import StopsMap from '../StopsMap.svelte';
 
   let { trip }: { trip: Trip } = $props();
+
+  // 'list' | 'map' — the map redraws live as stops change in the field.
+  let stopView = $state<'list' | 'map'>('list');
 
   const stopsQ = liveQuery(() => db.stops.where('tripId').equals(trip.id).sortBy('order'));
   const photosQ = liveQuery(() => db.photos.where('tripId').equals(trip.id).toArray());
@@ -245,76 +249,99 @@
     </div>
   </div>
 {:else}
-  <!-- List -->
+  <!-- List / Map -->
   <div class="stops">
-    {#if extractable.length > 0}
-      <button class="btn btn--ghost" onclick={extractNow}>
-        {stops.length === 0
-          ? `Extract ${extractable.length} stops from the plan`
-          : `Add ${extractable.length} new stop${extractable.length > 1 ? 's' : ''} found in the plan`}
-      </button>
+    {#if stops.length > 0}
+      <div class="segmented stops-toggle" role="tablist" aria-label="List or map">
+        <button
+          class="segment"
+          class:segment--on={stopView === 'list'}
+          role="tab"
+          aria-selected={stopView === 'list'}
+          onclick={() => (stopView = 'list')}>List</button
+        >
+        <button
+          class="segment"
+          class:segment--on={stopView === 'map'}
+          role="tab"
+          aria-selected={stopView === 'map'}
+          onclick={() => (stopView = 'map')}>Map</button
+        >
+      </div>
     {/if}
 
-    <form
-      class="add-row"
-      onsubmit={(e) => {
-        e.preventDefault();
-        addStopNow();
-      }}
-    >
-      <input class="field" placeholder="Add a stop" bind:value={newStopName} />
-      <button class="icon-btn" type="submit" aria-label="Add stop"><Icon name="plus" /></button>
-    </form>
-
-    {#if stops.length}
-      <div class="stop-list">
-        {#each stops as s, i (s.id)}
-          {@const p = checklistProgress(s)}
-          <div class="stop-row" class:stop-row--visited={s.visited}>
-            <button
-              class="check-box"
-              aria-label={s.visited ? 'Mark not visited' : 'Mark visited'}
-              onclick={() => toggleVisited(s)}
-            >
-              {#if s.visited}<Icon name="check" size={16} />{/if}
-            </button>
-            <button class="stop-open" onclick={() => openStop(s)}>
-              <span class="stop-name">{s.name}</span>
-              <span class="stop-meta">
-                {#if s.notes.trim()}notes{/if}
-                {#if p.total}{s.notes.trim() ? ' · ' : ''}{p.done}/{p.total} ticked{/if}
-                {#if photoCounts[s.id]}{s.notes.trim() || p.total ? ' · ' : ''}{photoCounts[s.id]} photo{photoCounts[
-                    s.id
-                  ] > 1
-                    ? 's'
-                    : ''}{/if}
-              </span>
-            </button>
-            <div class="stop-reorder">
-              <button
-                class="icon-btn icon-btn--sm"
-                aria-label="Move up"
-                disabled={i === 0}
-                onclick={() => moveStop(stops, i, -1)}><Icon name="up" size={18} /></button
-              >
-              <button
-                class="icon-btn icon-btn--sm"
-                aria-label="Move down"
-                disabled={i === stops.length - 1}
-                onclick={() => moveStop(stops, i, 1)}><Icon name="down" size={18} /></button
-              >
-            </div>
-          </div>
-        {/each}
-      </div>
+    {#if stopView === 'map' && stops.length > 0}
+      <StopsMap {stops} onOpen={openStop} />
     {:else}
-      <div class="card empty-state">
-        <p class="empty-title">No stops yet</p>
-        <p class="hint">
-          Paste a plan in the Plan tab and its stops (with notes) are extracted automatically with
-          one tap — or add stops by name here. Open a stop for notes, a checklist and photos.
-        </p>
-      </div>
+      {#if extractable.length > 0}
+        <button class="btn btn--ghost" onclick={extractNow}>
+          {stops.length === 0
+            ? `Extract ${extractable.length} stops from the plan`
+            : `Add ${extractable.length} new stop${extractable.length > 1 ? 's' : ''} found in the plan`}
+        </button>
+      {/if}
+
+      <form
+        class="add-row"
+        onsubmit={(e) => {
+          e.preventDefault();
+          addStopNow();
+        }}
+      >
+        <input class="field" placeholder="Add a stop" bind:value={newStopName} />
+        <button class="icon-btn" type="submit" aria-label="Add stop"><Icon name="plus" /></button>
+      </form>
+
+      {#if stops.length}
+        <div class="stop-list">
+          {#each stops as s, i (s.id)}
+            {@const p = checklistProgress(s)}
+            <div class="stop-row" class:stop-row--visited={s.visited}>
+              <button
+                class="check-box"
+                aria-label={s.visited ? 'Mark not visited' : 'Mark visited'}
+                onclick={() => toggleVisited(s)}
+              >
+                {#if s.visited}<Icon name="check" size={16} />{/if}
+              </button>
+              <button class="stop-open" onclick={() => openStop(s)}>
+                <span class="stop-name">{s.name}</span>
+                <span class="stop-meta">
+                  {#if s.notes.trim()}notes{/if}
+                  {#if p.total}{s.notes.trim() ? ' · ' : ''}{p.done}/{p.total} ticked{/if}
+                  {#if photoCounts[s.id]}{s.notes.trim() || p.total ? ' · ' : ''}{photoCounts[s.id]} photo{photoCounts[
+                      s.id
+                    ] > 1
+                      ? 's'
+                      : ''}{/if}
+                </span>
+              </button>
+              <div class="stop-reorder">
+                <button
+                  class="icon-btn icon-btn--sm"
+                  aria-label="Move up"
+                  disabled={i === 0}
+                  onclick={() => moveStop(stops, i, -1)}><Icon name="up" size={18} /></button
+                >
+                <button
+                  class="icon-btn icon-btn--sm"
+                  aria-label="Move down"
+                  disabled={i === stops.length - 1}
+                  onclick={() => moveStop(stops, i, 1)}><Icon name="down" size={18} /></button
+                >
+              </div>
+            </div>
+          {/each}
+        </div>
+      {:else}
+        <div class="card empty-state">
+          <p class="empty-title">No stops yet</p>
+          <p class="hint">
+            Paste a plan in the Plan tab and its stops (with notes, discovery checklists and map
+            pins) are extracted automatically with one tap — or add stops by name here.
+          </p>
+        </div>
+      {/if}
     {/if}
   </div>
 {/if}

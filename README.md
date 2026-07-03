@@ -39,23 +39,36 @@ subscription.**
 
 ## App shape
 
-- **Home** — current trips up top; trips marked Done shelve into a **Past trips**
-  journal section (everything kept: plan, stops, notes, photos, expenses,
-  journal).
+- **Home** — current trips up top; trips marked Done shelve into a **Trip
+  journal** section with cover photos (everything kept: plan, stops, notes,
+  photos, expenses, journal).
+- **Insights** (`#/insights`) — the whole ledger at a glance: every trip, every
+  pound, per-category bars, per-trip totals, plus an all-trips CSV export in
+  the master-sheet column format. The app is the source of truth; the Google
+  sheet is updated by pasting CSV when reconciling, not by a live service.
+- **History import** — `scripts/import-travel-spending.mjs` converts a dump of
+  the legacy Travel Spending sheet into a backup file the app imports (trips,
+  cities with currencies, expenses, and visited stops inferred from ticket
+  purchases). Generated files contain personal data — never commit them.
 - Inside a trip, four tabs only:
   1. **Plan** — your pasted itinerary, rendered and readable offline, with an
      auto contents list and a departure-time countdown at the top. A
      **Research prompt** builder pre-fills a copy-ready Claude prompt from the
      trip's details and asks for a route format the app imports automatically.
      Once a journal is saved, the tab grows a Plan | Journal toggle.
-  2. **Stops** — an ordered, tickable checklist of places with notes and photos.
-     One tap **extracts the stops (with notes) from the pasted plan** —
-     deterministic heading parsing, deduped, re-runnable.
-  3. **Expenses** — two-tap capture and a running total, matching your sheet.
-     Rows can be edited or deleted; the capture sheet is append-only, so the
-     app flags rows edited/deleted after sync for manual reconciliation.
-  4. **Export** — journaling prompt prefilled with the trip pack, journal
-     paste-back, plus a full JSON backup/import.
+  2. **Stops** — an ordered, tickable list of places with notes, discovery
+     checklists and photos, plus a **List | Map toggle**: OpenStreetMap route
+     map (numbered pins, walking order line, drag to adjust, tap to place;
+     tiles cached for offline). One tap **extracts stops — with notes,
+     checklist items and map pins — from the pasted plan** (deterministic
+     parsing, deduped, re-runnable).
+  3. **Expenses** — two-tap capture and a running total. Non-GBP amounts save
+     instantly with no £ needed and **price themselves from the day's ECB rate**
+     when online. Google Sheet live-sync still exists but is optional/legacy.
+  4. **Export** — journaling prompt prefilled with the trip pack (photo
+     placeholders included), a **reconstruction prompt** for pre-app trips
+     (expense trail as memory scaffold), journal paste-back, per-trip CSV, and
+     full JSON backup/import.
 - **Settings** (gear on Home) — the capture web app URL/token and storage status.
 
 ## Develop
@@ -167,6 +180,9 @@ tests/
   hand. The app never reads it back.
 - **Single device:** there is no cloud sync. Build the plan on the phone you'll
   travel with, or move a trip across via **Export → JSON** (backup + import).
+- **NAS backup vault:** optional, opportunistic push of data snapshots and
+  photos to a Synology at home — token-gated PHP receiver that writes only into
+  its own folder. See [`docs/nas-backup-setup.md`](docs/nas-backup-setup.md).
 - No paid hosting, no metered AI, no paid backend. If a feature would need
   ongoing payment, it isn't built — a free alternative is used or it's flagged.
 

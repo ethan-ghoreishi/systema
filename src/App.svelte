@@ -7,16 +7,19 @@
   import Trip from './routes/Trip.svelte';
   import TripEdit from './routes/TripEdit.svelte';
   import PromptBuilder from './routes/PromptBuilder.svelte';
+  import Insights from './routes/Insights.svelte';
   import NotFound from './routes/NotFound.svelte';
   import UpdateToast from './components/UpdateToast.svelte';
   import { router } from './lib/router.svelte';
   import { settingsStore } from './lib/settings.svelte';
-  import { initAutoSync } from './lib/sync';
+  import { initAutoSync, syncEverything } from './lib/sync';
+  import { nasBackup } from './lib/nas.svelte';
 
   type View =
     | { name: 'home' }
     | { name: 'new' }
     | { name: 'settings' }
+    | { name: 'insights' }
     | { name: 'trip'; id: string; tab: string }
     | { name: 'tripEdit'; id: string }
     | { name: 'prompt'; id: string }
@@ -27,6 +30,7 @@
     if (seg.length === 0) return { name: 'home' };
     if (seg[0] === 'new') return { name: 'new' };
     if (seg[0] === 'settings') return { name: 'settings' };
+    if (seg[0] === 'insights') return { name: 'insights' };
     if (seg[0] === 'trip' && seg[1]) {
       if (seg[2] === 'edit') return { name: 'tripEdit', id: seg[1] };
       if (seg[2] === 'prompt') return { name: 'prompt', id: seg[1] };
@@ -36,8 +40,10 @@
   });
 
   onMount(() => {
-    void settingsStore.load();
+    void settingsStore.load().then(() => nasBackup.init());
     initAutoSync();
+    // On every open: price rate-pending expenses and flush queued sheet rows.
+    void syncEverything();
     // Ask the browser to keep our local data (best effort; reduces eviction).
     if (navigator.storage?.persist) void navigator.storage.persist();
   });
@@ -52,6 +58,8 @@
     <NewTrip />
   {:else if view.name === 'settings'}
     <Settings />
+  {:else if view.name === 'insights'}
+    <Insights />
   {:else if view.name === 'trip'}
     {#key view.id}
       <Trip id={view.id} tab={view.tab} />

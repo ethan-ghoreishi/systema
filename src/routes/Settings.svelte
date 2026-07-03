@@ -4,6 +4,7 @@
   import { settingsStore } from '../lib/settings.svelte';
   import { connectivity } from '../lib/connectivity.svelte';
   import { isLikelyAppsScriptUrl } from '../lib/format';
+  import { nasBackup } from '../lib/nas.svelte';
 
   const s = settingsStore;
   const version = __APP_VERSION__;
@@ -55,10 +56,86 @@
 
   <div class="screen-body">
     <div class="card">
-      <h2 class="section-title">Capture sync</h2>
+      <h2 class="section-title">NAS backup vault</h2>
       <p class="hint">
-        Where expense rows are sent (used from Phase 2). This is the only thing the app talks to —
-        it appends rows to your one capture sheet and never reads your Drive.
+        Backs everything up to your Synology automatically whenever it's reachable — a data snapshot
+        after every change, and each photo once. Photos on the NAS are safe to delete from the phone
+        to free space. Setup:
+        <a
+          href="https://github.com/ethan-ghoreishi/systema/blob/main/docs/nas-backup-setup.md"
+          target="_blank"
+          rel="noreferrer">docs/nas-backup-setup.md</a
+        >.
+      </p>
+
+      <div>
+        <label class="label" for="nas-url">Backup receiver URL</label>
+        <input
+          id="nas-url"
+          class="field"
+          type="url"
+          inputmode="url"
+          autocomplete="off"
+          autocapitalize="off"
+          spellcheck="false"
+          placeholder="https://your-nas.synology.me/systema-backup.php"
+          bind:value={s.current.nasUrl}
+        />
+      </div>
+
+      <div>
+        <label class="label" for="nas-token">Backup token</label>
+        <input
+          id="nas-token"
+          class="field"
+          type="text"
+          autocomplete="off"
+          autocapitalize="off"
+          spellcheck="false"
+          placeholder="Same value as $TOKEN in the receiver"
+          bind:value={s.current.nasToken}
+        />
+      </div>
+
+      <div class="save-bar">
+        <button class="btn btn--primary" onclick={() => s.save()} disabled={s.saving}>
+          {s.saving ? 'Saving…' : 'Save'}
+        </button>
+        <button
+          class="btn btn--ghost"
+          onclick={() => nasBackup.run().then(() => nasBackup.refreshCounts())}
+          disabled={nasBackup.running || !s.current.nasUrl.trim()}
+        >
+          {nasBackup.running ? 'Backing up…' : 'Back up now'}
+        </button>
+      </div>
+
+      <div class="status-row">
+        <span class="status-key">Last data backup</span>
+        <span class="status-val">
+          {nasBackup.lastDataAt ? new Date(nasBackup.lastDataAt).toLocaleString('en-GB') : 'Never'}
+        </span>
+      </div>
+      <div class="status-row">
+        <span class="status-key">Photos on NAS</span>
+        <span class="status-val">{nasBackup.photosBacked}/{nasBackup.photosTotal}</span>
+      </div>
+      {#if nasBackup.lastError}
+        <p class="hint hint--warn">
+          Last attempt failed ({nasBackup.lastError}) — normal when away from the NAS; it retries
+          automatically.
+        </p>
+      {/if}
+    </div>
+
+    <!-- Legacy, optional: live-append to a Google capture sheet. The app is the
+         ledger now; CSV export is the normal route into the master sheet. -->
+    <details class="card legacy-card">
+      <summary class="section-title">Google Sheet sync (optional, legacy)</summary>
+      <p class="hint">
+        Live-appends each expense to a dedicated capture sheet via an Apps Script web app. Not
+        needed with the in-app ledger + CSV export; kept for those who want it (see
+        docs/apps-script-setup.md).
       </p>
 
       <div>
@@ -103,7 +180,7 @@
           <span class="hint hint--ok">Saved</span>
         {/if}
       </div>
-    </div>
+    </details>
 
     <div class="card">
       <h2 class="section-title">App &amp; storage</h2>

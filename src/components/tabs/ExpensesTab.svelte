@@ -26,7 +26,8 @@
   const skeletons = $derived(expenses.filter((e) => e.skeleton));
   const total = $derived(tripTotalGBP(expenses));
   const summary = $derived(categorySummary(expenses));
-  const pending = $derived(real.filter((e) => !e.synced).length);
+  const pending = $derived(real.filter((e) => !e.synced && !e.fxPending).length);
+  const unpricedCount = $derived(real.filter((e) => e.fxPending).length);
   const editedCount = $derived(real.filter((e) => e.synced && e.editedAfterSync).length);
 
   const hasUrl = $derived(settingsStore.current.webAppUrl.trim() !== '');
@@ -84,6 +85,11 @@
       <div>
         <span class="section-title">Trip total</span>
         <span class="total-value">{formatGBP(total)}</span>
+        {#if unpricedCount > 0}
+          <span class="hint" title="Priced automatically from the day's ECB rate when online">
+            +{unpricedCount} awaiting a rate
+          </span>
+        {/if}
       </div>
       <button class="btn btn--primary" onclick={openNew}>
         <Icon name="plus" size={20} /> Add
@@ -102,28 +108,28 @@
     {/if}
   </div>
 
-  <div class="card sync-card">
-    {#if !hasUrl}
-      <p class="hint hint--warn">
-        No capture URL set. Add it in <a href="#/settings">Settings</a> to sync.
-      </p>
-    {/if}
-    <div class="sync-actions">
-      <button class="btn btn--ghost" onclick={doSync} disabled={busy || !hasUrl}>
-        {pending > 0 ? `Sync ${pending} pending` : 'Sync'}
-      </button>
-      <button class="btn btn--ghost" onclick={doSubtotal} disabled={busy || !hasUrl}>
-        Append subtotal row
-      </button>
+  <!-- Optional legacy path: only shown when a Google Sheet web app is configured.
+       The app itself is the ledger; CSV export (Export tab / Insights) is the
+       normal way to update the master sheet. -->
+  {#if hasUrl}
+    <div class="card sync-card">
+      <div class="sync-actions">
+        <button class="btn btn--ghost" onclick={doSync} disabled={busy}>
+          {pending > 0 ? `Sync ${pending} pending` : 'Sync'}
+        </button>
+        <button class="btn btn--ghost" onclick={doSubtotal} disabled={busy}>
+          Append subtotal row
+        </button>
+      </div>
+      {#if editedCount > 0}
+        <p class="hint hint--warn">
+          {editedCount} row{editedCount > 1 ? 's were' : ' was'} edited after syncing. The sheet is append-only,
+          so amend {editedCount > 1 ? 'those rows' : 'that row'} there when you reconcile.
+        </p>
+      {/if}
+      {#if statusMsg}<p class="hint">{statusMsg}</p>{/if}
     </div>
-    {#if editedCount > 0}
-      <p class="hint hint--warn">
-        {editedCount} row{editedCount > 1 ? 's were' : ' was'} edited after syncing. The sheet is append-only,
-        so amend {editedCount > 1 ? 'those rows' : 'that row'} there when you reconcile.
-      </p>
-    {/if}
-    {#if statusMsg}<p class="hint">{statusMsg}</p>{/if}
-  </div>
+  {/if}
 
   {#if expenses.length === 0 && presetSkeletonCount > 0}
     <button class="btn btn--ghost" onclick={() => seedSkeleton(trip)}>
@@ -141,18 +147,23 @@
             <span class="expense-sub">{e.category} · {e.subcategory}</span>
           </span>
           <span class="expense-amt">
-            <span class="expense-gbp">{formatGBP(e.amountGBP)}</span>
+            <span class="expense-gbp">{e.fxPending ? '£ …' : formatGBP(e.amountGBP)}</span>
             {#if e.currency && e.currency !== 'GBP' && e.amountLocal}
               <span class="expense-local">{formatAmount(e.amountLocal, e.currency)}</span>
             {/if}
           </span>
+          {#if e.fxPending}
+            <span class="pill pill--fx" title="Awaiting exchange rate — prices itself when online"
+              >rate</span
+            >
+          {/if}
           {#if looksAnomalous(e)}<span class="flag" title="Local/GBP look mismatched">!</span>{/if}
           {#if e.synced && e.editedAfterSync}
             <span class="pill pill--edited" title="Edited after sync — amend the sheet row"
               >edited</span
             >
           {/if}
-          {#if !e.synced}<span class="dot-pending" title="Not yet synced"></span>{/if}
+          {#if hasUrl && !e.synced}<span class="dot-pending" title="Not yet synced"></span>{/if}
         </button>
       {/each}
     </div>

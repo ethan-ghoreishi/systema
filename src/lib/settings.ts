@@ -9,11 +9,17 @@ export interface Settings {
   webAppUrl: string;
   /** Optional shared token sent with each append (defence in depth). */
   sharedToken: string;
+  /** NAS backup receiver URL (see docs/nas-backup-setup.md). */
+  nasUrl: string;
+  /** Token the NAS receiver expects. */
+  nasToken: string;
 }
 
 export const defaultSettings: Settings = {
   webAppUrl: '',
   sharedToken: '',
+  nasUrl: '',
+  nasToken: '',
 };
 
 /**

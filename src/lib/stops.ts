@@ -87,6 +87,10 @@ export function checklistProgress(stop: Stop): Progress {
 export interface StopCandidate {
   name: string;
   notes: string;
+  /** Discovery items parsed from Markdown task lines (`- [ ] …`). */
+  checklist: { text: string; done: boolean }[];
+  lat?: number;
+  lng?: number;
 }
 
 // Section headings that are plan structure, never places.
@@ -103,13 +107,60 @@ function cleanName(raw: string): string {
     .trim();
 }
 
-/** Drop bold day/phase markers (e.g. "**Day 2**") that sit between stops. */
-function cleanNotes(body: string): string {
-  return body
-    .split(/\r?\n/)
-    .filter((line) => !/^\s*\*\*day\b.*\*\*\s*$/i.test(line))
-    .join('\n')
-    .trim();
+interface ParsedBody {
+  notes: string;
+  checklist: { text: string; done: boolean }[];
+  lat?: number;
+  lng?: number;
+}
+
+/**
+ * Split a stop's body into structured parts:
+ *  - `- [ ] …` task lines → tickable discovery-checklist items,
+ *  - a `Location: <lat>, <lng>` line → map coordinates,
+ *  - bold day/phase markers between stops are dropped,
+ *  - everything else stays as notes.
+ */
+function parseBody(body: string): ParsedBody {
+  const checklist: { text: string; done: boolean }[] = [];
+  const kept: string[] = [];
+  let lat: number | undefined;
+  let lng: number | undefined;
+
+  for (const line of body.split(/\r?\n/)) {
+    const task = line.match(/^\s*[-*]\s*\[([ xX])\]\s+(.+)$/);
+    if (task) {
+      checklist.push({ text: task[2].trim(), done: task[1].trim() !== '' });
+      continue;
+    }
+    const loc = line.match(
+      /^\s*(?:[-*]\s*)?\**location\**[:\s]\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/i,
+    );
+    if (loc) {
+      const la = Number(loc[1]);
+      const ln = Number(loc[2]);
+      if (Math.abs(la) <= 90 && Math.abs(ln) <= 180) {
+        lat = la;
+        lng = ln;
+        continue;
+      }
+    }
+    if (/^\s*\*\*day\b.*\*\*\s*$/i.test(line)) continue;
+    kept.push(line);
+  }
+
+  return { notes: kept.join('\n').trim(), checklist, lat, lng };
+}
+
+function toCandidate(name: string, body: string): StopCandidate {
+  const parsed = parseBody(body);
+  return {
+    name: cleanName(name),
+    notes: parsed.notes,
+    checklist: parsed.checklist,
+    lat: parsed.lat,
+    lng: parsed.lng,
+  };
 }
 
 /**
@@ -143,7 +194,7 @@ export function extractStopsFromPlan(planText: string): StopCandidate[] {
     candidates = inner
       .filter((s) => !DAY_HEAD.test(s.name))
       .filter((s) => (stopLevel === null ? true : s.depth >= stopLevel))
-      .map((s) => ({ name: cleanName(s.name), notes: cleanNotes(s.notes) }));
+      .map((s) => toCandidate(s.name, s.notes));
   }
 
   // 2) Fallback: deepest-level headings that don't look like plan sections.
@@ -151,7 +202,7 @@ export function extractStopsFromPlan(planText: string): StopCandidate[] {
     for (const depth of [3, 2]) {
       candidates = sections
         .filter((s) => s.depth === depth && !NON_STOP.test(s.text) && !DAY_HEAD.test(s.text))
-        .map((s) => ({ name: cleanName(s.text), notes: cleanNotes(s.body) }));
+        .map((s) => toCandidate(s.text, s.body));
       if (candidates.length > 0) break;
     }
   }
@@ -182,8 +233,10 @@ export async function importStopsFromPlan(
     cityId: null,
     name: c.name,
     notes: c.notes,
-    checklist: [],
+    checklist: c.checklist.map((item) => ({ id: newId(), text: item.text, done: item.done })),
     visited: false,
+    lat: c.lat,
+    lng: c.lng,
     order: base + i,
     createdAt: now,
   }));

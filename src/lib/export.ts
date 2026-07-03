@@ -1,6 +1,7 @@
 import { db, type City, type Expense, type FxRate, type Photo, type Stop, type Trip } from './db';
 import { presetByType } from './presets';
 import { formatDateRange } from './format';
+import { formatSheetDate } from './sheet';
 import { realExpenses, tripTotalGBP, categorySummary } from './expenses';
 import { formatGBP } from './money';
 
@@ -85,15 +86,75 @@ export function buildTripPack(
 }
 
 // The journaling prompt from the brief's appendix. Plain UK English, no em-dashes.
+// The [photo: ...] placeholder contract matches src/lib/journal.ts, which swaps
+// the placeholders for the real stored photographs when the journal is rendered.
 export const JOURNAL_PROMPT =
   'You are helping me write a post-trip journal in my City Systems Playbook style. ' +
   'Using the trip pack below (plan, ticked stops, notes, photos list, expense summary), ' +
   'write a debrief that states my city thesis, tests it against what I actually saw, gives a ' +
   'short reading of each main stop, draws the London and Esfahan contrasts, and ends with a ' +
-  'brief counterfactual on what I would do differently. Plain UK English, no em-dashes. Trip pack:';
+  'brief counterfactual on what I would do differently. Plain UK English, no em-dashes. ' +
+  'The Photos section of the pack lists the photographs I took, by stop and time. Where one ' +
+  'would naturally illustrate the narrative, insert a placeholder on its own line in exactly ' +
+  'this form: [photo: <stop name>] - use only stop names from the Photos list, at most as many ' +
+  'placeholders per stop as it has photos, placed where they best support the text. My app ' +
+  'replaces them with the real photographs. Trip pack:';
 
 export function buildJournalingPrompt(pack: string): string {
   return `${JOURNAL_PROMPT}\n\n${pack}`;
+}
+
+/**
+ * Journal-reconstruction prompt for trips that predate the app (imported from
+ * the expense ledger, no plan/notes/photos). The expense trail is the memory
+ * scaffold: Claude interviews first, then writes the journal in house style.
+ */
+export function buildMemoryPrompt(trip: Trip, stops: Stop[], expenses: Expense[]): string {
+  const real = realExpenses(expenses);
+  const lines: string[] = [];
+
+  lines.push(
+    'You are helping me reconstruct and write a post-trip journal in my City Systems Playbook ' +
+      'style for a trip taken before I kept notes. Work in two steps.',
+    '',
+    '**Step 1 - interview me.** Using the expense trail and visited places below as the memory ' +
+      'scaffold, ask me 6-8 sharp, specific questions, then wait for my answers. Cover: my one-line ' +
+      'thesis of how the city works; a concrete moment at each main visited place; what the streets ' +
+      'and people did that London would not do; where Esfahan or Iranian instincts surfaced; the ' +
+      'food situation (coeliac-safe vegetarian, grocery-first); one thing that surprised us; one ' +
+      'thing we would do differently.',
+    '',
+    '**Step 2 - after I answer,** write the debrief: state the city thesis, test it against what I ' +
+      'recalled, give a short reading of each main stop, draw the London and Esfahan contrasts, and ' +
+      'end with a brief counterfactual. Plain UK English, no em-dashes. We travel as a party of ' +
+      `${trip.partySize}.`,
+    '',
+    `## Trip`,
+    '',
+    `Destination: ${trip.name}`,
+    `Dates: ${formatDateRange(trip.startDate, trip.endDate)}`,
+    '',
+  );
+
+  const visited = [...stops].sort((a, b) => a.order - b.order).filter((s) => s.visited);
+  if (visited.length) {
+    lines.push('## Places visited (from tickets and entries)', '');
+    for (const s of visited) lines.push(`- ${s.name}`);
+    lines.push('');
+  }
+
+  if (real.length) {
+    lines.push(`## Expense trail (total ${formatGBP(tripTotalGBP(real))})`, '');
+    for (const e of real) {
+      const what = e.description || e.subcategory;
+      lines.push(
+        `- ${formatSheetDate(e.date)} ${e.category} / ${e.subcategory}: ${what} (${formatGBP(e.amountGBP)})`,
+      );
+    }
+    lines.push('');
+  }
+
+  return lines.join('\n').trim() + '\n';
 }
 
 // ---- Full JSON backup / import ----
@@ -159,6 +220,34 @@ export async function buildBackup(): Promise<Backup> {
     fxRates,
     settings,
     photos,
+  };
+}
+
+/**
+ * A data-only snapshot (no photo blobs) for the opportunistic NAS push — small
+ * enough to send after every change. Photos travel separately, one file each.
+ */
+export async function buildDataBackup(): Promise<Backup> {
+  const [trips, cities, stops, expenses, fxRates, settings] = await Promise.all([
+    db.trips.toArray(),
+    db.cities.toArray(),
+    db.stops.toArray(),
+    db.expenses.toArray(),
+    db.fxRates.toArray(),
+    db.kv.toArray(),
+  ]);
+
+  return {
+    app: 'systema',
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    trips,
+    cities,
+    stops,
+    expenses,
+    fxRates,
+    settings,
+    photos: [],
   };
 }
 

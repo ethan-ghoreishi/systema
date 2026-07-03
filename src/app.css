@@ -1322,7 +1322,8 @@ textarea.field {
   color: var(--accent);
 }
 
-.pill--edited {
+.pill--edited,
+.pill--fx {
   flex: 0 0 auto;
   background: var(--surface-sunken);
   color: var(--warn);
@@ -1330,12 +1331,184 @@ textarea.field {
   font-size: 11px;
 }
 
+.pill--fx {
+  color: var(--accent);
+}
+
 .past-title {
   margin-top: var(--s2);
 }
 
 .trip-card--past {
-  opacity: 0.85;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.trip-card-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.trip-cover {
+  flex: 0 0 auto;
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border-radius: var(--r);
+  border: 1px solid var(--hairline);
+}
+
+/* ---------- Insights ---------- */
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--s3);
+}
+
+.stat {
+  gap: 2px;
+  align-items: flex-start;
+}
+
+.stat-value {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-label {
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+.bar-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 0;
+  text-decoration: none;
+}
+
+.bar-row--link {
+  cursor: pointer;
+}
+
+.bar-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s3);
+}
+
+.bar-label {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ink);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bar-sub {
+  font-size: 12px;
+  color: var(--ink-faint);
+  font-weight: 400;
+  margin-left: 6px;
+}
+
+.bar-amt {
+  flex: 0 0 auto;
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.bar-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface-sunken);
+  overflow: hidden;
+}
+
+.bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+  opacity: 0.75;
+}
+
+.legacy-card summary {
+  cursor: pointer;
+  list-style: revert;
+}
+
+/* ---------- Journal ---------- */
+
+.journal {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+}
+
+.journal-meta {
+  gap: 6px;
+}
+
+.journal-trip-name {
+  font-size: 21px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.journal-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+
+.journal-photo {
+  margin: 0;
+}
+
+.journal-photo img {
+  width: 100%;
+  border-radius: var(--r-lg);
+  border: 1px solid var(--hairline);
+  display: block;
+}
+
+.journal-photo figcaption {
+  font-size: 12px;
+  color: var(--ink-faint);
+  text-align: center;
+  padding-top: 6px;
+}
+
+.journal-gallery {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  border-top: 1px solid var(--hairline);
+  padding-top: var(--s4);
+}
+
+.journal-gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--s3);
+}
+
+.journal-photo--small img {
+  aspect-ratio: 1;
+  object-fit: cover;
 }
 
 /* Short phones: compact the keypad so the capture sheet fits comfortably. */
@@ -1348,6 +1521,85 @@ textarea.field {
   .amount-local {
     font-size: 32px;
   }
+}
+
+/* ---------- Stops map ---------- */
+
+.map-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+
+.map-canvas {
+  height: 52dvh;
+  min-height: 320px;
+  border-radius: var(--r-lg);
+  border: 1px solid var(--hairline);
+  overflow: hidden;
+  z-index: 0; /* keep Leaflet panes under the app's modals/toasts */
+}
+
+.map-pin {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-ink);
+  border: 2px solid var(--paper);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.map-pin--visited {
+  background: var(--surface-sunken);
+  color: var(--ink-faint);
+  border-color: var(--hairline);
+  text-decoration: line-through;
+}
+
+.map-placing {
+  padding: 8px 12px;
+  background: var(--accent-soft);
+  border-radius: var(--r);
+}
+
+.link-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  text-decoration: underline;
+  cursor: pointer;
+  font: inherit;
+}
+
+.map-unplaced {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+
+.map-unplaced-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  padding: 8px 12px;
+  border: 1px dashed var(--hairline);
+  border-radius: var(--r);
+}
+
+.stops-toggle {
+  align-self: center;
+}
+
+.leaflet-container {
+  font-family: var(--font);
 }
 
 /* ---------- Update / offline toast ---------- */

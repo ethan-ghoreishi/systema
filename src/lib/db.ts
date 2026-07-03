@@ -70,6 +70,9 @@ export interface Stop {
   notes: string; // free text — where lens content (system reading, contrasts) is pasted
   checklist: ChecklistItem[];
   visited: boolean;
+  /** Optional map position (imported from the plan or placed by hand). */
+  lat?: number;
+  lng?: number;
   order: number;
   createdAt: number;
 }
@@ -83,6 +86,8 @@ export interface Photo {
   expenseId: string | null; // set for kind === 'receipt'
   kind: PhotoKind;
   blob: Blob;
+  /** Pushed to the NAS backup vault (safe to delete locally to free space). */
+  backedUp?: boolean;
   createdAt: number;
 }
 
@@ -105,6 +110,8 @@ export interface Expense {
   // Local-only metadata (not written verbatim to the sheet):
   currency: string;
   fxRate: number | null;
+  /** Saved without a GBP value; auto-priced from the ECB rate when online. */
+  fxPending?: boolean;
   synced: boolean;
   /** Transaction# recorded at sync time, so sheet numbering stays stable. */
   syncedNo?: number;

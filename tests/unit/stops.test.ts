@@ -83,6 +83,32 @@ describe('extractStopsFromPlan', () => {
     ]);
   });
 
+  it('pulls checkbox lines into a discovery checklist and Location into coordinates', () => {
+    const md = [
+      '## Route',
+      '### Carlsberg Laboratory',
+      '- welfare-state instinct in private form',
+      '- [ ] find the Laboratorium inscription',
+      '- [x] spot the founder statue',
+      'Location: 55.6652, 12.5306',
+      '### The harbour baths',
+      "- water's edge public by default",
+    ].join('\n');
+    const [carls, baths] = extractStopsFromPlan(md);
+
+    expect(carls.checklist).toEqual([
+      { text: 'find the Laboratorium inscription', done: false },
+      { text: 'spot the founder statue', done: true },
+    ]);
+    expect(carls.lat).toBeCloseTo(55.6652);
+    expect(carls.lng).toBeCloseTo(12.5306);
+    // Checklist + Location lines are stripped out of the notes.
+    expect(carls.notes).toBe('- welfare-state instinct in private form');
+
+    expect(baths.checklist).toEqual([]);
+    expect(baths.lat).toBeUndefined();
+  });
+
   it('falls back to depth-3 headings, filtering plan-section names and numbering', () => {
     const md = [
       '### 1) Executive summary',

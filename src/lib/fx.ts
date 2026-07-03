@@ -22,6 +22,26 @@ export function convertToGBP(localAmount: number, rate: number): number {
 }
 
 /**
+ * Rate for a specific past date ('YYYY-MM-DD') — used to auto-price expenses
+ * that were saved offline without a rate, at the rate of the day they were
+ * spent. One-shot repair, only called when online; not cached.
+ */
+export async function getRateForDate(code: string, date: string): Promise<number | null> {
+  const c = code.trim().toUpperCase();
+  if (!c || c === 'GBP') return 1;
+  const d = /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : todayIso();
+  try {
+    const res = await fetch(`${FRANKFURTER}/${d}?from=${encodeURIComponent(c)}&to=GBP`);
+    if (!res.ok) return null;
+    const data = (await res.json()) as { rates?: Record<string, number> };
+    const rate = data.rates?.GBP;
+    return typeof rate === 'number' && Number.isFinite(rate) ? rate : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Resolve the local→GBP rate for a currency. Tries today's cache, then the
  * network, then any stale cache. Returns null if unavailable (offline with no
  * cache, or an ECB-unsupported currency).

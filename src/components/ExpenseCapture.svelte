@@ -105,13 +105,14 @@
   const finalGBP = $derived(overrideNum != null ? overrideNum : (computedGBP ?? 0));
   const subOptions = $derived(category ? (subcategories[category] ?? []) : []);
 
+  // No GBP required: a non-GBP amount with no rate saves as "awaiting rate"
+  // and prices itself from the ECB rate for its date once online.
   const canSave = $derived(
     localNum > 0 &&
       category !== '' &&
       subcategory !== '' &&
       paymentMethod !== '' &&
-      destination.trim() !== '' &&
-      (isGBP || rate != null || overrideNum != null),
+      destination.trim() !== '',
   );
 
   function pickCategory(c: string) {
@@ -143,6 +144,7 @@
     if (!canSave) return;
 
     const usingAutoRate = !isGBP && overrideNum == null && rate != null;
+    const unpriced = !isGBP && overrideNum == null && rate == null;
     let finalNotes = notes.trim();
     if (usingAutoRate) {
       const fxNote = `FX: 1 ${currency} = £${rate}`;
@@ -157,10 +159,11 @@
       subcategory,
       description: description.trim(),
       paymentMethod,
-      amountGBP: finalGBP,
+      amountGBP: unpriced ? 0 : finalGBP,
       amountLocal: isGBP ? 0 : localNum,
       currency: isGBP ? 'GBP' : currency,
       fxRate: isGBP ? null : overrideNum != null ? null : rate,
+      fxPending: unpriced,
       notes: finalNotes,
     };
 
@@ -235,7 +238,7 @@
         {#if !isGBP}
           <span class="amount-gbp">
             {#if rateMissing && overrideNum == null}
-              no rate for {currency} — enter £ below
+              no rate right now — saves anyway, prices itself when online
             {:else}
               = {formatGBP(finalGBP)}{rateStale ? ' (cached rate)' : ''}
             {/if}
