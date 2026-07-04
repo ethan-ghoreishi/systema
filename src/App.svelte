@@ -12,7 +12,7 @@
   import UpdateToast from './components/UpdateToast.svelte';
   import { router } from './lib/router.svelte';
   import { settingsStore } from './lib/settings.svelte';
-  import { initAutoSync, syncEverything } from './lib/sync';
+  import { initFxAutoResolve, resolvePendingFx } from './lib/expenses';
   import { nasBackup } from './lib/nas.svelte';
 
   type View =
@@ -41,9 +41,9 @@
 
   onMount(() => {
     void settingsStore.load().then(() => nasBackup.init());
-    initAutoSync();
-    // On every open: price rate-pending expenses and flush queued sheet rows.
-    void syncEverything();
+    initFxAutoResolve();
+    // On every open, price any expenses captured offline without a rate.
+    void resolvePendingFx();
     // Ask the browser to keep our local data (best effort; reduces eviction).
     if (navigator.storage?.persist) void navigator.storage.persist();
   });

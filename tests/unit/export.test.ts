@@ -52,7 +52,6 @@ function exp(over: Partial<Expense> = {}): Expense {
     notes: '',
     currency: 'GBP',
     fxRate: null,
-    synced: false,
     skeleton: false,
     order: 0,
     createdAt: 0,

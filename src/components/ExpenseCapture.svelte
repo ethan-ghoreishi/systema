@@ -3,8 +3,7 @@
   import { db, type City, type Expense, type Trip } from '../lib/db';
   import { newId } from '../lib/ids';
   import { getRate } from '../lib/fx';
-  import { addExpense, deleteExpense, updateExpense } from '../lib/expenses';
-  import { syncTrip } from '../lib/sync';
+  import { addExpense, deleteExpense, updateExpense, resolvePendingFx } from '../lib/expenses';
   import { categories, subcategories, paymentMethods } from '../lib/vocab';
   import { formatAmount, formatGBP, perPersonNote } from '../lib/money';
   import { todayIso } from '../lib/sheet';
@@ -169,16 +168,7 @@
 
     let expenseId: string;
     if (expense) {
-      // The sheet is append-only: a row already sent can't be updated remotely.
-      // Keep it marked synced (so it isn't re-sent as a duplicate) and flag it
-      // as edited so the list shows the sheet needs a manual amend.
-      const wasSynced = expense.synced && !expense.skeleton;
-      await updateExpense(expense.id, {
-        ...fields,
-        skeleton: false,
-        synced: wasSynced,
-        editedAfterSync: wasSynced ? true : (expense.editedAfterSync ?? false),
-      });
+      await updateExpense(expense.id, { ...fields, skeleton: false });
       expenseId = expense.id;
     } else {
       expenseId = await addExpense(trip.id, fields);
@@ -196,17 +186,14 @@
       });
     }
 
-    if (navigator.onLine) void syncTrip(trip.id);
+    // If this was saved without a rate, price it now while we're online.
+    if (navigator.onLine) void resolvePendingFx(trip.id);
     onClose();
   }
 
   async function remove() {
     if (!expense) return;
-    const msg = expense.skeleton
-      ? 'Remove this skeleton row?'
-      : expense.synced
-        ? 'Delete this expense? The row already sent to your capture sheet stays there — remove it in the sheet when you reconcile.'
-        : 'Delete this expense? It has not been synced, so nothing changes in the sheet.';
+    const msg = expense.skeleton ? 'Remove this skeleton row?' : 'Delete this expense?';
     if (confirm(msg)) {
       await deleteExpense(expense.id);
       onClose();

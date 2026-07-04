@@ -95,9 +95,9 @@ export interface Expense {
   id: string;
   tripId: string;
   cityId: string | null;
-  // Sheet columns (Transaction# and Subtotal are derived at sync time, not stored:
-  // Transaction# is the row's 1-based position within the trip, and Subtotal is a
-  // separate per-trip total row).
+  // Master-sheet columns (Transaction# and Subtotal are derived at CSV-export
+  // time, not stored: Transaction# is the row's 1-based position within the
+  // trip, and Subtotal is a separate per-trip total row).
   date: string;
   destination: string;
   category: string;
@@ -112,11 +112,6 @@ export interface Expense {
   fxRate: number | null;
   /** Saved without a GBP value; auto-priced from the ECB rate when online. */
   fxPending?: boolean;
-  synced: boolean;
-  /** Transaction# recorded at sync time, so sheet numbering stays stable. */
-  syncedNo?: number;
-  /** Edited locally after it was sent — the sheet row needs a manual amend. */
-  editedAfterSync?: boolean;
   skeleton: boolean; // pre-seeded placeholder row vs. a real entry
   order: number;
   createdAt: number;

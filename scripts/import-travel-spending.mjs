@@ -10,7 +10,7 @@
  * Produces per trip:
  *  - Trip (status 'done', named "City (Mon YYYY)")
  *  - Cities (from Destination, currency inferred from local amounts)
- *  - Expenses (marked synced: they already live in the master sheet)
+ *  - Expenses (already reconciled in the master sheet before the app existed)
  *  - visited Stops inferred from Experiences rows (journal scaffolding)
  *
  * Usage: node scripts/import-travel-spending.mjs <dump.md> <out.json>
@@ -236,8 +236,6 @@ trips.forEach((t, ti) => {
       notes: r.notes,
       currency: r.local.currency || (r.local.amount ? '' : 'GBP'),
       fxRate: null,
-      synced: true, // already in the master sheet — never re-synced
-      syncedNo: r.txn,
       skeleton: false,
       order: ri,
       createdAt: now,

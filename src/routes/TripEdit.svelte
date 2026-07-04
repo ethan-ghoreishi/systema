@@ -43,8 +43,7 @@
     if (
       confirm(
         'Delete this trip and all its cities, stops, photos and expenses from this device? ' +
-          'This cannot be undone. Rows already synced to your capture sheet stay in the sheet ' +
-          '(it is append-only) — remove them there if needed. ' +
+          'This cannot be undone. ' +
           'Tip: past trips can be kept instead by setting Status to Done.',
       )
     ) {

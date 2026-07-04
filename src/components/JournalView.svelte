@@ -6,6 +6,7 @@
   import { realExpenses, tripTotalGBP } from '../lib/expenses';
   import { formatGBP } from '../lib/money';
   import { formatDateRange } from '../lib/format';
+  import StopsMap from './StopsMap.svelte';
 
   /**
    * The trip journal, rendered as a piece: a stats header, the journal prose
@@ -54,6 +55,8 @@
   function captionFor(p: Photo): string {
     return p.stopId ? (stopNameById[p.stopId] ?? '') : '';
   }
+
+  const mappedStops = $derived(stops.filter((s) => s.lat != null && s.lng != null));
 </script>
 
 <div class="journal">
@@ -66,6 +69,15 @@
       {#if photos.length}<span>{photos.length} photograph{photos.length > 1 ? 's' : ''}</span>{/if}
     </div>
   </div>
+
+  {#if mappedStops.length}
+    <div class="journal-map">
+      <span class="section-title">The route</span>
+      {#key mappedStops.length}
+        <StopsMap {stops} readonly />
+      {/key}
+    </div>
+  {/if}
 
   {#each segments as seg, i (i)}
     {#if seg.kind === 'md'}

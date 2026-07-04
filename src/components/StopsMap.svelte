@@ -14,9 +14,11 @@
   let {
     stops,
     onOpen,
+    readonly = false,
   }: {
     stops: Stop[];
-    onOpen: (stop: Stop) => void;
+    onOpen?: (stop: Stop) => void;
+    readonly?: boolean;
   } = $props();
 
   let mapEl: HTMLDivElement;
@@ -49,16 +51,17 @@
       line.push(pos);
       const m = L.marker(pos, {
         icon: markerIcon(i + 1, s.visited),
-        draggable: true,
+        draggable: !readonly,
         title: s.name,
       });
-      m.bindPopup(
-        `<strong>${i + 1}. ${escapeHtml(s.name)}</strong><br/><a href="#/trip/${s.tripId}/stops/${s.id}">Open stop</a>`,
-      );
-      m.on('dragend', () => {
-        const p = m.getLatLng();
-        void updateStop(s.id, { lat: round6(p.lat), lng: round6(p.lng) });
-      });
+      const link = readonly ? '' : `<br/><a href="#/trip/${s.tripId}/stops/${s.id}">Open stop</a>`;
+      m.bindPopup(`<strong>${i + 1}. ${escapeHtml(s.name)}</strong>${link}`);
+      if (!readonly) {
+        m.on('dragend', () => {
+          const p = m.getLatLng();
+          void updateStop(s.id, { lat: round6(p.lat), lng: round6(p.lng) });
+        });
+      }
       layer!.addLayer(m);
     });
 
@@ -91,13 +94,19 @@
   }
 
   onMount(() => {
-    map = L.map(mapEl, { zoomControl: true, attributionControl: true });
+    map = L.map(mapEl, {
+      zoomControl: !readonly,
+      attributionControl: true,
+      // In a journal the map sits in a scrolling page; don't trap the page
+      // scroll with the wheel, and don't let it grab focus.
+      scrollWheelZoom: !readonly,
+    });
     L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
       attribution: '&copy; OpenStreetMap contributors',
     }).addTo(map);
     layer = L.layerGroup().addTo(map);
-    map.on('click', onMapClick);
+    if (!readonly) map.on('click', onMapClick);
     // Sensible default before any stop is placed.
     map.setView([51.5074, -0.1278], 11);
     redraw();
@@ -118,33 +127,35 @@
 <div class="map-wrap">
   <div class="map-canvas" bind:this={mapEl}></div>
 
-  {#if placingId}
-    {@const placing = stops.find((s) => s.id === placingId)}
-    <p class="hint hint--ok map-placing">
-      Tap the map to place “{placing?.name}” — or
-      <button class="link-btn" onclick={() => (placingId = null)}>cancel</button>
-    </p>
-  {/if}
+  {#if !readonly}
+    {#if placingId}
+      {@const placing = stops.find((s) => s.id === placingId)}
+      <p class="hint hint--ok map-placing">
+        Tap the map to place “{placing?.name}” — or
+        <button class="link-btn" onclick={() => (placingId = null)}>cancel</button>
+      </p>
+    {/if}
 
-  {#if unplaced.length}
-    <div class="map-unplaced">
-      <span class="section-title">Not on the map yet</span>
-      {#each unplaced as s (s.id)}
-        <div class="map-unplaced-row">
-          <button class="stop-open" onclick={() => onOpen(s)}>
-            <span class="stop-name">{s.name}</span>
-          </button>
-          <button class="btn btn--ghost btn--sm" onclick={() => (placingId = s.id)}>
-            Place on map
-          </button>
-        </div>
-      {/each}
-    </div>
-  {/if}
+    {#if unplaced.length}
+      <div class="map-unplaced">
+        <span class="section-title">Not on the map yet</span>
+        {#each unplaced as s (s.id)}
+          <div class="map-unplaced-row">
+            <button class="stop-open" onclick={() => onOpen?.(s)}>
+              <span class="stop-name">{s.name}</span>
+            </button>
+            <button class="btn btn--ghost btn--sm" onclick={() => (placingId = s.id)}>
+              Place on map
+            </button>
+          </div>
+        {/each}
+      </div>
+    {/if}
 
-  {#if placed.length === 0 && unplaced.length === 0}
-    <p class="hint">
-      No stops yet — add them on the List view or extract them from the plan first.
-    </p>
+    {#if placed.length === 0 && unplaced.length === 0}
+      <p class="hint">
+        No stops yet — add them on the List view or extract them from the plan first.
+      </p>
+    {/if}
   {/if}
 </div>

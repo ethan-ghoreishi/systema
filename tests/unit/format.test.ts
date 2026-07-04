@@ -1,27 +1,20 @@
 import { describe, it, expect } from 'vitest';
-import { isLikelyAppsScriptUrl, normaliseWebAppUrl } from '../../src/lib/format';
+import { formatDateRange } from '../../src/lib/format';
 
-describe('isLikelyAppsScriptUrl', () => {
-  it('accepts a script.google.com /exec URL', () => {
-    expect(isLikelyAppsScriptUrl('https://script.google.com/macros/s/ABC123/exec')).toBe(true);
+describe('formatDateRange', () => {
+  it('shows a placeholder when both dates are empty', () => {
+    expect(formatDateRange('', '')).toBe('Dates TBC');
   });
 
-  it('rejects non-Apps-Script hosts', () => {
-    expect(isLikelyAppsScriptUrl('https://example.com/macros/s/ABC/exec')).toBe(false);
+  it('formats a single day when start equals end', () => {
+    expect(formatDateRange('2024-06-04', '2024-06-04')).toBe('4 Jun');
   });
 
-  it('rejects http (non-TLS)', () => {
-    expect(isLikelyAppsScriptUrl('http://script.google.com/macros/s/ABC/exec')).toBe(false);
+  it('formats a range with an en dash', () => {
+    expect(formatDateRange('2024-06-04', '2024-06-06')).toBe('4 Jun – 6 Jun');
   });
 
-  it('rejects garbage', () => {
-    expect(isLikelyAppsScriptUrl('not a url')).toBe(false);
-    expect(isLikelyAppsScriptUrl('')).toBe(false);
-  });
-});
-
-describe('normaliseWebAppUrl', () => {
-  it('trims surrounding whitespace', () => {
-    expect(normaliseWebAppUrl('  https://x/exec  ')).toBe('https://x/exec');
+  it('falls back to whichever date is present', () => {
+    expect(formatDateRange('2024-06-04', '')).toBe('4 Jun');
   });
 });

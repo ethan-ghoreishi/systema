@@ -3,7 +3,6 @@
   import TopBar from '../components/TopBar.svelte';
   import { settingsStore } from '../lib/settings.svelte';
   import { connectivity } from '../lib/connectivity.svelte';
-  import { isLikelyAppsScriptUrl } from '../lib/format';
   import { nasBackup } from '../lib/nas.svelte';
   import { buildBackup, importBackup } from '../lib/export';
   import { downloadText } from '../lib/download';
@@ -17,8 +16,9 @@
   let canInstall = $state<boolean>(false);
   let deferredPrompt: any = null;
 
-  const urlLooksValid = $derived(
-    s.current.webAppUrl.trim() === '' || isLikelyAppsScriptUrl(s.current.webAppUrl.trim()),
+  // A secure (HTTPS) page cannot call an insecure (http://) endpoint.
+  const nasUrlMixed = $derived(
+    location.protocol === 'https:' && /^http:\/\//i.test(s.current.nasUrl.trim()),
   );
 
   onMount(() => {
@@ -133,6 +133,7 @@
         <input
           id="nas-url"
           class="field"
+          class:field--warn={nasUrlMixed}
           type="url"
           inputmode="url"
           autocomplete="off"
@@ -141,6 +142,14 @@
           placeholder="https://your-nas.synology.me/systema-backup.php"
           bind:value={s.current.nasUrl}
         />
+        {#if nasUrlMixed}
+          <p class="hint hint--warn">
+            This app runs over HTTPS, so it can only call an <strong>https://</strong> address with
+            a valid certificate — a plain <code>http://192.168.x.x</code> URL is blocked by the
+            browser (mixed content), even on home wifi. If your ISP blocks inbound (so
+            <code>synology.me</code> won't load), the robust fix is Tailscale — see the setup guide.
+          </p>
+        {/if}
       </div>
 
       <div>
@@ -222,60 +231,6 @@
       </button>
       {#if dataStatus}<p class="hint hint--ok">{dataStatus}</p>{/if}
     </div>
-
-    <!-- Legacy, optional: live-append to a Google capture sheet. The app is the
-         ledger now; CSV export is the normal route into the master sheet. -->
-    <details class="card legacy-card">
-      <summary class="section-title">Google Sheet sync (optional, legacy)</summary>
-      <p class="hint">
-        Live-appends each expense to a dedicated capture sheet via an Apps Script web app. Not
-        needed with the in-app ledger + CSV export; kept for those who want it (see
-        docs/apps-script-setup.md).
-      </p>
-
-      <div>
-        <label class="label" for="webapp-url">Apps Script web app URL</label>
-        <input
-          id="webapp-url"
-          class="field"
-          class:field--warn={!urlLooksValid}
-          type="url"
-          inputmode="url"
-          autocomplete="off"
-          autocapitalize="off"
-          spellcheck="false"
-          placeholder="https://script.google.com/macros/s/…/exec"
-          bind:value={s.current.webAppUrl}
-        />
-        {#if !urlLooksValid}
-          <p class="hint hint--warn">That doesn't look like a Google Apps Script /exec URL.</p>
-        {/if}
-      </div>
-
-      <div>
-        <label class="label" for="shared-token">Shared token (optional)</label>
-        <input
-          id="shared-token"
-          class="field"
-          type="text"
-          autocomplete="off"
-          autocapitalize="off"
-          spellcheck="false"
-          placeholder="Optional shared secret"
-          bind:value={s.current.sharedToken}
-        />
-        <p class="hint">Stored only on this device. No other secrets are kept.</p>
-      </div>
-
-      <div class="save-bar">
-        <button class="btn btn--primary" onclick={() => s.save()} disabled={s.saving}>
-          {s.saving ? 'Saving…' : 'Save'}
-        </button>
-        {#if s.savedAt}
-          <span class="hint hint--ok">Saved</span>
-        {/if}
-      </div>
-    </details>
 
     <div class="card">
       <h2 class="section-title">App &amp; storage</h2>

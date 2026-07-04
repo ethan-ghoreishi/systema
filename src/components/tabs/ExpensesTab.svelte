@@ -8,10 +8,8 @@
     looksAnomalous,
     seedSkeleton,
   } from '../../lib/expenses';
-  import { syncTrip, appendSubtotalRow } from '../../lib/sync';
   import { presetByType } from '../../lib/presets';
   import { formatGBP, formatAmount } from '../../lib/money';
-  import { settingsStore } from '../../lib/settings.svelte';
   import ExpenseCapture from '../ExpenseCapture.svelte';
   import Icon from '../Icon.svelte';
 
@@ -26,11 +24,7 @@
   const skeletons = $derived(expenses.filter((e) => e.skeleton));
   const total = $derived(tripTotalGBP(expenses));
   const summary = $derived(categorySummary(expenses));
-  const pending = $derived(real.filter((e) => !e.synced && !e.fxPending).length);
   const unpricedCount = $derived(real.filter((e) => e.fxPending).length);
-  const editedCount = $derived(real.filter((e) => e.synced && e.editedAfterSync).length);
-
-  const hasUrl = $derived(settingsStore.current.webAppUrl.trim() !== '');
   const presetSkeletonCount = $derived(presetByType(trip.type).skeleton.length);
 
   // `cities` is otherwise only read inside the capture modal, which would delay
@@ -44,9 +38,6 @@
   let captureExpense = $state<Expense | null>(null);
   let captureKey = $state(0);
 
-  let busy = $state(false);
-  let statusMsg = $state('');
-
   function openNew() {
     captureExpense = null;
     captureKey += 1;
@@ -56,26 +47,6 @@
     captureExpense = e;
     captureKey += 1;
     captureOpen = true;
-  }
-
-  async function doSync() {
-    busy = true;
-    statusMsg = '';
-    const r = await syncTrip(trip.id);
-    busy = false;
-    statusMsg = r.ok
-      ? r.synced
-        ? `Synced ${r.synced} row(s)`
-        : 'Nothing to sync'
-      : `Failed: ${r.error}`;
-  }
-
-  async function doSubtotal() {
-    busy = true;
-    statusMsg = '';
-    const r = await appendSubtotalRow(trip.id);
-    busy = false;
-    statusMsg = r.ok ? 'Subtotal row appended' : `Failed: ${r.error}`;
   }
 </script>
 
@@ -108,29 +79,6 @@
     {/if}
   </div>
 
-  <!-- Optional legacy path: only shown when a Google Sheet web app is configured.
-       The app itself is the ledger; CSV export (Export tab / Insights) is the
-       normal way to update the master sheet. -->
-  {#if hasUrl}
-    <div class="card sync-card">
-      <div class="sync-actions">
-        <button class="btn btn--ghost" onclick={doSync} disabled={busy}>
-          {pending > 0 ? `Sync ${pending} pending` : 'Sync'}
-        </button>
-        <button class="btn btn--ghost" onclick={doSubtotal} disabled={busy}>
-          Append subtotal row
-        </button>
-      </div>
-      {#if editedCount > 0}
-        <p class="hint hint--warn">
-          {editedCount} row{editedCount > 1 ? 's were' : ' was'} edited after syncing. The sheet is append-only,
-          so amend {editedCount > 1 ? 'those rows' : 'that row'} there when you reconcile.
-        </p>
-      {/if}
-      {#if statusMsg}<p class="hint">{statusMsg}</p>{/if}
-    </div>
-  {/if}
-
   {#if expenses.length === 0 && presetSkeletonCount > 0}
     <button class="btn btn--ghost" onclick={() => seedSkeleton(trip)}>
       Add the {presetSkeletonCount} skeleton rows for a {presetByType(trip.type).label} trip
@@ -158,12 +106,6 @@
             >
           {/if}
           {#if looksAnomalous(e)}<span class="flag" title="Local/GBP look mismatched">!</span>{/if}
-          {#if e.synced && e.editedAfterSync}
-            <span class="pill pill--edited" title="Edited after sync — amend the sheet row"
-              >edited</span
-            >
-          {/if}
-          {#if hasUrl && !e.synced}<span class="dot-pending" title="Not yet synced"></span>{/if}
         </button>
       {/each}
     </div>

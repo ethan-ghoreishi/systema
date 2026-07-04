@@ -1,14 +1,10 @@
 /**
  * App settings model (pure — no runes), so the merge logic is unit-testable.
- * The only secrets ever stored are the capture web app URL and an optional
- * shared token. Nothing else.
+ * The only values stored are the NAS backup receiver URL and its token, on this
+ * device. Nothing else.
  */
 
 export interface Settings {
-  /** Google Apps Script web app URL that appends expense rows. */
-  webAppUrl: string;
-  /** Optional shared token sent with each append (defence in depth). */
-  sharedToken: string;
   /** NAS backup receiver URL (see docs/nas-backup-setup.md). */
   nasUrl: string;
   /** Token the NAS receiver expects. */
@@ -16,8 +12,6 @@ export interface Settings {
 }
 
 export const defaultSettings: Settings = {
-  webAppUrl: '',
-  sharedToken: '',
   nasUrl: '',
   nasToken: '',
 };

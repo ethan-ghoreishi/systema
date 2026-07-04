@@ -31,9 +31,12 @@ export default defineConfig(({ command, mode }) => {
         ? []
         : [
             VitePWA({
-              // 'prompt' so the field app never reloads itself mid-trip — the
-              // user taps to update when an offline-safe update is ready.
-              registerType: 'prompt',
+              // 'autoUpdate': a new build activates itself and the app reloads
+              // to it, so fixes always reach the installed PWA (with 'prompt',
+              // a missed toast froze the phone on a stale version). Reloads only
+              // happen when online and a new version exists; IndexedDB data is
+              // untouched.
+              registerType: 'autoUpdate',
               injectRegister: 'auto',
               // Generates favicon, apple-touch-icon and maskable PWA icons from
               // a single source SVG, and injects the right <link> tags.

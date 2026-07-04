@@ -6,17 +6,17 @@ describe('mergeSettings', () => {
     expect(mergeSettings(defaultSettings, {})).toEqual(defaultSettings);
   });
 
-  it('overrides the web app URL and token', () => {
+  it('overrides the NAS receiver URL and token', () => {
     const merged = mergeSettings(defaultSettings, {
-      webAppUrl: 'https://script.google.com/macros/s/X/exec',
-      sharedToken: 'tok',
+      nasUrl: 'https://nas.example.ts.net/systema-backup.php',
+      nasToken: 'tok',
     });
-    expect(merged.webAppUrl).toBe('https://script.google.com/macros/s/X/exec');
-    expect(merged.sharedToken).toBe('tok');
+    expect(merged.nasUrl).toBe('https://nas.example.ts.net/systema-backup.php');
+    expect(merged.nasToken).toBe('tok');
   });
 
   it('does not mutate the base defaults', () => {
-    mergeSettings(defaultSettings, { webAppUrl: 'x' });
-    expect(defaultSettings.webAppUrl).toBe('');
+    mergeSettings(defaultSettings, { nasUrl: 'x' });
+    expect(defaultSettings.nasUrl).toBe('');
   });
 });

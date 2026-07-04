@@ -26,7 +26,6 @@ function exp(over: Partial<Expense>): Expense {
     notes: '',
     currency: '',
     fxRate: null,
-    synced: false,
     skeleton: false,
     order: 0,
     createdAt: 0,
@@ -68,34 +67,8 @@ describe('categorySummary', () => {
 });
 
 describe('assignTransactionNumbers', () => {
-  it('numbers pending rows sequentially from 1', () => {
+  it('numbers rows 1..n in array order', () => {
     const rows = [exp({ id: 'a' }), exp({ id: 'b' }), exp({ id: 'c' })];
-    const map = assignTransactionNumbers(rows);
-    expect([map.get('a'), map.get('b'), map.get('c')]).toEqual([1, 2, 3]);
-  });
-
-  it('keeps synced numbers stable and continues after them', () => {
-    const rows = [
-      exp({ id: 'a', synced: true, syncedNo: 1 }),
-      exp({ id: 'b', synced: true, syncedNo: 2 }),
-      exp({ id: 'c' }),
-    ];
-    const map = assignTransactionNumbers(rows);
-    expect(map.get('c')).toBe(3);
-  });
-
-  it('does not reuse a number after a local delete of a synced row', () => {
-    // Row with syncedNo 2 was deleted locally; the next pending row must get 4.
-    const rows = [
-      exp({ id: 'a', synced: true, syncedNo: 1 }),
-      exp({ id: 'c', synced: true, syncedNo: 3 }),
-      exp({ id: 'd' }),
-    ];
-    expect(assignTransactionNumbers(rows).get('d')).toBe(4);
-  });
-
-  it('backfills legacy synced rows without a recorded number by position', () => {
-    const rows = [exp({ id: 'a', synced: true }), exp({ id: 'b', synced: true }), exp({ id: 'c' })];
     const map = assignTransactionNumbers(rows);
     expect([map.get('a'), map.get('b'), map.get('c')]).toEqual([1, 2, 3]);
   });

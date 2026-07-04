@@ -808,17 +808,6 @@ textarea.field {
   font-variant-numeric: tabular-nums;
 }
 
-.sync-actions {
-  display: flex;
-  gap: var(--s2);
-  flex-wrap: wrap;
-}
-
-.sync-actions .btn {
-  flex: 1;
-  min-width: 150px;
-}
-
 .expense-list {
   display: flex;
   flex-direction: column;
@@ -911,14 +900,6 @@ textarea.field {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-}
-
-.dot-pending {
-  flex: 0 0 auto;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--accent);
 }
 
 /* ---------- Capture modal ---------- */
@@ -1322,17 +1303,12 @@ textarea.field {
   color: var(--accent);
 }
 
-.pill--edited,
 .pill--fx {
   flex: 0 0 auto;
   background: var(--surface-sunken);
-  color: var(--warn);
+  color: var(--accent);
   border: 1px solid var(--hairline);
   font-size: 11px;
-}
-
-.pill--fx {
-  color: var(--accent);
 }
 
 .past-title {
@@ -1443,11 +1419,6 @@ textarea.field {
   opacity: 0.75;
 }
 
-.legacy-card summary {
-  cursor: pointer;
-  list-style: revert;
-}
-
 /* ---------- Journal ---------- */
 
 .journal {
@@ -1509,6 +1480,17 @@ textarea.field {
 .journal-photo--small img {
   aspect-ratio: 1;
   object-fit: cover;
+}
+
+.journal-map {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+
+.journal-map .map-canvas {
+  height: 40dvh;
+  min-height: 260px;
 }
 
 /* Short phones: compact the keypad so the capture sheet fits comfortably. */

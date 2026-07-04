@@ -18,7 +18,6 @@ function exp(over: Partial<Expense>): Expense {
     notes: 'x2',
     currency: 'CZK',
     fxRate: 0.034,
-    synced: false,
     skeleton: false,
     order: 0,
     createdAt: 0,

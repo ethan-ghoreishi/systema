@@ -31,7 +31,6 @@ export async function addExpense(tripId: string, input: ExpenseInput): Promise<s
     id,
     tripId,
     ...input,
-    synced: false,
     skeleton: false,
     order,
     createdAt: Date.now(),
@@ -75,7 +74,6 @@ export async function seedSkeleton(trip: Trip): Promise<number> {
     notes: '',
     currency: '',
     fxRate: null,
-    synced: false,
     skeleton: true,
     order: i,
     createdAt: now,
@@ -145,26 +143,19 @@ export async function resolvePendingFx(tripId?: string): Promise<number> {
   return resolved;
 }
 
+/** Price any rate-pending expenses when the browser regains connectivity. */
+export function initFxAutoResolve(): void {
+  if (typeof window === 'undefined') return;
+  window.addEventListener('online', () => void resolvePendingFx());
+}
+
 /**
- * Assign Transaction# for the sheet. Rows already synced keep the number they
- * were sent with (`syncedNo`; legacy rows without one are backfilled by
- * position), and pending rows continue from the highest number used — so sheet
- * numbering stays stable even after local deletes or reorders.
+ * Assign each real expense its Transaction# — its 1-based position in trip
+ * order. Used only when exporting the master-sheet CSV.
  */
 export function assignTransactionNumbers(real: Expense[]): Map<string, number> {
   const map = new Map<string, number>();
-  let max = 0;
-  for (const e of real) {
-    if (!e.synced) continue;
-    const n = e.syncedNo ?? max + 1;
-    map.set(e.id, n);
-    if (n > max) max = n;
-  }
-  for (const e of real) {
-    if (e.synced) continue;
-    max += 1;
-    map.set(e.id, max);
-  }
+  real.forEach((e, i) => map.set(e.id, i + 1));
   return map;
 }
 

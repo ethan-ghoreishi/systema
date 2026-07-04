@@ -16,26 +16,27 @@ subscription.**
 - **Static front end, hosted free** — no application server.
 - **Bring-your-own-Claude** — the AI handoff is plain text in / plain text out,
   done in your own Claude subscription. The app calls **no** paid API.
-- **One server-side action** — expense rows are appended to a single Google
-  capture spreadsheet via a free Google Apps Script web app. The app holds only
-  that web app URL and an optional token; no Google credentials, no API keys.
+- **No application server** — the app is the ledger. Expenses live in IndexedDB
+  and export to CSV in your master sheet's column format when you reconcile.
+  Optional: opportunistic backup to a Synology NAS you host (a token-gated PHP
+  receiver); no third-party accounts, no API keys.
 
 ## Stack
 
-| Concern       | Choice                                                   |
-| ------------- | -------------------------------------------------------- |
-| Framework     | Svelte 5 (runes)                                         |
-| Build / dev   | Vite                                                     |
-| Language      | TypeScript                                               |
-| PWA / offline | `vite-plugin-pwa` (Workbox)                              |
-| Local store   | Dexie.js over IndexedDB                                  |
-| Plan render   | `marked` + `DOMPurify` (offline Markdown, sanitised)     |
-| Routing       | Tiny hash router (no server rewrites; offline-safe)      |
-| FX            | Frankfurter (ECB, no key), cached locally (Phase 2)      |
-| Sync          | Google Apps Script web app (append-only, one sheet)      |
-| Tests         | Vitest (unit) + Playwright (e2e smoke)                   |
-| Styling       | Hand-rolled CSS design tokens                            |
-| Host          | GitHub Pages (Cloudflare Pages is a drop-in alternative) |
+| Concern       | Choice                                                    |
+| ------------- | --------------------------------------------------------- |
+| Framework     | Svelte 5 (runes)                                          |
+| Build / dev   | Vite                                                      |
+| Language      | TypeScript                                                |
+| PWA / offline | `vite-plugin-pwa` (Workbox)                               |
+| Local store   | Dexie.js over IndexedDB                                   |
+| Plan render   | `marked` + `DOMPurify` (offline Markdown, sanitised)      |
+| Routing       | Tiny hash router (no server rewrites; offline-safe)       |
+| FX            | Frankfurter (ECB, no key), cached locally (Phase 2)       |
+| Backup        | Optional opportunistic push to a self-hosted Synology NAS |
+| Tests         | Vitest (unit) + Playwright (e2e smoke)                    |
+| Styling       | Hand-rolled CSS design tokens                             |
+| Host          | GitHub Pages (Cloudflare Pages is a drop-in alternative)  |
 
 ## App shape
 
@@ -64,12 +65,13 @@ subscription.**
      parsing, deduped, re-runnable).
   3. **Expenses** — two-tap capture and a running total. Non-GBP amounts save
      instantly with no £ needed and **price themselves from the day's ECB rate**
-     when online. Google Sheet live-sync still exists but is optional/legacy.
+     when online.
   4. **Export** — journaling prompt prefilled with the trip pack (photo
      placeholders included), a **reconstruction prompt** for pre-app trips
      (expense trail as memory scaffold), journal paste-back, per-trip CSV, and
      full JSON backup/import.
-- **Settings** (gear on Home) — the capture web app URL/token and storage status.
+- **Settings** (gear on Home) — NAS backup receiver URL/token, on-device data
+  (restore / import / paste / download), and storage/install status.
 
 ## Develop
 
@@ -109,7 +111,7 @@ Live at **https://ethan-ghoreishi.github.io/systema/**. The
 Hosting notes:
 
 - GitHub Pages is free for **public** repos. On the Free plan a **private** repo
-  can't use Pages — either keep it public (this repo has no secrets; the capture
+  can't use Pages — either keep it public (this repo has no secrets; the NAS
   URL/token live only on-device) or host the private repo on **Cloudflare Pages**
   (also free, the brief's named alternative).
 - If the repo name isn't `systema`, set `prodBase` in `vite.config.ts` to
@@ -135,7 +137,7 @@ src/
     NewTrip.svelte         Trip-type preset picker
     Trip.svelte            Four-tab trip frame
     TripEdit.svelte        Trip + city editing
-    Settings.svelte        Capture sync + storage/install
+    Settings.svelte        NAS backup + on-device data + storage/install
     NotFound.svelte
   lib/
     db.ts                  Dexie schema (Trip/City/Stop/Expense/Photo)
@@ -156,14 +158,14 @@ src/
     money.ts               Currency display helpers
     vocab.ts               Expense controlled vocabularies
     fx.ts                  Frankfurter FX + local cache
-    sync.ts                Apps Script POST + offline queue
     stops.ts               Stop + checklist mutations, plan extraction
     photos.ts              Photo blobs (add / delete / offload)
     prompt.ts              Research-prompt builder (pure text assembly)
     export.ts              Trip pack + JSON backup/import
+    nas.svelte.ts          NAS backup vault (push snapshots/photos, restore)
     download.ts            Clipboard + file download helpers
-apps-script/Code.gs        Capture web app (append-only, one sheet)
-docs/apps-script-setup.md  Capture sheet + deploy steps
+nas/systema-backup.php     Token-gated NAS receiver (self-hosted)
+docs/nas-backup-setup.md   Synology setup + Tailscale/CGNAT notes
 tests/
   unit/                    Vitest
   e2e/                     Playwright
@@ -171,15 +173,13 @@ tests/
 
 ## Security & cost guarantees
 
-- The Apps Script web app is **bound to exactly one dedicated capture
-  spreadsheet** and only **appends** rows. It never touches any other Drive file
-  — in particular, never your master finance workbook.
-- The app stores only the web app URL and an optional shared token. No other
-  secrets.
-- The capture sheet is a write buffer you reconcile into your master records by
-  hand. The app never reads it back.
-- **Single device:** there is no cloud sync. Build the plan on the phone you'll
-  travel with, or move a trip across via **Export → JSON** (backup + import).
+- The app is the ledger. Your data lives in IndexedDB on the device and exports
+  to CSV (per-trip or all-trips) in the master-sheet column format when you
+  reconcile. Nothing is sent to a third party.
+- The app stores only the NAS receiver URL and its token, on this device. No
+  other secrets, no accounts, no API keys.
+- **Moving between devices:** Restore from NAS (below), or carry a trip across
+  via **Export → JSON** (backup + import). Imports merge by id — safe to re-run.
 - **NAS backup vault:** optional, opportunistic push of data snapshots and
   photos to a Synology at home — token-gated PHP receiver that writes only into
   its own folder. Any device can also **Restore from NAS** (Settings → Data):
@@ -195,9 +195,8 @@ tests/
 - [x] **Phase 1** — data model, Home + create-by-preset, four-tab trip frame,
       Plan tab (Markdown render + auto contents list + departure countdown).
 - [x] **Phase 2** — Expenses tab (keypad, dependent chips, FX cache, per-person
-      helper, skeleton rows, running total + per-category summary) + Apps Script
-      web app + offline sync. See
-      [`docs/apps-script-setup.md`](docs/apps-script-setup.md) to connect it.
+      helper, skeleton rows, running total + per-category summary). Non-GBP rows
+      price themselves from the day's ECB rate when online.
 - [x] **Phase 3** — Stops tab (ordered tickable list, notes, checklist, local
       photos with offload, reorder) + deterministic "split plan by headings".
 - [x] **Phase 4** — Export tab (trip-pack Markdown + prefilled journaling prompt;

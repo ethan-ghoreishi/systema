@@ -52,6 +52,39 @@ Then in systema → **Settings → NAS backup vault**: paste that URL and the sa
 token, Save, and tap **Back up now** once to confirm ("Last data backup" gets a
 timestamp).
 
+## If `synology.me` won't connect (CGNAT / ISP blocks inbound)
+
+Many home ISPs (especially UK ones) put you behind **CGNAT** or block inbound
+443, so `https://<you>.synology.me/…` never connects from outside — and often
+not from inside either (no NAT loopback). Two hard rules make this the usual
+sticking point:
+
+- The app is served over **HTTPS**, so it can only call an **`https://`** URL
+  with a **valid certificate**. `http://192.168.0.20/…` is blocked by the
+  browser as mixed content, even on home wifi. `https://192.168.0.20/…` fails
+  too, because the certificate is issued for the `synology.me` name, not the IP.
+- So you need the NAS reachable at an **`https://` name with a valid cert**,
+  from anywhere, without relying on your ISP's inbound.
+
+**The clean fix: Tailscale** (free, no port-forwarding, works behind CGNAT):
+
+1. **NAS:** Package Center → install **Tailscale** → sign in.
+2. **iPhone:** install the **Tailscale** app → sign in to the same account →
+   turn it on.
+3. On the NAS, enable HTTPS for its Tailscale name (DSM: Tailscale package, or
+   `sudo tailscale cert` / `tailscale serve`), giving something like
+   `https://ds220.tailXXXX.ts.net`. Tailscale issues a real certificate for it.
+4. Put the receiver behind it (Web Station serves it; the `.ts.net` name gets a
+   valid cert automatically via `tailscale serve https / --bg`), so
+   `https://ds220.tailXXXX.ts.net/systema-backup.php` returns
+   `{"ok":true,...}` in the phone's browser.
+5. In systema → **Settings → NAS backup vault**, use that `.ts.net` URL. Now
+   backups and restores work from anywhere the phone has Tailscale on — no
+   port-forwarding, no cert warning, no ISP dependency.
+
+Until Tailscale is set up, use the manual fallback below (it needs no HTTPS at
+all).
+
 ## Zero-setup fallback (works today, manual)
 
 Until the receiver is up — or any time you want a belt-and-braces copy:
