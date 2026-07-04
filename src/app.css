@@ -203,7 +203,6 @@ a {
 
 .screen-body {
   overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
   padding: var(--s4);
   display: flex;
   flex-direction: column;
@@ -910,16 +909,32 @@ textarea.field {
  * keyboard, and it follows the native iOS "Cancel … Save" form convention.
  * Height is the dynamic viewport (with a vh fallback for older iOS) so the sheet
  * fits the visible area exactly rather than running behind the browser chrome.
+ *
+ * It's a native <dialog> shown with showModal(): the browser's top layer paints
+ * above every stacking context and escapes ancestor scrollers, which fixed
+ * overlays don't reliably do in iOS standalone mode. The width/height/margin/
+ * border resets below undo the <dialog> UA stylesheet.
  */
 .modal {
   position: fixed;
   inset: 0;
-  z-index: 50;
+  z-index: 50; /* belt-and-braces; the top layer already wins */
+  width: 100%;
   height: 100vh;
   height: 100dvh;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
   display: flex;
   justify-content: center;
   background: var(--paper);
+  color: var(--ink);
+}
+
+.modal::backdrop {
+  background: transparent; /* the sheet itself is opaque and full-screen */
 }
 
 .modal-sheet {
@@ -960,7 +975,6 @@ textarea.field {
 .modal-body {
   min-height: 0; /* let the 1fr grid row shrink so this pane actually scrolls */
   overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
   padding: var(--s4) var(--s4) calc(env(safe-area-inset-bottom) + var(--s6));
   display: flex;

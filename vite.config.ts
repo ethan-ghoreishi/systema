@@ -64,7 +64,8 @@ export default defineConfig(({ command, mode }) => {
                 runtimeCaching: [
                   {
                     // Frankfurter FX is also cached in IndexedDB; this is belt-and-braces.
-                    urlPattern: /^https:\/\/api\.frankfurter\.app\/.*/i,
+                    // Match both hosts: .app now 301-redirects to .dev.
+                    urlPattern: /^https:\/\/api\.frankfurter\.(dev|app)\/.*/i,
                     handler: 'NetworkFirst',
                     options: {
                       cacheName: 'fx-cache',

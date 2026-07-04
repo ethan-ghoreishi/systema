@@ -8,7 +8,9 @@ import { todayIso } from './sheet';
  * a manual GBP entry.
  */
 
-const FRANKFURTER = 'https://api.frankfurter.app';
+// frankfurter.app moved to frankfurter.dev — the old host now answers with a
+// 301, which quietly broke rate fetches in the installed PWA.
+const FRANKFURTER = 'https://api.frankfurter.dev/v1';
 
 export interface FxResult {
   rate: number; // multiply local by this to get GBP

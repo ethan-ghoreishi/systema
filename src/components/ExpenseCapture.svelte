@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { untrack } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { db, type City, type Expense, type Trip } from '../lib/db';
   import { newId } from '../lib/ids';
   import { getRate } from '../lib/fx';
@@ -25,6 +25,13 @@
   function round2(n: number): number {
     return Math.round((n + Number.EPSILON) * 100) / 100;
   }
+
+  // A native <dialog> in the top layer: it paints above every stacking context
+  // and escapes ancestor scrollers. (position:fixed inside an overflow scroller
+  // paints contained in iOS standalone mode — the modal rendered *between* the
+  // top bar and tab bar on the phone while still eating their taps.)
+  let dialogEl: HTMLDialogElement;
+  onMount(() => dialogEl.showModal());
 
   // Snapshot props once on mount — the parent remounts this modal per open, so
   // these are deliberately initial-only (untrack avoids the reactive warning).
@@ -201,13 +208,8 @@
   }
 </script>
 
-<svelte:window
-  onkeydown={(e) => {
-    if (e.key === 'Escape') onClose();
-  }}
-/>
-
-<div class="modal">
+<!-- Escape triggers the dialog's native cancel → close → onClose. -->
+<dialog class="modal" bind:this={dialogEl} onclose={onClose}>
   <div class="modal-sheet">
     <!-- Action bar pinned at the top: Cancel (left), Save (right). Always
          reachable, keyboard or not — the native iOS form pattern. -->
@@ -361,4 +363,4 @@
       {/if}
     </div>
   </div>
-</div>
+</dialog>
