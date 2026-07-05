@@ -89,6 +89,56 @@ export function extractSections(markdown: string): Section[] {
   return out;
 }
 
+export interface PlanSegment {
+  city: string;
+  text: string;
+}
+
+/**
+ * Split a plan into per-city segments on level-1 (`# City`) headings — the
+ * shape the multi-city research prompt asks for (one self-contained plan per
+ * city). Fenced code is ignored. Returns [] when there are no `#` headings, so
+ * single-city plans render whole and unchanged.
+ */
+export function splitPlanByCity(markdown: string): PlanSegment[] {
+  const lines = markdown.split(/\r?\n/);
+  const segments: PlanSegment[] = [];
+  let current: PlanSegment | null = null;
+  const pre: string[] = [];
+
+  let inFence = false;
+  let fenceMarker = '';
+
+  for (const line of lines) {
+    const fence = line.match(/^\s*(```|~~~)/);
+    if (fence) {
+      const marker = fence[1];
+      if (!inFence) {
+        inFence = true;
+        fenceMarker = marker;
+      } else if (marker === fenceMarker) {
+        inFence = false;
+        fenceMarker = '';
+      }
+    }
+
+    const h1 = !inFence && line.match(/^#\s+(.+?)\s*#*\s*$/);
+    if (h1) {
+      if (current) segments.push(current);
+      current = { city: h1[1].trim(), text: line };
+    } else if (current) {
+      current.text += `\n${line}`;
+    } else {
+      pre.push(line);
+    }
+  }
+  if (current) segments.push(current);
+  if (segments.length === 0) return [];
+  // Don't lose any content that appeared before the first city heading.
+  if (pre.join('').trim()) segments[0].text = `${pre.join('\n')}\n${segments[0].text}`;
+  return segments;
+}
+
 /** Extract ATX (`#`-style) headings, ignoring anything inside fenced code. */
 export function extractHeadings(markdown: string): Heading[] {
   const lines = markdown.split(/\r?\n/);

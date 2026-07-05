@@ -1275,6 +1275,18 @@ textarea.field {
   gap: var(--s2);
 }
 
+.city-filter {
+  margin: 0;
+}
+
+.stop-city-head {
+  margin-top: var(--s2);
+  color: var(--accent);
+}
+.stop-city-head:first-child {
+  margin-top: 0;
+}
+
 .stop-row {
   display: flex;
   align-items: center;

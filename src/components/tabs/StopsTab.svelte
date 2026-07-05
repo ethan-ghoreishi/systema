@@ -25,9 +25,34 @@
   let stopView = $state<'list' | 'map'>('list');
 
   const stopsQ = liveQuery(() => db.stops.where('tripId').equals(trip.id).sortBy('order'));
+  const citiesQ = liveQuery(() => db.cities.where('tripId').equals(trip.id).sortBy('order'));
   const photosQ = liveQuery(() => db.photos.where('tripId').equals(trip.id).toArray());
   const stops = $derived($stopsQ ?? []);
+  const cities = $derived($citiesQ ?? []);
   const allPhotos = $derived($photosQ ?? []);
+
+  // Multi-city trips group their stops under city sub-headers.
+  const multiCity = $derived(cities.length >= 2);
+  const cityNameById = $derived(new Map(cities.map((c) => [c.id, c.name])));
+
+  type StopRow = { kind: 'header'; label: string } | { kind: 'stop'; stop: Stop; index: number };
+  const stopRows = $derived.by<StopRow[]>(() => {
+    if (!multiCity) return stops.map((stop, index) => ({ kind: 'stop', stop, index }));
+    const rows: StopRow[] = [];
+    let lastKey: string | null | undefined = undefined;
+    stops.forEach((stop, index) => {
+      const key = stop.cityId ?? null;
+      if (key !== lastKey) {
+        rows.push({
+          kind: 'header',
+          label: (stop.cityId && cityNameById.get(stop.cityId)) || 'Other',
+        });
+        lastKey = key;
+      }
+      rows.push({ kind: 'stop', stop, index });
+    });
+    return rows;
+  });
 
   // Detail selection via the route: #/trip/:id/stops/:stopId
   const selectedId = $derived(router.path.split('/').filter(Boolean)[3] ?? null);
@@ -35,7 +60,15 @@
 
   // Stops found in the plan that aren't in the list yet (dedupe by name), so
   // extraction can merge safely at any time, not just into an empty list.
-  const extractable = $derived($stopsQ ? newStopCandidates(trip.planText, stops) : []);
+  const extractable = $derived(
+    $stopsQ
+      ? newStopCandidates(
+          trip.planText,
+          stops,
+          cities.map((c) => c.name),
+        )
+      : [],
+  );
 
   const photoCounts = $derived.by(() => {
     const m: Record<string, number> = {};
@@ -71,7 +104,7 @@
     newStopName = '';
   }
   async function extractNow() {
-    const n = await importStopsFromPlan(trip.id, trip.planText, stops);
+    const n = await importStopsFromPlan(trip.id, trip.planText, stops, cities);
     if (n > 0) flashSaved();
   }
   function openStop(s: Stop) {
@@ -294,43 +327,47 @@
 
       {#if stops.length}
         <div class="stop-list">
-          {#each stops as s, i (s.id)}
-            {@const p = checklistProgress(s)}
-            <div class="stop-row" class:stop-row--visited={s.visited}>
-              <button
-                class="check-box"
-                aria-label={s.visited ? 'Mark not visited' : 'Mark visited'}
-                onclick={() => toggleVisited(s)}
-              >
-                {#if s.visited}<Icon name="check" size={16} />{/if}
-              </button>
-              <button class="stop-open" onclick={() => openStop(s)}>
-                <span class="stop-name">{s.name}</span>
-                <span class="stop-meta">
-                  {#if s.notes.trim()}notes{/if}
-                  {#if p.total}{s.notes.trim() ? ' · ' : ''}{p.done}/{p.total} ticked{/if}
-                  {#if photoCounts[s.id]}{s.notes.trim() || p.total ? ' · ' : ''}{photoCounts[s.id]} photo{photoCounts[
-                      s.id
-                    ] > 1
-                      ? 's'
-                      : ''}{/if}
-                </span>
-              </button>
-              <div class="stop-reorder">
+          {#each stopRows as row (row.kind === 'stop' ? row.stop.id : `h-${row.label}`)}
+            {#if row.kind === 'header'}
+              <span class="stop-city-head section-title">{row.label}</span>
+            {:else}
+              {@const s = row.stop}
+              {@const i = row.index}
+              {@const p = checklistProgress(s)}
+              <div class="stop-row" class:stop-row--visited={s.visited}>
                 <button
-                  class="icon-btn icon-btn--sm"
-                  aria-label="Move up"
-                  disabled={i === 0}
-                  onclick={() => moveStop(stops, i, -1)}><Icon name="up" size={18} /></button
+                  class="check-box"
+                  aria-label={s.visited ? 'Mark not visited' : 'Mark visited'}
+                  onclick={() => toggleVisited(s)}
                 >
-                <button
-                  class="icon-btn icon-btn--sm"
-                  aria-label="Move down"
-                  disabled={i === stops.length - 1}
-                  onclick={() => moveStop(stops, i, 1)}><Icon name="down" size={18} /></button
-                >
+                  {#if s.visited}<Icon name="check" size={16} />{/if}
+                </button>
+                <button class="stop-open" onclick={() => openStop(s)}>
+                  <span class="stop-name">{s.name}</span>
+                  <span class="stop-meta">
+                    {#if s.notes.trim()}notes{/if}
+                    {#if p.total}{s.notes.trim() ? ' · ' : ''}{p.done}/{p.total} ticked{/if}
+                    {#if photoCounts[s.id]}{s.notes.trim() || p.total ? ' · ' : ''}{photoCounts[
+                        s.id
+                      ]} photo{photoCounts[s.id] > 1 ? 's' : ''}{/if}
+                  </span>
+                </button>
+                <div class="stop-reorder">
+                  <button
+                    class="icon-btn icon-btn--sm"
+                    aria-label="Move up"
+                    disabled={i === 0}
+                    onclick={() => moveStop(stops, i, -1)}><Icon name="up" size={18} /></button
+                  >
+                  <button
+                    class="icon-btn icon-btn--sm"
+                    aria-label="Move down"
+                    disabled={i === stops.length - 1}
+                    onclick={() => moveStop(stops, i, 1)}><Icon name="down" size={18} /></button
+                  >
+                </div>
               </div>
-            </div>
+            {/if}
           {/each}
         </div>
       {:else}

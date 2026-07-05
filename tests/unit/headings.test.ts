@@ -1,5 +1,25 @@
 import { describe, it, expect } from 'vitest';
-import { extractHeadings, extractSections, slugify } from '../../src/lib/headings';
+import { extractHeadings, extractSections, slugify, splitPlanByCity } from '../../src/lib/headings';
+
+describe('splitPlanByCity', () => {
+  it('splits a two-city plan on level-1 headings', () => {
+    const md = '# Barcelona\n## Route\n### Sagrada\n# Bologna\n## Route\n### Towers';
+    const segs = splitPlanByCity(md);
+    expect(segs.map((s) => s.city)).toEqual(['Barcelona', 'Bologna']);
+    expect(segs[0].text).toContain('Sagrada');
+    expect(segs[1].text).toContain('Towers');
+    expect(segs[0].text).not.toContain('Bologna');
+  });
+
+  it('returns [] when there are no level-1 headings', () => {
+    expect(splitPlanByCity('## Route\n### Stop')).toEqual([]);
+  });
+
+  it('ignores # inside fenced code', () => {
+    const md = '# Rome\n```\n# not a city\n```\ntext';
+    expect(splitPlanByCity(md).map((s) => s.city)).toEqual(['Rome']);
+  });
+});
 
 describe('slugify', () => {
   it('slugs and de-duplicates', () => {

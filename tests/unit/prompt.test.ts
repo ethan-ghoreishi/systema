@@ -100,3 +100,34 @@ describe('buildResearchPrompt — have-plan mode', () => {
     expect(text.indexOf('Barcelona')).toBeLessThan(text.indexOf('Bologna'));
   });
 });
+
+describe('buildResearchPrompt — multi-city phasing', () => {
+  const twoCities: City[] = [
+    { id: 'a', tripId: 't', name: 'Barcelona', currency: 'EUR', order: 0, sleep: 'none' },
+    { id: 'b', tripId: 't', name: 'Bologna', currency: 'EUR', order: 1, sleep: 'hotel' },
+  ];
+
+  it('plan mode asks for a separate `# <City>` block per city', () => {
+    const t = trip();
+    const text = buildResearchPrompt(
+      { ...defaultPromptPrefs(t, twoCities), mode: 'plan' },
+      t,
+      twoCities,
+    );
+    expect(text).toContain('SEPARATE, self-contained plan for EACH city');
+    expect(text).toContain('# <City name>');
+  });
+
+  it('single-city plan mode does not ask for per-city blocks', () => {
+    const t = trip();
+    const oneCity: City[] = [
+      { id: 'a', tripId: 't', name: 'Copenhagen', currency: 'DKK', order: 0 },
+    ];
+    const text = buildResearchPrompt(
+      { ...defaultPromptPrefs(t, oneCity), mode: 'plan' },
+      t,
+      oneCity,
+    );
+    expect(text).not.toContain('# <City name>');
+  });
+});

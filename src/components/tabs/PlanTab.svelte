@@ -2,6 +2,7 @@
   import { untrack } from 'svelte';
   import type { Trip } from '../../lib/db';
   import { renderPlan } from '../../lib/markdown';
+  import { splitPlanByCity } from '../../lib/headings';
   import { computeCountdown } from '../../lib/countdown';
   import { updateTrip } from '../../lib/trips';
   import JournalView from '../JournalView.svelte';
@@ -19,7 +20,17 @@
     untrack(() => (trip.status === 'done' && (trip.journalText ?? '').trim() ? 'journal' : 'plan')),
   );
 
-  const rendered = $derived(trip.planText.trim() ? renderPlan(trip.planText) : null);
+  // A multi-city plan (one `# City` block per city) can be filtered to one city
+  // at a time — separate spaces, and a shorter contents list for long plans.
+  const citySegments = $derived(splitPlanByCity(trip.planText));
+  const multiCityPlan = $derived(citySegments.length > 1);
+  let cityFilter = $state<string | null>(null);
+  const shownMarkdown = $derived(
+    multiCityPlan && cityFilter
+      ? (citySegments.find((s) => s.city === cityFilter)?.text ?? trip.planText)
+      : trip.planText,
+  );
+  const rendered = $derived(shownMarkdown.trim() ? renderPlan(shownMarkdown) : null);
 
   // Live departure countdown, ticking once a second while a return time is set.
   let now = $state(Date.now());
@@ -111,6 +122,22 @@
     {#if view === 'journal' && hasJournal}
       <JournalView {trip} />
     {:else if rendered}
+      {#if multiCityPlan}
+        <div class="chips city-filter">
+          <button
+            class="chip"
+            class:chip--on={cityFilter === null}
+            onclick={() => (cityFilter = null)}>All cities</button
+          >
+          {#each citySegments as seg (seg.city)}
+            <button
+              class="chip"
+              class:chip--on={cityFilter === seg.city}
+              onclick={() => (cityFilter = seg.city)}>{seg.city}</button
+            >
+          {/each}
+        </div>
+      {/if}
       {#if rendered.toc.length > 1}
         <nav class="toc card" aria-label="Contents">
           <span class="section-title">Contents</span>

@@ -224,7 +224,9 @@ function buildPlanPrompt(trip: Trip, cities: City[], p: PromptPrefs, interests: 
     '',
     '## Output format',
     '',
-    'Use exactly these level-2 Markdown headings, in this order:',
+    multi
+      ? 'Produce a SEPARATE, self-contained plan for EACH city, in itinerary order — you may write each city in its own phase and I will paste them together. Begin each city with a level-1 heading `# <City name>` (the only use of a single `#`). Within each city, use exactly these level-2 headings, in this order:'
+      : 'Use exactly these level-2 Markdown headings, in this order:',
     '',
     '1. `## Executive summary` — max 8 bullets: why this suits the expedition, the core route logic, the operating system in one sentence, the key timing constraint, what to book ahead, the best walking read.',
     '2. `## Assumptions` — list any assumptions clearly.',
@@ -242,6 +244,12 @@ function buildPlanPrompt(trip: Trip, cities: City[], p: PromptPrefs, interests: 
     '',
     ...ROUTE_RULES,
     '',
+    ...(multi
+      ? [
+          'Repeat the entire structure again under a new `# <City name>` for every further city, in itinerary order. Keep the cities separate — never merge them into one section.',
+          '',
+        ]
+      : []),
     ...QUALITY_BAR,
   );
   return lines.join('\n');
@@ -253,13 +261,14 @@ function buildHavePlanPrompt(
   p: PromptPrefs,
   interests: string[],
 ): string {
+  const multi = tripLegs(cities).filter((l) => l.name).length > 1;
   const lines: string[] = [];
   const push = (...xs: string[]) => lines.push(...xs);
 
   push(
     'You are a world-class cultural interpreter and urban systems analyst.',
     '',
-    'I already have the itinerary for this trip (below). **Do not design a new route or replace my stops.** Keep my places and their order, and enrich them into your structured format so my app can import them: for each place, add the system-reading, the London and Iran/Esfahan contrasts, concrete on-the-spot discovery items, and approximate coordinates. Fill obvious gaps, group by city, and flag anything that looks wrong or worth booking — but the itinerary stays mine.',
+    `I already have the itinerary for this trip (below). **Do not design a new route or replace my stops.** Keep my places and their order, and enrich them into your structured format so my app can import them: for each place, add the system-reading, the London and Iran/Esfahan contrasts, concrete on-the-spot discovery items, and approximate coordinates. Fill obvious gaps and flag anything that looks wrong or worth booking — but the itinerary stays mine.${multi ? ' This is a multi-city trip: produce a separate `# <City name>` block for each city (you may do them in separate phases and paste them together).' : ''}`,
     '',
     'Write in plain UK English. Short paragraphs and bullets. Target readability: Flesch 70-85.',
     '',
@@ -285,9 +294,11 @@ function buildHavePlanPrompt(
     '',
     '## What to produce',
     '',
-    'Use exactly these level-2 Markdown headings, in this order:',
+    multi
+      ? 'For each city, output a `# <City name>` block (the only use of a single `#`) containing exactly these level-2 headings, in this order:'
+      : 'Use exactly these level-2 Markdown headings, in this order:',
     '',
-    '1. `## City character and operating system` — for each city: 6-8 sentences, then four labelled lines: **Operating system:**, **Causal chain:**, **Main tension:**, **Best walking lens:**.',
+    '1. `## City character and operating system` — 6-8 sentences, then four labelled lines: **Operating system:**, **Causal chain:**, **Main tension:**, **Best walking lens:**.',
     '2. `## Route` — my stops, kept and in my order, enriched per the route rules below. If I clearly missed a place that my own logic implies, add it and mark it **(suggested)**.',
     '3. `## Cultural insight moments` — 3-5 moments tied to my stops.',
     '4. `## Reflection prompts` — 3-5 prompts tied to specific stops, comparing with London and Iran/Esfahan.',

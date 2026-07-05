@@ -131,6 +131,44 @@ describe('extractStopsFromPlan', () => {
   it('returns empty for prose without headings', () => {
     expect(extractStopsFromPlan('just some prose, no structure')).toEqual([]);
   });
+
+  it('extracts stops from BOTH cities of a two-plan multi-city paste', () => {
+    // Two self-contained plans, one per city, pasted together — the exact case
+    // that previously dropped the second city.
+    const md = [
+      '# Barcelona',
+      '## Executive summary',
+      '- bullets',
+      '## Route',
+      '### Sagrada Familia',
+      '- Gaudí systems',
+      '## Cost estimate',
+      'numbers',
+      '# Bologna',
+      '## Executive summary',
+      '- bullets',
+      '## Route',
+      '### Portico di San Luca',
+      '- arcades as public infrastructure',
+      '### Piazza Maggiore',
+      '- civic heart',
+      '## Food plan',
+      'grocery',
+    ].join('\n');
+    const got = extractStopsFromPlan(md, ['Barcelona', 'Bologna']);
+    expect(got.map((s) => s.name)).toEqual([
+      'Sagrada Familia',
+      'Portico di San Luca',
+      'Piazza Maggiore',
+    ]);
+    expect(got.map((s) => s.city)).toEqual(['Barcelona', 'Bologna', 'Bologna']);
+  });
+
+  it('matches a decorated city heading to a known city', () => {
+    const md = '# Bologna — the arcaded city\n## Route\n### Le Due Torri\nleaning towers';
+    const [stop] = extractStopsFromPlan(md, ['Bologna']);
+    expect(stop.city).toBe('Bologna');
+  });
 });
 
 describe('newStopCandidates', () => {
