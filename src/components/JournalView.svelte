@@ -6,6 +6,7 @@
   import { realExpenses, tripTotalGBP } from '../lib/expenses';
   import { formatGBP } from '../lib/money';
   import { formatDateRange } from '../lib/format';
+  import { tripDisplayName, tripShape } from '../lib/trip-shape';
   import StopsMap from './StopsMap.svelte';
 
   /**
@@ -16,9 +17,11 @@
   let { trip }: { trip: Trip } = $props();
 
   const stopsQ = liveQuery(() => db.stops.where('tripId').equals(trip.id).sortBy('order'));
+  const citiesQ = liveQuery(() => db.cities.where('tripId').equals(trip.id).sortBy('order'));
   const photosQ = liveQuery(() => db.photos.where('tripId').equals(trip.id).toArray());
   const expensesQ = liveQuery(() => db.expenses.where('tripId').equals(trip.id).toArray());
   const stops = $derived($stopsQ ?? []);
+  const cities = $derived($citiesQ ?? []);
   const photos = $derived(($photosQ ?? []).filter((p) => p.kind === 'stop'));
   const expenses = $derived($expensesQ ?? []);
 
@@ -61,9 +64,10 @@
 
 <div class="journal">
   <div class="card journal-meta">
-    <span class="journal-trip-name">{trip.name}</span>
+    <span class="journal-trip-name">{tripDisplayName(trip, cities)}</span>
     <div class="journal-stats">
       <span>{formatDateRange(trip.startDate, trip.endDate)}</span>
+      <span>{tripShape(trip, cities).label}</span>
       {#if stops.length}<span>{visitedCount}/{stops.length} stops visited</span>{/if}
       {#if total > 0}<span>{formatGBP(total)} spent</span>{/if}
       {#if photos.length}<span>{photos.length} photograph{photos.length > 1 ? 's' : ''}</span>{/if}

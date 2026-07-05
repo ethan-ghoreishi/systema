@@ -1,9 +1,10 @@
 import type { TripType } from './db';
 
 /**
- * Trip-type presets. Plain data, not a configurable engine — they just set
- * sensible defaults at trip-creation time. The skeleton rows are seeded into
- * Expenses (Phase 2) so only the variable items need adding by hand.
+ * Trip starting points. Plain data, not a configurable engine — a preset just
+ * seeds the usual expense rows and a sensible accommodation default at creation
+ * time. The trip's actual shape, dates and name are derived from its legs
+ * afterwards (see trip-shape.ts), so the preset never constrains the trip.
  */
 
 export interface SkeletonRow {
@@ -17,8 +18,6 @@ export interface TripPreset {
   label: string;
   blurb: string;
   accommodation: boolean;
-  countdown: boolean;
-  allowExtraCity: boolean;
   skeleton: SkeletonRow[];
 }
 
@@ -57,20 +56,16 @@ const travelSpine: SkeletonRow[] = [
 export const tripPresets: TripPreset[] = [
   {
     type: 'same-day',
-    label: 'Extreme Same-Day',
-    blurb: 'Out at dawn, home for bed. Direct both ways, 6+ hours in the city. No accommodation.',
+    label: 'Day trip',
+    blurb: 'Out and back the same day, no hotel. Seeds the flight and transfer rows.',
     accommodation: false,
-    countdown: true,
-    allowExtraCity: false,
     skeleton: travelSpine,
   },
   {
     type: 'airport-sleep',
-    label: 'Airport Sleep',
-    blurb: 'Land late, doze at the airport, explore all day, fly back in the evening.',
+    label: 'Airport sleep',
+    blurb: 'Land late, doze at the airport, no hotel. Also seeds a bag-storage row.',
     accommodation: false,
-    countdown: true,
-    allowExtraCity: true,
     skeleton: [
       ...travelSpine,
       {
@@ -82,11 +77,9 @@ export const tripPresets: TripPreset[] = [
   },
   {
     type: 'weekend',
-    label: 'Weekend Getaway',
-    blurb: 'A proper mini-break with one or more hotel nights.',
+    label: 'City break',
+    blurb: 'One or more hotel nights. Also seeds a hotel row.',
     accommodation: true,
-    countdown: true,
-    allowExtraCity: true,
     skeleton: [
       ...travelSpine,
       { category: 'Accommodation', subcategory: 'Hotel', description: 'Hotel' },
@@ -95,10 +88,8 @@ export const tripPresets: TripPreset[] = [
   {
     type: 'custom',
     label: 'Custom',
-    blurb: 'Set accommodation on or off and add your own skeleton rows.',
+    blurb: 'Start blank and add your own expense rows.',
     accommodation: false,
-    countdown: true,
-    allowExtraCity: true,
     skeleton: [],
   },
 ];

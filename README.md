@@ -41,22 +41,32 @@ subscription.**
 ## App shape
 
 - **Home** — current trips up top; trips marked Done shelve into a **Trip
-  journal** section with cover photos (everything kept: plan, stops, notes,
-  photos, expenses, journal).
+  journal** section (everything kept: plan, stops, notes, photos, expenses,
+  journal). Each card names itself from its legs (e.g. `Barcelona → Bologna`)
+  and shows a cover: the route map, a photo, or a generated route card — your
+  choice per trip.
 - **Insights** (`#/insights`) — the whole ledger at a glance: every trip, every
-  pound, per-category bars, per-trip totals, plus an all-trips CSV export in
-  the master-sheet column format. The app is the source of truth; the Google
-  sheet is updated by pasting CSV when reconciling, not by a live service.
+  pound, per-category bars, per-trip totals, and a **by-city** view (cheapest
+  and priciest by cost-per-day, sortable), plus an all-trips CSV export in the
+  master-sheet column format. The app is the source of truth; the Google sheet
+  is updated by pasting CSV when reconciling, not by a live service.
 - **History import** — `scripts/import-travel-spending.mjs` converts a dump of
   the legacy Travel Spending sheet into a backup file the app imports (trips,
   cities with currencies, expenses, and visited stops inferred from ticket
   purchases). Generated files contain personal data — never commit them.
+- A trip is described by its **legs** — each city with its arrival, departure
+  and where you slept (nothing / airport / hotel). From those the app derives
+  the trip's shape (same-day dash, airport sleep, city break, multi-city…),
+  dates, countdown and name — so nothing has to be kept in sync by hand, and
+  transit trips (two cities on one ticket) are first-class.
 - Inside a trip, four tabs only:
   1. **Plan** — your pasted itinerary, rendered and readable offline, with an
      auto contents list and a departure-time countdown at the top. A
      **Research prompt** builder pre-fills a copy-ready Claude prompt from the
-     trip's details and asks for a route format the app imports automatically.
-     Once a journal is saved, the tab grows a Plan | Journal toggle.
+     legs and asks for a route format the app imports automatically. Two modes:
+     _plan a new route_, or _I already have the plan_ (enrich an existing
+     itinerary instead of inventing one — the default for past trips). Once a
+     journal is saved, the tab grows a Plan | Journal toggle.
   2. **Stops** — an ordered, tickable list of places with notes, discovery
      checklists and photos, plus a **List | Map toggle**: OpenStreetMap route
      map (numbered pins, walking order line, drag to adjust, tap to place;
@@ -129,14 +139,16 @@ src/
     TopBar.svelte          Per-screen top bar
     Icon.svelte            Inline icon set
     Keypad.svelte          Numeric keypad
-    ExpenseCapture.svelte  Two-tap expense capture modal
+    ExpenseCapture.svelte  Two-tap expense capture modal (native <dialog>)
     UpdateToast.svelte     Update / offline-ready toast
+    TripCover.svelte       Trip cover (route sketch / photo / ribbon)
+    CoverPicker.svelte     Choose/upload a trip's cover
     tabs/                  PlanTab, StopsTab, ExpensesTab, ExportTab
   routes/
     Home.svelte            Trip list + new trip
-    NewTrip.svelte         Trip-type preset picker
+    NewTrip.svelte         Starting-point (template) picker
     Trip.svelte            Four-tab trip frame
-    TripEdit.svelte        Trip + city editing
+    TripEdit.svelte        Legs editor + details + cover
     Settings.svelte        NAS backup + on-device data + storage/install
     NotFound.svelte
   lib/
@@ -145,8 +157,10 @@ src/
     connectivity.svelte.ts Online/offline state
     settings.ts            Settings model (pure, testable)
     settings.svelte.ts     Settings store (IndexedDB-backed)
-    trips.ts               Trip + city mutations
-    presets.ts             Trip-type presets (plain data)
+    trips.ts               Trip + leg mutations, derived-field sync
+    trip-shape.ts          Pure: name/shape/dates/nights from legs
+    presets.ts             Starting-point templates (plain data)
+    cover.ts               Pure SVG cover generators (sketch/ribbon)
     markdown.ts            Plan rendering (marked + DOMPurify)
     headings.ts            Pure heading parsing (contents list + split helper)
     countdown.ts           Pure departure-countdown maths

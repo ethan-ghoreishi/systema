@@ -7,12 +7,15 @@
   import StopsTab from '../components/tabs/StopsTab.svelte';
   import ExpensesTab from '../components/tabs/ExpensesTab.svelte';
   import ExportTab from '../components/tabs/ExportTab.svelte';
+  import { tripDisplayName } from '../lib/trip-shape';
 
   let { id, tab }: { id: string; tab: string } = $props();
 
   // null = not found, undefined = still loading.
   const tripQ = liveQuery(async () => (await db.trips.get(id)) ?? null);
+  const citiesQ = liveQuery(() => db.cities.where('tripId').equals(id).sortBy('order'));
   const trip = $derived($tripQ);
+  const cities = $derived($citiesQ ?? []);
 
   const tabs = [
     { key: 'plan', label: 'Plan', icon: 'plan' },
@@ -39,7 +42,7 @@
   </div>
 {:else}
   <div class="screen-frame screen-frame--tabbed">
-    <TopBar title={trip.name} back="#/">
+    <TopBar title={tripDisplayName(trip, cities)} back="#/">
       {#snippet actions()}
         <a class="icon-btn" href={`#/trip/${id}/edit`} aria-label="Edit trip"
           ><Icon name="edit" /></a

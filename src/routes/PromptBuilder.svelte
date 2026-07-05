@@ -10,6 +10,7 @@
     budgetOptions,
     interestOptions,
   } from '../lib/prompt';
+  import { tripDisplayName, tripMetaLabel } from '../lib/trip-shape';
   import { copyText, downloadText } from '../lib/download';
 
   let { id }: { id: string } = $props();
@@ -31,7 +32,7 @@
     }
   });
 
-  const promptText = $derived(prefs ? buildResearchPrompt(prefs) : '');
+  const promptText = $derived(prefs && trip ? buildResearchPrompt(prefs, trip, cities) : '');
 
   let status = $state('');
 
@@ -64,41 +65,42 @@
 
     <div class="screen-body">
       <p class="hint">
-        Answer a few questions and copy a ready-to-run prompt. It bakes in your standing profile
-        (walking-first, coeliac-safe vegetarian grocery-first, London and Esfahan comparisons) and
-        asks for a format this app imports automatically — the Stops tab will extract the route.
+        Copy a ready-to-run prompt. It bakes in your standing profile (walking-first, coeliac-safe
+        vegetarian grocery-first, London and Esfahan comparisons), the itinerary from your legs, and
+        a format this app imports automatically — the Stops tab extracts the route.
       </p>
 
       <div class="card">
-        <div>
-          <label class="label" for="p-dest">Destination</label>
-          <input id="p-dest" class="field" bind:value={prefs.destination} />
-        </div>
-
-        <div class="cluster">
-          <div class="grow">
-            <label class="label" for="p-arrival">Arrival</label>
-            <input
-              id="p-arrival"
-              class="field"
-              placeholder="e.g. 20 June, 8:40am"
-              bind:value={prefs.arrival}
-            />
-          </div>
-          <div class="grow">
-            <label class="label" for="p-departure">Departure</label>
-            <input
-              id="p-departure"
-              class="field"
-              placeholder="e.g. 22 June, 10:25pm"
-              bind:value={prefs.departure}
-            />
-          </div>
+        <div class="prompt-trip">
+          <span class="prompt-trip-name">{tripDisplayName(trip, cities)}</span>
+          <span class="prompt-trip-meta"
+            >{tripMetaLabel(trip, cities) || 'Add legs in Edit trip'}</span
+          >
+          <a class="hint" href={`#/trip/${id}/edit`}>Edit legs, dates &amp; cities →</a>
         </div>
 
         <div>
-          <label class="label" for="p-duration">Trip shape</label>
-          <input id="p-duration" class="field" bind:value={prefs.durationLabel} />
+          <span class="label">Mode</span>
+          <div class="chips">
+            <button
+              class="chip"
+              class:chip--on={prefs.mode === 'plan'}
+              onclick={() => (prefs!.mode = 'plan')}>Plan a new route</button
+            >
+            <button
+              class="chip"
+              class:chip--on={prefs.mode === 'have-plan'}
+              onclick={() => (prefs!.mode = 'have-plan')}>I already have the plan</button
+            >
+          </div>
+          <p class="hint">
+            {#if prefs.mode === 'have-plan'}
+              Enriches the itinerary you already have (paste it into the Plan tab first) into the
+              app's format — it won't invent a new route. Best for past or pre-planned trips.
+            {:else}
+              Designs a fresh route from your legs, timings and profile.
+            {/if}
+          </p>
         </div>
 
         <div>

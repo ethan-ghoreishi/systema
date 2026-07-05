@@ -1,8 +1,8 @@
 import { db, type City, type Expense, type FxRate, type Photo, type Stop, type Trip } from './db';
-import { presetByType } from './presets';
 import { formatDateRange } from './format';
 import { formatSheetDate } from './sheet';
 import { realExpenses, tripTotalGBP, categorySummary } from './expenses';
+import { tripDisplayName, tripShape } from './trip-shape';
 import { formatGBP } from './money';
 
 /**
@@ -33,13 +33,14 @@ function photoStamp(ms: number): string {
  */
 export function buildTripPack(
   trip: Trip,
+  cities: City[],
   stops: Stop[],
   expenses: Expense[],
   photos: PackPhoto[],
 ): string {
   const lines: string[] = [];
-  lines.push(`# Trip pack: ${trip.name}`, '');
-  lines.push(`**Type:** ${presetByType(trip.type).label}  `);
+  lines.push(`# Trip pack: ${tripDisplayName(trip, cities)}`, '');
+  lines.push(`**Shape:** ${tripShape(trip, cities).label}  `);
   lines.push(`**Dates:** ${formatDateRange(trip.startDate, trip.endDate)}  `);
   lines.push(`**Party:** ${trip.partySize}`, '');
 
@@ -109,7 +110,12 @@ export function buildJournalingPrompt(pack: string): string {
  * the expense ledger, no plan/notes/photos). The expense trail is the memory
  * scaffold: Claude interviews first, then writes the journal in house style.
  */
-export function buildMemoryPrompt(trip: Trip, stops: Stop[], expenses: Expense[]): string {
+export function buildMemoryPrompt(
+  trip: Trip,
+  cities: City[],
+  stops: Stop[],
+  expenses: Expense[],
+): string {
   const real = realExpenses(expenses);
   const lines: string[] = [];
 
@@ -131,7 +137,7 @@ export function buildMemoryPrompt(trip: Trip, stops: Stop[], expenses: Expense[]
     '',
     `## Trip`,
     '',
-    `Destination: ${trip.name}`,
+    `Destination: ${tripDisplayName(trip, cities)}`,
     `Dates: ${formatDateRange(trip.startDate, trip.endDate)}`,
     '',
   );

@@ -11,12 +11,16 @@ import Dexie, { type Table } from 'dexie';
 export type TripType = 'same-day' | 'airport-sleep' | 'weekend' | 'custom';
 export type TripStatus = 'planning' | 'active' | 'done';
 
-/** Saved answers for the research prompt builder (all optional, per trip). */
+/** Where the traveller slept during a leg: nowhere, dozed at the airport, or a hotel. */
+export type SleepKind = 'none' | 'airport' | 'hotel';
+
+/** How a trip card picks its cover image. 'auto' = route map → photo → route card. */
+export type CoverMode = 'auto' | 'map' | 'route-card' | 'photo';
+
+/** Saved answers for the research prompt builder (per trip). */
 export interface PromptPrefs {
-  destination: string;
-  arrival: string; // free text, e.g. "20 June 2026, 8:40am"
-  departure: string;
-  durationLabel: string; // e.g. 'one-day' | 'two-day' | 'three-day'
+  /** 'plan' = design a new route; 'have-plan' = enrich an itinerary I already have. */
+  mode: 'plan' | 'have-plan';
   pace: string;
   budget: string;
   companions: string;
@@ -26,16 +30,27 @@ export interface PromptPrefs {
   constraints: string;
   pastVisits: string;
   notes: string;
+  /** @deprecated Superseded by the derived itinerary; kept so old saved prefs still parse. */
+  destination?: string;
+  arrival?: string;
+  departure?: string;
+  durationLabel?: string;
 }
 
 export interface Trip {
   id: string;
+  /**
+   * Display name is normally derived from the legs (see tripDisplayName);
+   * `name` is a fallback for older/imported trips. `nameManual` is an explicit
+   * user override that wins over the derived name.
+   */
   name: string;
+  nameManual?: string;
   type: TripType;
-  startDate: string; // 'YYYY-MM-DD' or ''
-  endDate: string; // 'YYYY-MM-DD' or ''
+  startDate: string; // 'YYYY-MM-DD' or '' — fallback; legs derive it when present
+  endDate: string; // 'YYYY-MM-DD' or '' — fallback; legs derive it when present
   partySize: number; // default 2
-  returnFlightAt: string; // 'YYYY-MM-DDTHH:mm' or '' — drives the departure countdown
+  returnFlightAt: string; // 'YYYY-MM-DDTHH:mm' or '' — fallback countdown target
   accommodation: boolean;
   status: TripStatus;
   planText: string; // the pasted itinerary (Markdown)
@@ -43,17 +58,30 @@ export interface Trip {
   journalText?: string;
   /** Saved research-prompt-builder answers (optional). */
   promptPrefs?: PromptPrefs;
+  /** How the trip card picks its cover (default 'auto'). */
+  coverMode?: CoverMode;
+  /** Chosen photo id when coverMode === 'photo'. */
+  coverPhotoId?: string;
   order: number;
   createdAt: number;
   updatedAt: number;
 }
 
+/**
+ * A leg of the trip: one city visit, in walking/travel order. Arrival and
+ * departure are optional (older/imported trips have none) — when present they
+ * drive the trip's dates, countdown, and derived shape. `sleep` records where
+ * the night(s) around this leg were spent.
+ */
 export interface City {
   id: string;
   tripId: string;
   name: string;
   currency: string; // ISO 4217, e.g. 'EUR'
   order: number;
+  arrival?: string; // 'YYYY-MM-DDTHH:mm'
+  departure?: string; // 'YYYY-MM-DDTHH:mm'
+  sleep?: SleepKind;
 }
 
 export interface ChecklistItem {
@@ -77,7 +105,7 @@ export interface Stop {
   createdAt: number;
 }
 
-export type PhotoKind = 'stop' | 'receipt';
+export type PhotoKind = 'stop' | 'receipt' | 'cover';
 
 export interface Photo {
   id: string;

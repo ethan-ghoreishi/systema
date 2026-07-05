@@ -21,33 +21,45 @@ function trip(over: Partial<Trip> = {}): Trip {
   };
 }
 
-const cities: City[] = [{ id: 'c1', tripId: 't', name: 'Copenhagen', currency: 'DKK', order: 0 }];
+const cities: City[] = [
+  {
+    id: 'c1',
+    tripId: 't',
+    name: 'Copenhagen',
+    currency: 'DKK',
+    order: 0,
+    arrival: '2026-06-20T08:40',
+    departure: '2026-06-22T22:25',
+    sleep: 'hotel',
+  },
+];
 
 describe('defaultPromptPrefs', () => {
-  it('prefills from the trip and cities', () => {
+  it('defaults a fresh planning trip to plan mode', () => {
     const p = defaultPromptPrefs(trip(), cities);
-    expect(p.destination).toBe('Copenhagen');
-    expect(p.arrival).toBe('20 June 2026');
-    expect(p.departure).toContain('22 June 2026');
-    expect(p.durationLabel).toContain('two-to-three day');
+    expect(p.mode).toBe('plan');
     expect(p.companions).toContain('party of 2');
+  });
+
+  it('defaults a done trip (or one with a plan) to have-plan mode', () => {
+    expect(defaultPromptPrefs(trip({ status: 'done' }), cities).mode).toBe('have-plan');
+    expect(defaultPromptPrefs(trip({ planText: '# Plan' }), cities).mode).toBe('have-plan');
   });
 });
 
-describe('buildResearchPrompt', () => {
+describe('buildResearchPrompt — plan mode', () => {
   const p = defaultPromptPrefs(trip(), cities);
-  const text = buildResearchPrompt({
-    ...p,
-    hotel: 'Herlev Kro',
-    pastVisits: 'Nyhavn, Kastellet',
-    museumsMax: 1,
-  });
+  const text = buildResearchPrompt(
+    { ...p, mode: 'plan', hotel: 'Herlev Kro', pastVisits: 'Nyhavn, Kastellet', museumsMax: 1 },
+    trip(),
+    cities,
+  );
 
-  it('carries the inputs', () => {
-    expect(text).toContain('Destination: Copenhagen');
+  it('carries the derived itinerary and inputs', () => {
+    expect(text).toContain('**Copenhagen**');
     expect(text).toContain('Herlev Kro');
     expect(text).toContain('Nyhavn, Kastellet');
-    expect(text).toContain('Include at most 1 museum.');
+    expect(text).toContain('at most 1 museum');
   });
 
   it('bakes in the standing profile and comparators', () => {
@@ -60,5 +72,31 @@ describe('buildResearchPrompt', () => {
     expect(text).toContain('## Route');
     expect(text).toContain('### <Stop name>');
     expect(text).toContain('level-3 headings for stops only');
+  });
+});
+
+describe('buildResearchPrompt — have-plan mode', () => {
+  it('does not design a new route and includes the existing plan', () => {
+    const withPlan = trip({ planText: '# My itinerary\nOpera, Christiania' });
+    const p = defaultPromptPrefs(withPlan, cities);
+    const text = buildResearchPrompt(p, withPlan, cities);
+    expect(p.mode).toBe('have-plan');
+    expect(text).toContain('Do not design a new route');
+    expect(text).toContain('## My existing itinerary');
+    expect(text).toContain('Opera, Christiania');
+    // Still asks for the importable route format so the enriched plan can be pinned.
+    expect(text).toContain('### <Stop name>');
+  });
+
+  it('multi-city itinerary lists both legs in order', () => {
+    const t = trip({ planText: 'x' });
+    const twoCities: City[] = [
+      { id: 'a', tripId: 't', name: 'Barcelona', currency: 'EUR', order: 0, sleep: 'none' },
+      { id: 'b', tripId: 't', name: 'Bologna', currency: 'EUR', order: 1, sleep: 'hotel' },
+    ];
+    const text = buildResearchPrompt(defaultPromptPrefs(t, twoCities), t, twoCities);
+    expect(text).toContain('**Barcelona**');
+    expect(text).toContain('**Bologna**');
+    expect(text.indexOf('Barcelona')).toBeLessThan(text.indexOf('Bologna'));
   });
 });

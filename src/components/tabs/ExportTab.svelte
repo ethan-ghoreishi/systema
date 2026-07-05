@@ -9,6 +9,7 @@
     importBackup,
   } from '../../lib/export';
   import { buildTripCsv } from '../../lib/csv';
+  import { tripDisplayName } from '../../lib/trip-shape';
   import { copyText, downloadText } from '../../lib/download';
   import { settingsStore } from '../../lib/settings.svelte';
   import { todayIso } from '../../lib/sheet';
@@ -17,15 +18,18 @@
   let { trip }: { trip: Trip } = $props();
 
   const stopsQ = liveQuery(() => db.stops.where('tripId').equals(trip.id).sortBy('order'));
+  const citiesQ = liveQuery(() => db.cities.where('tripId').equals(trip.id).sortBy('order'));
   const expensesQ = liveQuery(() => db.expenses.where('tripId').equals(trip.id).toArray());
   const photosQ = liveQuery(() => db.photos.where('tripId').equals(trip.id).toArray());
   const stops = $derived($stopsQ ?? []);
+  const cities = $derived($citiesQ ?? []);
   const expenses = $derived($expensesQ ?? []);
   const allPhotos = $derived($photosQ ?? []);
 
   const pack = $derived(
     buildTripPack(
       trip,
+      cities,
       stops,
       expenses,
       allPhotos.map((p) => ({ stopId: p.stopId, createdAt: p.createdAt })),
@@ -54,7 +58,7 @@
 
   function slug(): string {
     return (
-      trip.name
+      tripDisplayName(trip, cities)
         .toLowerCase()
         .replace(/[^\w]+/g, '-')
         .replace(/^-+|-+$/g, '') || 'trip'
@@ -74,7 +78,7 @@
   }
 
   async function copyMemoryPrompt() {
-    const ok = await copyText(buildMemoryPrompt(trip, stops, expenses));
+    const ok = await copyText(buildMemoryPrompt(trip, cities, stops, expenses));
     status = ok
       ? 'Reconstruction prompt copied — Claude interviews you first, then writes the journal. Paste the result back below.'
       : 'Copy failed.';

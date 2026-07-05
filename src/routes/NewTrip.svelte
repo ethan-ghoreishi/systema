@@ -21,7 +21,8 @@
 
   <div class="screen-body">
     <p class="hint">
-      Pick a type. It sets sensible defaults — you can change everything afterwards.
+      Pick a starting point — it just seeds the usual expense rows. You'll add cities and times
+      next, and the app works out the trip's shape, dates and name from those.
     </p>
 
     {#each tripPresets as preset (preset.type)}

@@ -66,7 +66,7 @@ describe('buildTripPack', () => {
   ];
 
   it('includes title, plan, ticked stops with notes, photos and expense total', () => {
-    const md = buildTripPack(trip(), [stop()], [exp()], twoPhotos);
+    const md = buildTripPack(trip(), [], [stop()], [exp()], twoPhotos);
     expect(md).toContain('# Trip pack: Copenhagen');
     expect(md).toContain('## Plan');
     expect(md).toContain('Trust designed into surfaces.');
@@ -81,7 +81,7 @@ describe('buildTripPack', () => {
   });
 
   it('omits empty sections', () => {
-    const md = buildTripPack(trip({ planText: '' }), [], [], []);
+    const md = buildTripPack(trip({ planText: '' }), [], [], [], []);
     expect(md).not.toContain('## Plan');
     expect(md).not.toContain('## Stops');
     expect(md).not.toContain('## Photos');
@@ -89,7 +89,7 @@ describe('buildTripPack', () => {
   });
 
   it('does not use em-dashes', () => {
-    const md = buildTripPack(trip(), [stop()], [exp()], twoPhotos);
+    const md = buildTripPack(trip(), [], [stop()], [exp()], twoPhotos);
     expect(md).not.toContain('—');
   });
 });

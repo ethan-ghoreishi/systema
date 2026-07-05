@@ -1,13 +1,32 @@
 <script lang="ts">
   import { liveQuery } from 'dexie';
-  import { db, type Trip } from '../lib/db';
-  import { presetByType } from '../lib/presets';
-  import { formatDateRange } from '../lib/format';
+  import { db, type City, type Trip } from '../lib/db';
+  import { tripDisplayName, tripMetaLabel } from '../lib/trip-shape';
+  import { realExpenses, tripTotalGBP } from '../lib/expenses';
+  import { formatGBP } from '../lib/money';
   import TopBar from '../components/TopBar.svelte';
   import Icon from '../components/Icon.svelte';
+  import TripCover from '../components/TripCover.svelte';
 
   const tripsQ = liveQuery(() => db.trips.orderBy('order').reverse().toArray());
+  const citiesQ = liveQuery(() => db.cities.toArray());
+  const expensesQ = liveQuery(() => db.expenses.toArray());
   const trips = $derived($tripsQ ?? []);
+  const allCities = $derived($citiesQ ?? []);
+  const allExpenses = $derived($expensesQ ?? []);
+
+  const citiesByTrip = $derived.by(() => {
+    const m: Record<string, City[]> = {};
+    for (const c of allCities) (m[c.tripId] ??= []).push(c);
+    return m;
+  });
+  const spendByTrip = $derived.by(() => {
+    const grouped: Record<string, typeof allExpenses> = {};
+    for (const e of allExpenses) (grouped[e.tripId] ??= []).push(e);
+    const m: Record<string, number> = {};
+    for (const id in grouped) m[id] = tripTotalGBP(realExpenses(grouped[id]));
+    return m;
+  });
 
   // Past trips (marked Done) live in their own journal section below.
   const current = $derived(trips.filter((t) => t.status !== 'done'));
@@ -19,36 +38,23 @@
     done: 'Done',
   };
 
-  // Cover thumbnails for the past-trips journal shelf (first photo per trip).
-  let covers = $state<Record<string, string>>({});
-  $effect(() => {
-    const ids = past.map((t) => t.id);
-    let cancelled = false;
-    const map: Record<string, string> = {};
-    void Promise.all(
-      ids.map(async (id) => {
-        const p = await db.photos
-          .where('tripId')
-          .equals(id)
-          .and((x) => x.kind === 'stop')
-          .first();
-        if (p) map[id] = URL.createObjectURL(p.blob);
-      }),
-    ).then(() => {
-      if (cancelled) {
-        for (const u of Object.values(map)) URL.revokeObjectURL(u);
-      } else {
-        covers = map;
-      }
-    });
-    return () => {
-      cancelled = true;
-      for (const u of Object.values(map)) URL.revokeObjectURL(u);
-    };
-  });
+  function citiesFor(trip: Trip): City[] {
+    return citiesByTrip[trip.id] ?? [];
+  }
 
-  function meta(trip: Trip): string {
-    return `${presetByType(trip.type).label} · ${formatDateRange(trip.startDate, trip.endDate)} · ${statusLabel[trip.status] ?? trip.status}`;
+  function currentMeta(trip: Trip): string {
+    const base = tripMetaLabel(trip, citiesFor(trip));
+    return base
+      ? `${base} · ${statusLabel[trip.status] ?? trip.status}`
+      : (statusLabel[trip.status] ?? trip.status);
+  }
+
+  function pastMeta(trip: Trip): string {
+    const spend = spendByTrip[trip.id] ?? 0;
+    const parts = [tripMetaLabel(trip, citiesFor(trip))];
+    if (spend > 0) parts.push(formatGBP(spend));
+    parts.push((trip.journalText ?? '').trim() ? 'Journal' : 'No journal yet');
+    return parts.filter(Boolean).join(' · ');
   }
 </script>
 
@@ -82,8 +88,8 @@
         <div class="trip-list">
           {#each current as trip (trip.id)}
             <a class="card trip-card" href={`#/trip/${trip.id}/plan`}>
-              <span class="trip-card-name">{trip.name}</span>
-              <span class="trip-card-meta">{meta(trip)}</span>
+              <span class="trip-card-name">{tripDisplayName(trip, citiesFor(trip))}</span>
+              <span class="trip-card-meta">{currentMeta(trip)}</span>
             </a>
           {/each}
         </div>
@@ -94,16 +100,11 @@
         <div class="trip-list">
           {#each past as trip (trip.id)}
             <a class="card trip-card trip-card--past" href={`#/trip/${trip.id}/plan`}>
+              <TripCover {trip} size="thumb" />
               <span class="trip-card-main">
-                <span class="trip-card-name">{trip.name}</span>
-                <span class="trip-card-meta">
-                  {formatDateRange(trip.startDate, trip.endDate)}
-                  {#if (trip.journalText ?? '').trim()}· Journal{:else}· No journal yet{/if}
-                </span>
+                <span class="trip-card-name">{tripDisplayName(trip, citiesFor(trip))}</span>
+                <span class="trip-card-meta">{pastMeta(trip)}</span>
               </span>
-              {#if covers[trip.id]}
-                <img class="trip-cover" src={covers[trip.id]} alt="" loading="lazy" />
-              {/if}
             </a>
           {/each}
         </div>
