@@ -73,6 +73,8 @@
   let cityId = $state<string | null>(init.cityId);
   let destination = $state(init.destination);
   let overrideGBP = $state('');
+  let saving = $state(false);
+  let saveError = $state('');
   let receiptFile = $state<File | null>(null);
 
   let rate = $state<number | null>(null);
@@ -87,8 +89,11 @@
       rateMissing = false;
       return;
     }
+    rate = null;
+    rateStale = false;
+    rateMissing = true;
     let cancelled = false;
-    getRate(c).then((r) => {
+    getRate(c, date).then((r) => {
       if (cancelled) return;
       if (r) {
         rate = r.rate;
@@ -107,14 +112,28 @@
   const isGBP = $derived(currency === 'GBP');
   const localNum = $derived(parseFloat(amountStr) || 0);
   const computedGBP = $derived(isGBP ? localNum : rate != null ? round2(localNum * rate) : null);
-  const overrideNum = $derived(overrideGBP.trim() ? parseFloat(overrideGBP) || 0 : null);
-  const finalGBP = $derived(overrideNum != null ? overrideNum : (computedGBP ?? 0));
+  const overrideNum = $derived(overrideGBP.trim() ? Number(overrideGBP) : null);
+  const keepRecorded = $derived(
+    expense &&
+      !expense.skeleton &&
+      !expense.fxPending &&
+      currency === init.currency &&
+      amountStr === init.amountStr &&
+      date === init.date &&
+      overrideNum == null,
+  );
+  const finalGBP = $derived(
+    keepRecorded ? expense!.amountGBP : overrideNum != null ? overrideNum : (computedGBP ?? 0),
+  );
   const subOptions = $derived(category ? (subcategories[category] ?? []) : []);
 
   // No GBP required: a non-GBP amount with no rate saves as "awaiting rate"
   // and prices itself from the ECB rate for its date once online.
   const canSave = $derived(
-    localNum > 0 &&
+    !saving &&
+      Number.isFinite(localNum) &&
+      localNum > 0 &&
+      (overrideNum == null || (Number.isFinite(overrideNum) && overrideNum >= 0)) &&
       category !== '' &&
       subcategory !== '' &&
       paymentMethod !== '' &&
@@ -149,53 +168,63 @@
   async function save() {
     if (!canSave) return;
 
-    const usingAutoRate = !isGBP && overrideNum == null && rate != null;
-    const unpriced = !isGBP && overrideNum == null && rate == null;
-    let finalNotes = notes.trim();
-    if (usingAutoRate) {
-      const fxNote = `FX: 1 ${currency} = £${rate}`;
-      finalNotes = finalNotes ? `${finalNotes} · ${fxNote}` : fxNote;
-    }
+    saving = true;
+    saveError = '';
+    try {
+      const usingAutoRate = !keepRecorded && !isGBP && overrideNum == null && rate != null;
+      const unpriced = !keepRecorded && !isGBP && overrideNum == null && rate == null;
+      let finalNotes = notes.trim();
+      if (usingAutoRate) {
+        const fxNote = `FX: 1 ${currency} = £${rate}`;
+        finalNotes = finalNotes ? `${finalNotes} · ${fxNote}` : fxNote;
+      }
 
-    const fields = {
-      cityId,
-      destination: destination.trim(),
-      date,
-      category,
-      subcategory,
-      description: description.trim(),
-      paymentMethod,
-      amountGBP: unpriced ? 0 : finalGBP,
-      amountLocal: isGBP ? 0 : localNum,
-      currency: isGBP ? 'GBP' : currency,
-      fxRate: isGBP ? null : overrideNum != null ? null : rate,
-      fxPending: unpriced,
-      notes: finalNotes,
-    };
+      const fields = {
+        cityId,
+        destination: destination.trim(),
+        date,
+        category,
+        subcategory,
+        description: description.trim(),
+        paymentMethod,
+        amountGBP: unpriced ? 0 : finalGBP,
+        amountLocal: isGBP ? 0 : localNum,
+        currency: isGBP ? 'GBP' : currency,
+        fxRate: keepRecorded ? expense!.fxRate : isGBP ? null : overrideNum != null ? null : rate,
+        fxPending: unpriced,
+        notes: finalNotes,
+      };
 
-    let expenseId: string;
-    if (expense) {
-      await updateExpense(expense.id, { ...fields, skeleton: false });
-      expenseId = expense.id;
-    } else {
-      expenseId = await addExpense(trip.id, fields);
-    }
+      await db.transaction('rw', db.expenses, db.photos, async () => {
+        let expenseId: string;
+        if (expense) {
+          await updateExpense(expense.id, { ...fields, skeleton: false });
+          expenseId = expense.id;
+        } else {
+          expenseId = await addExpense(trip.id, fields);
+        }
 
-    if (receiptFile) {
-      await db.photos.add({
-        id: newId(),
-        tripId: trip.id,
-        stopId: null,
-        expenseId,
-        kind: 'receipt',
-        blob: receiptFile,
-        createdAt: Date.now(),
+        if (receiptFile) {
+          await db.photos.add({
+            id: newId(),
+            tripId: trip.id,
+            stopId: null,
+            expenseId,
+            kind: 'receipt',
+            blob: receiptFile,
+            createdAt: Date.now(),
+          });
+        }
       });
-    }
 
-    // If this was saved without a rate, price it now while we're online.
-    if (navigator.onLine) void resolvePendingFx(trip.id);
-    onClose();
+      // If this was saved without a rate, price it now while we're online.
+      if (navigator.onLine) void resolvePendingFx(trip.id);
+      onClose();
+    } catch (err) {
+      saveError = `Not saved: ${err instanceof Error ? err.message : String(err)}. Your entry is still here; try again.`;
+    } finally {
+      saving = false;
+    }
   }
 
   async function remove() {
@@ -209,12 +238,21 @@
 </script>
 
 <!-- Escape triggers the dialog's native cancel → close → onClose. -->
-<dialog class="modal" bind:this={dialogEl} onclose={onClose}>
+<dialog
+  class="modal"
+  bind:this={dialogEl}
+  onclose={onClose}
+  oncancel={(e) => {
+    if (saving) e.preventDefault();
+  }}
+>
   <div class="modal-sheet">
     <!-- Action bar pinned at the top: Cancel (left), Save (right). Always
          reachable, keyboard or not — the native iOS form pattern. -->
     <header class="modal-head">
-      <button class="btn btn--ghost btn--sm modal-cancel" onclick={onClose}>Cancel</button>
+      <button class="btn btn--ghost btn--sm modal-cancel" onclick={onClose} disabled={saving}
+        >Cancel</button
+      >
       <h2 class="modal-title">{expense && !expense.skeleton ? 'Edit expense' : 'Add expense'}</h2>
       <button class="btn btn--primary btn--sm modal-save" onclick={save} disabled={!canSave}
         >Save</button
@@ -222,6 +260,7 @@
     </header>
 
     <div class="modal-body">
+      {#if saveError}<p role="alert" class="hint hint--warn">{saveError}</p>{/if}
       <div class="amount-display">
         <span class="amount-local">{formatAmount(localNum, currency)}</span>
         {#if !isGBP}

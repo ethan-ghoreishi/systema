@@ -73,3 +73,132 @@ test('invalid backup writes nothing', async ({ page }) => {
   });
   expect(result).toEqual({ rejected: true, trips: 1, expenses: 0 });
 });
+
+test('background FX does not overwrite a manual edit made during the request', async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const dbPath = '/src/lib/db.ts';
+    const expensePath = '/src/lib/expenses.ts';
+    const { db } = await import(/* @vite-ignore */ dbPath);
+    const { addExpense, resolvePendingFx } = await import(/* @vite-ignore */ expensePath);
+    const id = await addExpense(sessionStorage.getItem('testTrip'), {
+      cityId: null,
+      destination: 'Test',
+      date: '2026-09-01',
+      category: 'Food',
+      subcategory: 'Snacks',
+      description: '',
+      paymentMethod: 'Cash',
+      amountGBP: 0,
+      amountLocal: 10,
+      currency: 'EUR',
+      fxRate: null,
+      fxPending: true,
+      notes: '',
+    });
+    const original = window.fetch;
+    window.fetch = async () => {
+      await db.expenses.update(id, { amountGBP: 7, fxPending: false, notes: 'Manual correction' });
+      return new Response(JSON.stringify({ rates: { GBP: 0.9 } }));
+    };
+    try {
+      await resolvePendingFx();
+      const row = await db.expenses.get(id);
+      return { amount: row.amountGBP, notes: row.notes };
+    } finally {
+      window.fetch = original;
+    }
+  });
+  expect(result).toEqual({ amount: 7, notes: 'Manual correction' });
+});
+
+test('description-only expense edit keeps the recorded GBP amount', async ({ page }) => {
+  await page.route('https://api.frankfurter.dev/**', (route) =>
+    route.fulfill({
+      json: { date: '2026-09-17', rates: { GBP: 0.9 } },
+    }),
+  );
+  await page.evaluate(async () => {
+    const path = '/src/lib/expenses.ts';
+    const { addExpense } = await import(/* @vite-ignore */ path);
+    const trip = sessionStorage.getItem('testTrip');
+    await addExpense(trip, {
+      cityId: null,
+      destination: 'Test',
+      date: '2026-09-01',
+      category: 'Food',
+      subcategory: 'Snacks',
+      description: 'Synthetic expense',
+      paymentMethod: 'Cash',
+      amountGBP: 7,
+      amountLocal: 10,
+      currency: 'EUR',
+      fxRate: null,
+      fxPending: false,
+      notes: '',
+    });
+    location.hash = `/trip/${trip}/expenses`;
+  });
+  await page.getByText('Synthetic expense', { exact: true }).click();
+  await page.getByLabel('Description', { exact: true }).fill('Edited description');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(async () => {
+        const path = '/src/lib/db.ts';
+        const { db } = await import(/* @vite-ignore */ path);
+        return (await db.expenses.toArray())[0].amountGBP;
+      }),
+    )
+    .toBe(7);
+});
+
+test('receipt write failure rolls back the expense edit and keeps the draft visible', async ({
+  page,
+}) => {
+  await page.evaluate(async () => {
+    const path = '/src/lib/expenses.ts';
+    const dbPath = '/src/lib/db.ts';
+    const { addExpense } = await import(/* @vite-ignore */ path);
+    const { db } = await import(/* @vite-ignore */ dbPath);
+    const trip = sessionStorage.getItem('testTrip');
+    await addExpense(trip, {
+      cityId: null,
+      destination: 'Test',
+      date: '2026-09-01',
+      category: 'Food',
+      subcategory: 'Snacks',
+      description: 'Original expense',
+      paymentMethod: 'Cash',
+      amountGBP: 7,
+      amountLocal: 0,
+      currency: 'GBP',
+      fxRate: null,
+      fxPending: false,
+      notes: '',
+    });
+    db.photos.hook('creating', () => {
+      throw new Error('Synthetic storage failure');
+    });
+    location.hash = `/trip/${trip}/expenses`;
+  });
+  await page.getByText('Original expense', { exact: true }).click();
+  await page.getByLabel('Description', { exact: true }).fill('Unsaved edit');
+  await page.locator('dialog input[type="file"]').setInputFiles({
+    name: 'synthetic.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from('synthetic image'),
+  });
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('Not saved');
+  await expect(page.getByLabel('Description', { exact: true })).toHaveValue('Unsaved edit');
+  expect(
+    await page.evaluate(async () => {
+      const path = '/src/lib/db.ts';
+      const { db } = await import(/* @vite-ignore */ path);
+      return {
+        description: (await db.expenses.toArray())[0].description,
+        photos: await db.photos.count(),
+      };
+    }),
+  ).toEqual({ description: 'Original expense', photos: 0 });
+});

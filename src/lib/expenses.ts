@@ -131,14 +131,25 @@ export async function resolvePendingFx(tripId?: string): Promise<number> {
   for (const e of pending) {
     const rate = await getRateForDate(e.currency, e.date);
     if (rate == null) continue;
-    const fxNote = `FX: 1 ${e.currency} = £${rate}`;
-    await db.expenses.update(e.id, {
-      amountGBP: round2(e.amountLocal * rate),
-      fxRate: rate,
-      fxPending: false,
-      notes: e.notes.trim() ? `${e.notes.trim()} · ${fxNote}` : fxNote,
+    await db.transaction('rw', db.expenses, async () => {
+      const current = await db.expenses.get(e.id);
+      if (
+        !current?.fxPending ||
+        current.skeleton ||
+        current.currency !== e.currency ||
+        current.date !== e.date ||
+        current.amountLocal !== e.amountLocal
+      )
+        return;
+      const fxNote = `FX: 1 ${current.currency} = £${rate}`;
+      await db.expenses.update(e.id, {
+        amountGBP: round2(current.amountLocal * rate),
+        fxRate: rate,
+        fxPending: false,
+        notes: current.notes.trim() ? `${current.notes.trim()} · ${fxNote}` : fxNote,
+      });
+      resolved += 1;
     });
-    resolved += 1;
   }
   return resolved;
 }
