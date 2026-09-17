@@ -3,6 +3,8 @@ name: Deploy to GitHub Pages
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 # Allow the workflow to publish to Pages via OIDC.
@@ -15,7 +17,7 @@ permissions:
 # leave the deployment stuck/aborted for that commit and make retries fail.
 # (Matches GitHub's official Pages workflow.)
 concurrency:
-  group: pages
+  group: pages-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -30,15 +32,21 @@ jobs:
           cache: npm
 
       - run: npm ci
+      - run: npm run format:check
+      - run: npm run lint
       - run: npm run check
       - run: npm run test
       - run: npm run build
+      - run: npx playwright install --with-deps webkit chromium
+      - run: npm run test:e2e
 
       - uses: actions/upload-pages-artifact@v3
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         with:
           path: dist
 
   deploy:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
     environment:
