@@ -70,7 +70,7 @@
     try {
       const r = await importBackup(JSON.parse(raw));
       await settingsStore.load();
-      dataStatus = `Imported ${r.trips} trip(s), ${r.stops} stop(s), ${r.expenses} expense(s), ${r.photos} photo(s).`;
+      dataStatus = `Imported ${r.trips} trip(s), ${r.stops} stop(s), ${r.expenses} expense(s), ${r.photos} photo(s). Kept ${r.preserved} existing record(s) unchanged.`;
     } catch (err) {
       dataStatus = `Import failed: ${err instanceof Error ? err.message : String(err)}`;
     } finally {
@@ -104,7 +104,9 @@
     try {
       const backup = await buildBackup();
       downloadText(`systema-backup-${todayIso()}.json`, JSON.stringify(backup), 'application/json');
-      dataStatus = 'Backup downloaded.';
+      dataStatus = 'Backup prepared. Save it in Files and check it exists.';
+    } catch (err) {
+      dataStatus = `Backup failed: ${err instanceof Error ? err.message : String(err)}`;
     } finally {
       dataBusy = false;
     }
@@ -119,8 +121,9 @@
       <h2 class="section-title">NAS backup vault</h2>
       <p class="hint">
         Backs everything up to your Synology automatically whenever it's reachable — a data snapshot
-        after every change, and each photo once. Photos on the NAS are safe to delete from the phone
-        to free space. Setup:
+        after every change, and each photo once. Keep photos on the phone until you have verified a
+        separate full backup. Deleting a photo also removes its link to the trip from future
+        snapshots. Setup:
         <a
           href="https://github.com/ethan-ghoreishi/systema/blob/main/docs/nas-backup-setup.md"
           target="_blank"

@@ -114,7 +114,7 @@ export interface Photo {
   expenseId: string | null; // set for kind === 'receipt'
   kind: PhotoKind;
   blob: Blob;
-  /** Pushed to the NAS backup vault (safe to delete locally to free space). */
+  /** Pushed to the NAS backup vault. Deletion also removes its local trip link. */
   backedUp?: boolean;
   createdAt: number;
 }

@@ -95,7 +95,9 @@
     try {
       const backup = await buildBackup();
       downloadText(`systema-backup-${todayIso()}.json`, JSON.stringify(backup), 'application/json');
-      status = 'Backup downloaded.';
+      status = 'Backup prepared. Save it in Files and check it exists.';
+    } catch (err) {
+      status = `Backup failed: ${err instanceof Error ? err.message : String(err)}`;
     } finally {
       busy = false;
     }
@@ -112,7 +114,7 @@
       const data = JSON.parse(await file.text());
       const r = await importBackup(data);
       await settingsStore.load();
-      status = `Imported ${r.trips} trip(s), ${r.stops} stop(s), ${r.expenses} expense(s), ${r.photos} photo(s).`;
+      status = `Imported ${r.trips} trip(s), ${r.stops} stop(s), ${r.expenses} expense(s), ${r.photos} photo(s). Kept ${r.preserved} existing record(s) unchanged.`;
     } catch (err) {
       status = `Import failed: ${err instanceof Error ? err.message : String(err)}`;
     } finally {

@@ -1,3 +1,5 @@
+import type { Table } from 'dexie';
+import { validateBackup } from './backup-validation';
 import { db, type City, type Expense, type FxRate, type Photo, type Stop, type Trip } from './db';
 import { formatDateRange } from './format';
 import { formatSheetDate } from './sheet';
@@ -201,15 +203,20 @@ async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
 }
 
 export async function buildBackup(): Promise<Backup> {
-  const [trips, cities, stops, expenses, fxRates, settings, photoRows] = await Promise.all([
-    db.trips.toArray(),
-    db.cities.toArray(),
-    db.stops.toArray(),
-    db.expenses.toArray(),
-    db.fxRates.toArray(),
-    db.kv.toArray(),
-    db.photos.toArray(),
-  ]);
+  const [trips, cities, stops, expenses, fxRates, settings, photoRows] = await db.transaction(
+    'r',
+    [db.trips, db.cities, db.stops, db.expenses, db.fxRates, db.kv, db.photos],
+    () =>
+      Promise.all([
+        db.trips.toArray(),
+        db.cities.toArray(),
+        db.stops.toArray(),
+        db.expenses.toArray(),
+        db.fxRates.toArray(),
+        db.kv.toArray(),
+        db.photos.toArray(),
+      ]),
+  );
 
   const photos: BackupPhoto[] = await Promise.all(
     photoRows.map(async (p) => {
@@ -227,7 +234,7 @@ export async function buildBackup(): Promise<Backup> {
     stops,
     expenses,
     fxRates,
-    settings,
+    settings: settings.filter((r) => r.key !== 'settings' && r.key !== 'nasLastDataAt'),
     photos,
   };
 }
@@ -237,15 +244,20 @@ export async function buildBackup(): Promise<Backup> {
  * enough to send after every change. Photos travel separately, one file each.
  */
 export async function buildDataBackup(): Promise<Backup> {
-  const [trips, cities, stops, expenses, fxRates, settings, photoRows] = await Promise.all([
-    db.trips.toArray(),
-    db.cities.toArray(),
-    db.stops.toArray(),
-    db.expenses.toArray(),
-    db.fxRates.toArray(),
-    db.kv.toArray(),
-    db.photos.toArray(),
-  ]);
+  const [trips, cities, stops, expenses, fxRates, settings, photoRows] = await db.transaction(
+    'r',
+    [db.trips, db.cities, db.stops, db.expenses, db.fxRates, db.kv, db.photos],
+    () =>
+      Promise.all([
+        db.trips.toArray(),
+        db.cities.toArray(),
+        db.stops.toArray(),
+        db.expenses.toArray(),
+        db.fxRates.toArray(),
+        db.kv.toArray(),
+        db.photos.toArray(),
+      ]),
+  );
 
   return {
     app: 'systema',
@@ -256,7 +268,7 @@ export async function buildDataBackup(): Promise<Backup> {
     stops,
     expenses,
     fxRates,
-    settings,
+    settings: settings.filter((r) => r.key !== 'settings' && r.key !== 'nasLastDataAt'),
     photos: [],
     photosMeta: photoRows.map(({ blob: _blob, ...meta }) => meta),
   };
@@ -267,37 +279,57 @@ export interface ImportResult {
   stops: number;
   expenses: number;
   photos: number;
+  preserved: number;
 }
 
-/** Merge a backup into the local store (by id — same id overwrites, new id adds). */
+/** Add missing records only. A stale backup must never replace the device's only copy. */
 export async function importBackup(data: Backup): Promise<ImportResult> {
-  if (!data || data.app !== 'systema' || !Array.isArray(data.trips)) {
-    throw new Error('That file is not a systema backup.');
-  }
-
+  validateBackup(data);
+  // Blob decoding is asynchronous work outside IndexedDB. Doing it inside the
+  // write transaction can let that transaction commit before all photos arrive.
+  const photos = await Promise.all(
+    data.photos.map(async (p) => ({
+      ...p.meta,
+      blob: await dataUrlToBlob(p.dataUrl),
+      backedUp: false,
+    })),
+  );
+  const result: ImportResult = { trips: 0, stops: 0, expenses: 0, photos: 0, preserved: 0 };
   await db.transaction(
     'rw',
     [db.trips, db.cities, db.stops, db.expenses, db.fxRates, db.kv, db.photos],
     async () => {
-      if (data.trips?.length) await db.trips.bulkPut(data.trips);
-      if (data.cities?.length) await db.cities.bulkPut(data.cities);
-      if (data.stops?.length) await db.stops.bulkPut(data.stops);
-      if (data.expenses?.length) await db.expenses.bulkPut(data.expenses);
-      if (data.fxRates?.length) await db.fxRates.bulkPut(data.fxRates);
-      if (data.settings?.length) await db.kv.bulkPut(data.settings);
-      if (data.photos?.length) {
-        for (const p of data.photos) {
-          const blob = await dataUrlToBlob(p.dataUrl);
-          await db.photos.put({ ...p.meta, blob });
+      async function addMissing<T extends object>(
+        table: Table<T, string>,
+        rows: T[],
+        key: (row: T) => string,
+      ): Promise<number> {
+        const existing = await table.bulkGet(rows.map(key));
+        if (
+          rows.some(
+            (row, i) =>
+              existing[i] &&
+              'tripId' in row &&
+              (!('tripId' in existing[i]!) ||
+                row.tripId !== (existing[i] as { tripId: unknown }).tripId),
+          )
+        ) {
+          throw new Error('Backup IDs belong to different trips on this device. No data imported.');
         }
+        const fresh = rows.filter((_, i) => existing[i] === undefined);
+        result.preserved += rows.length - fresh.length;
+        if (fresh.length) await table.bulkAdd(fresh);
+        return fresh.length;
       }
+      result.trips = await addMissing(db.trips, data.trips, (r) => r.id);
+      await addMissing(db.cities, data.cities, (r) => r.id);
+      result.stops = await addMissing(db.stops, data.stops, (r) => r.id);
+      result.expenses = await addMissing(db.expenses, data.expenses, (r) => r.id);
+      await addMissing(db.fxRates, data.fxRates, (r) => r.code);
+      // Receiver credentials and backup-success markers belong to this device.
+      // Never import them from a portable or NAS snapshot.
+      result.photos = await addMissing(db.photos, photos, (r) => r.id);
     },
   );
-
-  return {
-    trips: data.trips.length,
-    stops: data.stops?.length ?? 0,
-    expenses: data.expenses?.length ?? 0,
-    photos: data.photos?.length ?? 0,
-  };
+  return result;
 }

@@ -10,7 +10,7 @@ import { buildDataBackup, importBackup, type Backup } from './export';
  *  - a small data snapshot (everything except photo blobs) after any change,
  *    debounced so bursts of edits coalesce into one push;
  *  - each photo exactly once (tracked per photo via `backedUp`), which also
- *    makes "save to NAS, then delete locally to free space" safe.
+ *    records upload success; this is not a reversible photo-offload system.
  *
  * Failures are silent and expected — no wifi, NAS asleep, internet cut-out.
  * Nothing is lost; it simply tries again on the next change, reconnect, or
@@ -54,13 +54,17 @@ class NasBackup {
       table.hook('deleting', bump);
       table.hook('updating', bump);
     }
-    db.photos.hook('creating', () => {
-      void this.refreshCounts();
-      this.schedule();
+    db.photos.hook('creating', (_key, _obj, transaction) => {
+      transaction.on('complete', () => {
+        void this.refreshCounts();
+        this.schedule();
+      });
     });
-    db.photos.hook('deleting', () => {
-      void this.refreshCounts();
-      this.schedule();
+    db.photos.hook('deleting', (_key, _obj, transaction) => {
+      transaction.on('complete', () => {
+        void this.refreshCounts();
+        this.schedule();
+      });
     });
     db.photos.hook('updating', (mods) => {
       // Marking a photo as backed up must not re-trigger a push loop.
@@ -99,6 +103,7 @@ class NasBackup {
    * every device pushes to it and can restore from it.
    */
   async restore(): Promise<{ ok: boolean; message: string }> {
+    if (this.running) return { ok: false, message: 'A backup or restore is already running.' };
     if (!this.configured) return { ok: false, message: 'Set the receiver URL and token first.' };
     if (typeof navigator !== 'undefined' && !navigator.onLine)
       return { ok: false, message: 'Offline — try again when connected.' };
@@ -110,23 +115,29 @@ class NasBackup {
       if (!res.ok) throw new Error(`latest: HTTP ${res.status}`);
       const data = (await res.json()) as Backup;
       const r = await importBackup(data);
-      await settingsStore.load(); // snapshot settings may have been merged in
 
       let fetched = 0;
+      let missing = 0;
       for (const meta of data.photosMeta ?? []) {
         if (await db.photos.get(meta.id)) continue;
         const pr = await fetch(this.endpoint('photo', `&id=${meta.id}`));
-        if (!pr.ok) continue; // that photo may simply not be on the NAS yet
+        if (!pr.ok) {
+          missing += 1;
+          continue;
+        }
         const blob = await pr.blob();
-        await db.photos.put({ ...meta, blob, backedUp: true });
-        fetched += 1;
+        await db.transaction('rw', db.photos, async () => {
+          if (await db.photos.get(meta.id)) return;
+          await db.photos.add({ ...meta, blob, backedUp: true });
+          fetched += 1;
+        });
       }
 
       await this.refreshCounts();
       const photoNote = fetched ? `, ${fetched} photo${fetched > 1 ? 's' : ''}` : '';
       return {
         ok: true,
-        message: `Restored ${r.trips} trips, ${r.stops} stops, ${r.expenses} expenses${photoNote}.`,
+        message: `Restored ${r.trips} trips, ${r.stops} stops, ${r.expenses} expenses${photoNote}. Kept ${r.preserved} existing records unchanged.${missing ? ` ${missing} photo(s) could not be restored; keep your original backup.` : ''}`,
       };
     } catch (err) {
       this.lastError = err instanceof Error ? err.message : String(err);
