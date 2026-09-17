@@ -114,7 +114,7 @@
     navigate(`/trip/${trip.id}/stops`);
   }
 
-  // ---- detail: name + notes (debounced autosave) ----
+  // Persist input immediately, bound to the currently selected stop.
   let nameDraft = $state('');
   let notesDraft = $state('');
   let draftsFor = $state<string | null>(null);
@@ -126,24 +126,23 @@
     }
   });
 
-  let nameTimer: ReturnType<typeof setTimeout> | null = null;
+  let saveError = $state('');
+  function failed(err: unknown) {
+    savedAt = null;
+    saveError = `Not saved: ${err instanceof Error ? err.message : String(err)}. Copy your text before leaving.`;
+  }
   function saveName() {
     if (!selected) return;
-    const id = selected.id;
-    if (nameTimer) clearTimeout(nameTimer);
-    nameTimer = setTimeout(() => {
-      void updateStop(id, { name: nameDraft.trim() || 'Untitled stop' }).then(flashSaved);
-    }, 400);
+    saveError = '';
+    void updateStop(selected.id, { name: nameDraft.trim() || 'Untitled stop' })
+      .then(flashSaved)
+      .catch(failed);
   }
 
-  let notesTimer: ReturnType<typeof setTimeout> | null = null;
   function saveNotes() {
     if (!selected) return;
-    const id = selected.id;
-    if (notesTimer) clearTimeout(notesTimer);
-    notesTimer = setTimeout(() => {
-      void updateStop(id, { notes: notesDraft }).then(flashSaved);
-    }, 400);
+    saveError = '';
+    void updateStop(selected.id, { notes: notesDraft }).then(flashSaved).catch(failed);
   }
 
   // ---- detail: photos + checklist ----
@@ -186,6 +185,7 @@
       </span>
     </div>
 
+    {#if saveError}<p role="alert" class="hint hint--warn">{saveError}</p>{/if}
     <input
       class="field stop-name-input"
       aria-label="Stop name"
@@ -258,7 +258,14 @@
                 <button
                   class="photo-act"
                   aria-label="Delete photo"
-                  onclick={() => deletePhoto(p.id)}
+                  onclick={() => {
+                    if (
+                      confirm(
+                        'Delete this photo permanently from this device? Save and verify a separate copy first.',
+                      )
+                    )
+                      void deletePhoto(p.id);
+                  }}
                 >
                   <Icon name="trash" size={16} />
                 </button>

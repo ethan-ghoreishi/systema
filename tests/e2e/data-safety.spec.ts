@@ -111,6 +111,33 @@ test('background FX does not overwrite a manual edit made during the request', a
   expect(result).toEqual({ amount: 7, notes: 'Manual correction' });
 });
 
+test('stop edits stay with their stop when navigating immediately', async ({ page }) => {
+  const ids = await page.evaluate(async () => {
+    const path = '/src/lib/stops.ts';
+    const { addStop, updateStop } = await import(/* @vite-ignore */ path);
+    const trip = sessionStorage.getItem('testTrip');
+    const first = await addStop(trip, 'Synthetic first');
+    const second = await addStop(trip, 'Synthetic second');
+    await updateStop(second, { notes: 'Second notes' });
+    location.hash = `/trip/${trip}/stops/${first}`;
+    return { trip, first, second };
+  });
+  await page.getByLabel('Notes', { exact: true }).fill('First edited notes');
+  await page.evaluate(({ trip, second }) => {
+    location.hash = `/trip/${trip}/stops/${second}`;
+  }, ids);
+  await expect(page.getByLabel('Notes', { exact: true })).toHaveValue('Second notes');
+  await expect
+    .poll(() =>
+      page.evaluate(async (first) => {
+        const path = '/src/lib/db.ts';
+        const { db } = await import(/* @vite-ignore */ path);
+        return (await db.stops.get(first)).notes;
+      }, ids.first),
+    )
+    .toBe('First edited notes');
+});
+
 test('description-only expense edit keeps the recorded GBP amount', async ({ page }) => {
   await page.route('https://api.frankfurter.dev/**', (route) =>
     route.fulfill({

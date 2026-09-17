@@ -44,10 +44,16 @@
     target && !Number.isNaN(target) ? computeCountdown(target, now) : null,
   );
 
-  let saveTimer: ReturnType<typeof setTimeout> | null = null;
-  function scheduleSave() {
-    if (saveTimer) clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => void updateTrip(trip.id, { planText: draft }), 400);
+  let saveError = $state('');
+  async function scheduleSave() {
+    try {
+      await updateTrip(trip.id, { planText: draft });
+      saveError = '';
+      return true;
+    } catch (err) {
+      saveError = `Not saved: ${err instanceof Error ? err.message : String(err)}. Copy your text before leaving.`;
+      return false;
+    }
   }
 
   function startEdit() {
@@ -57,12 +63,7 @@
   }
 
   async function done() {
-    if (saveTimer) {
-      clearTimeout(saveTimer);
-      saveTimer = null;
-    }
-    await updateTrip(trip.id, { planText: draft });
-    editing = false;
+    if (await scheduleSave()) editing = false;
   }
 
   function scrollTo(slug: string) {
@@ -87,6 +88,7 @@
       placeholder="Paste the plan you generated in Claude…"
       bind:value={draft}
       oninput={scheduleSave}></textarea>
+    {#if saveError}<p role="alert" class="hint hint--warn">{saveError}</p>{/if}
     <div class="save-bar">
       <button class="btn btn--primary" onclick={done}>Done</button>
       <span class="hint">Saved automatically as you type.</span>
