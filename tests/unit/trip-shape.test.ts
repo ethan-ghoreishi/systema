@@ -192,3 +192,14 @@ describe('naming and labels', () => {
     expect(tripDisplayName(trip(), [])).toBe('New trip');
   });
 });
+
+it('counts hotel calendar nights independently of arrival and departure hours', () => {
+  for (const [arrival, departure, nights] of [
+    ['2026-09-01T06:00', '2026-09-02T23:00', 1],
+    ['2026-09-01T23:00', '2026-09-03T06:00', 2],
+  ] as const) {
+    expect(
+      tripHotelNights(trip(), [city({ name: 'Test', arrival, departure, sleep: 'hotel' })]),
+    ).toBe(nights);
+  }
+});

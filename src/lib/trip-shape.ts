@@ -109,7 +109,12 @@ export function tripHotelNights(trip: Trip, cities: City[]): number {
       haveInfo = true;
       nights +=
         l.arrivalMs != null && l.departureMs != null
-          ? Math.max(1, Math.round((l.departureMs - l.arrivalMs) / DAY))
+          ? Math.max(
+              1,
+              Math.round(
+                (Date.parse(l.departure!.slice(0, 10)) - Date.parse(l.arrival!.slice(0, 10))) / DAY,
+              ),
+            )
           : 1;
     }
   }
