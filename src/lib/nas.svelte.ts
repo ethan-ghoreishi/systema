@@ -1,6 +1,6 @@
 import { db } from './db';
 import { settingsStore } from './settings.svelte';
-import { buildDataBackup, importBackup, type Backup } from './export';
+import { buildDataBackup, importBackup, type Backup, type ImportResult } from './export';
 
 /**
  * Opportunistic NAS backup — the Hess design, built.
@@ -97,10 +97,48 @@ class NasBackup {
   }
 
   /**
-   * Pull the newest snapshot from the NAS and merge it in, then fetch any
-   * photos it references that this device doesn't hold. This is how a fresh
-   * install (or second device) picks up everything: the NAS is the hub —
-   * every device pushes to it and can restore from it.
+   * Merge the NAS's newest snapshot in (add-only), then fetch the photos it
+   * references that this device doesn't hold. Null when the NAS has no
+   * snapshot yet. `failed` counts photos that exist on the NAS but couldn't be
+   * fetched; `missing` ones were never uploaded.
+   */
+  private async pullLatest(): Promise<{
+    r: ImportResult;
+    fetched: number;
+    missing: number;
+    failed: number;
+  } | null> {
+    const res = await fetch(this.endpoint('latest'));
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`latest: HTTP ${res.status}`);
+    const data = (await res.json()) as Backup;
+    const r = await importBackup(data);
+
+    let fetched = 0;
+    let missing = 0;
+    let failed = 0;
+    for (const meta of data.photosMeta ?? []) {
+      if (await db.photos.get(meta.id)) continue;
+      const pr = await fetch(this.endpoint('photo', `&id=${meta.id}`));
+      if (!pr.ok) {
+        if (pr.status === 404) missing += 1;
+        else failed += 1;
+        continue;
+      }
+      const blob = await pr.blob();
+      await db.transaction('rw', db.photos, async () => {
+        if (await db.photos.get(meta.id)) return;
+        await db.photos.add({ ...meta, blob, backedUp: true });
+        fetched += 1;
+      });
+    }
+    return { r, fetched, missing, failed };
+  }
+
+  /**
+   * Pull the newest snapshot from the NAS and merge it in, with its photos.
+   * This is how a fresh install (or second device) picks up everything: the
+   * NAS is the hub — every device pushes to it and can restore from it.
    */
   async restore(): Promise<{ ok: boolean; message: string }> {
     if (this.running) return { ok: false, message: 'A backup or restore is already running.' };
@@ -111,33 +149,16 @@ class NasBackup {
     this.lastError = '';
 
     try {
-      const res = await fetch(this.endpoint('latest'));
-      if (!res.ok) throw new Error(`latest: HTTP ${res.status}`);
-      const data = (await res.json()) as Backup;
-      const r = await importBackup(data);
-
-      let fetched = 0;
-      let missing = 0;
-      for (const meta of data.photosMeta ?? []) {
-        if (await db.photos.get(meta.id)) continue;
-        const pr = await fetch(this.endpoint('photo', `&id=${meta.id}`));
-        if (!pr.ok) {
-          missing += 1;
-          continue;
-        }
-        const blob = await pr.blob();
-        await db.transaction('rw', db.photos, async () => {
-          if (await db.photos.get(meta.id)) return;
-          await db.photos.add({ ...meta, blob, backedUp: true });
-          fetched += 1;
-        });
-      }
+      const pulled = await this.pullLatest();
+      if (!pulled) return { ok: false, message: 'The NAS has no snapshots yet.' };
+      const { r, fetched, missing, failed } = pulled;
 
       await this.refreshCounts();
       const photoNote = fetched ? `, ${fetched} photo${fetched > 1 ? 's' : ''}` : '';
+      const lost = missing + failed;
       return {
         ok: true,
-        message: `Restored ${r.trips} trips, ${r.stops} stops, ${r.expenses} expenses${photoNote}. Kept ${r.preserved} existing records unchanged.${missing ? ` ${missing} photo(s) could not be restored; keep your original backup.` : ''}`,
+        message: `Restored ${r.trips} trips, ${r.stops} stops, ${r.expenses} expenses${photoNote}. Kept ${r.preserved} existing records unchanged.${lost ? ` ${lost} photo(s) could not be restored; keep your original backup.` : ''}`,
       };
     } catch (err) {
       this.lastError = err instanceof Error ? err.message : String(err);
@@ -159,6 +180,22 @@ class NasBackup {
       const base = nasUrl.trim().replace(/[?#].*$/, '');
       const endpoint = (kind: string, extra = '') =>
         `${base}?kind=${kind}&token=${encodeURIComponent(nasToken.trim())}${extra}`;
+
+      // 0) A device that has never pushed (fresh install, reset, evicted
+      // storage) merges the NAS copy first. Otherwise its partial snapshot
+      // becomes "latest" and pruning eventually deletes the real one. Only
+      // before the first push: merging later would resurrect local deletions.
+      if (!(await db.kv.get(LAST_DATA_KEY))) {
+        try {
+          const pulled = await this.pullLatest();
+          if (pulled?.failed) throw new Error(`${pulled.failed} photo(s) could not be fetched`);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          throw new Error(`Couldn't merge the NAS copy first, so nothing was backed up (${msg})`, {
+            cause: err,
+          });
+        }
+      }
 
       // 1) Data snapshot (small — no photo blobs).
       const snapshot = await buildDataBackup();

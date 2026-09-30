@@ -4,8 +4,9 @@ systema backs itself up to your Synology **automatically and opportunistically**
 whenever the receiver is reachable, the app pushes a data snapshot (everything
 except photo files) after any change, and each photo exactly once. Failures are
 silent — no wifi, NAS asleep, internet cut-out — it simply retries on the next
-change, reconnect, or app open. Photos on the NAS are safe to delete from the
-phone to free space.
+change, reconnect, or app open. Keep photos on the phone: deleting one also
+drops its link to the trip from later snapshots, so the NAS copy becomes an
+orphaned file.
 
 No credentials live in the app or this repo: the app stores only the receiver
 URL and a token you choose, on-device.
@@ -50,7 +51,9 @@ provides all of it for free:
 
 Then in systema → **Settings → NAS backup vault**: paste that URL and the same
 token, Save, and tap **Back up now** once to confirm ("Last data backup" gets a
-timestamp).
+timestamp). A device's first backup always merges the NAS's newest snapshot in
+first, so a new or reset device can't replace the NAS copy with its partial
+data. If that merge fails, nothing is pushed and Settings shows why.
 
 ## If `synology.me` won't connect (CGNAT / ISP blocks inbound)
 
@@ -100,8 +103,9 @@ The NAS is the hub: every device pushes to it, and any device can restore from
 it. Three routes, best first:
 
 1. **Settings → Data on this device → Restore from NAS** (needs the receiver):
-   pulls the newest snapshot — trips, stops, expenses, journals, settings — and
-   then fetches any photos this device is missing, re-linked to their stops.
+   pulls the newest snapshot — trips, stops, expenses, journals — and then
+   fetches any photos this device is missing, re-linked to their stops. The
+   receiver URL and token stay device-only, so enter them first.
 2. **Import backup file**: grab a JSON from `systema-backups/manual/` (iPhone:
    Files app → Connect to Server → `smb://192.168.0.20`), then Settings →
    _Import backup file_.
@@ -109,7 +113,10 @@ it. Three routes, best first:
    the iPhone (same Apple ID, Handoff on), Settings → _Paste backup from
    clipboard_.
 
-Imports merge by id — safe to run over existing data, and safe to run twice.
+Imports only add records this device doesn't have — safe to run over existing
+data, and safe to run twice. A record that already exists here is never
+replaced, so edits made to it elsewhere don't transfer; the import message says
+how many differ.
 
 ## Security notes
 

@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 
 test.use({ serviceWorkers: 'block' });
 
@@ -228,4 +228,101 @@ test('receipt write failure rolls back the expense edit and keeps the draft visi
       };
     }),
   ).toEqual({ description: 'Original expense', photos: 0 });
+});
+
+// A fake NAS receiver. Records POSTed data snapshots; `latest` answers as told.
+async function nasBackupRun(page: Page, latest: { status: number; json?: unknown }) {
+  const posts: string[] = [];
+  const cors = { 'Access-Control-Allow-Origin': '*' };
+  await page.route('https://nas.test/**', (route) => {
+    const req = route.request();
+    const kind = new URL(req.url()).searchParams.get('kind');
+    if (req.method() === 'POST') {
+      if (kind === 'data') posts.push(req.postData() ?? '');
+      return route.fulfill({ headers: cors, json: { ok: true } });
+    }
+    if (kind === 'latest')
+      return route.fulfill({ status: latest.status, headers: cors, json: latest.json ?? {} });
+    return route.fulfill({ headers: cors, contentType: 'image/png', body: 'nas image' });
+  });
+  const lastError = await page.evaluate(async () => {
+    const settingsPath = '/src/lib/settings.svelte.ts';
+    const nasPath = '/src/lib/nas.svelte.ts';
+    const { settingsStore } = await import(/* @vite-ignore */ settingsPath);
+    const { nasBackup } = await import(/* @vite-ignore */ nasPath);
+    settingsStore.current = {
+      nasUrl: 'https://nas.test/systema-backup.php',
+      nasToken: 'synthetic',
+    };
+    await nasBackup.run();
+    return nasBackup.lastError;
+  });
+  return { posts, lastError };
+}
+
+test('a first NAS push merges the NAS copy first, so it never buries it', async ({
+  page,
+  browserName,
+}) => {
+  test.skip(
+    browserName === 'webkit' && process.platform === 'darwin',
+    'This macOS Playwright WebKit rejects IndexedDB Blob writes; covered in Chromium.',
+  );
+  const nasTrip = {
+    id: 'nas-trip',
+    name: 'NAS trip',
+    type: 'custom',
+    startDate: '',
+    endDate: '',
+    partySize: 2,
+    returnFlightAt: '',
+    accommodation: false,
+    status: 'done',
+    planText: '',
+    order: 0,
+    createdAt: 1,
+    updatedAt: 1,
+  };
+  const photo = {
+    id: 'nas-photo-0001',
+    tripId: 'nas-trip',
+    stopId: null,
+    expenseId: null,
+    kind: 'cover',
+    createdAt: 1,
+  };
+  const { posts, lastError } = await nasBackupRun(page, {
+    status: 200,
+    json: {
+      app: 'systema',
+      version: 1,
+      exportedAt: '',
+      trips: [nasTrip],
+      cities: [],
+      stops: [],
+      expenses: [],
+      fxRates: [],
+      settings: [],
+      photos: [],
+      photosMeta: [photo],
+    },
+  });
+  expect(lastError).toBe('');
+  expect(posts).toHaveLength(1);
+  const pushed = JSON.parse(posts[0]);
+  expect(pushed.trips.map((t: { id: string }) => t.id)).toContain('nas-trip');
+  expect(pushed.trips).toHaveLength(2); // the NAS trip plus this device's own
+  expect(pushed.photosMeta.map((p: { id: string }) => p.id)).toEqual(['nas-photo-0001']);
+});
+
+test('a first NAS push goes ahead when the NAS has no snapshot yet', async ({ page }) => {
+  const { posts, lastError } = await nasBackupRun(page, { status: 404 });
+  expect(lastError).toBe('');
+  expect(posts).toHaveLength(1);
+});
+
+test('a first NAS push is withheld when the NAS copy cannot be merged', async ({ page }) => {
+  const { posts, lastError } = await nasBackupRun(page, { status: 500 });
+  expect(posts).toHaveLength(0);
+  expect(lastError).toContain("Couldn't merge the NAS copy first");
 });
