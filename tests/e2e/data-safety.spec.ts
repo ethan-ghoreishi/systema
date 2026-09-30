@@ -343,3 +343,21 @@ test('a first NAS push is withheld when the NAS copy cannot be merged', async ({
   expect(posts).toHaveLength(0);
   expect(lastError).toContain("Couldn't merge the NAS copy first");
 });
+
+test('quick successive checklist taps from a stale stop copy all stick', async ({ page }) => {
+  const done = await page.evaluate(async () => {
+    const dbPath = '/src/lib/db.ts';
+    const stopsPath = '/src/lib/stops.ts';
+    const { db } = await import(/* @vite-ignore */ dbPath);
+    const { addStop, addChecklistItem, toggleChecklistItem } = await import(
+      /* @vite-ignore */ stopsPath
+    );
+    const id = await addStop(sessionStorage.getItem('testTrip'), 'Synthetic stop');
+    await addChecklistItem(await db.stops.get(id), 'First');
+    await addChecklistItem(await db.stops.get(id), 'Second');
+    const stale = await db.stops.get(id);
+    await Promise.all(stale.checklist.map((c: { id: string }) => toggleChecklistItem(stale, c.id)));
+    return (await db.stops.get(id)).checklist.map((c: { done: boolean }) => c.done);
+  });
+  expect(done).toEqual([true, true]);
+});

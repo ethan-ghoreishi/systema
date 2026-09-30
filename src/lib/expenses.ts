@@ -83,6 +83,20 @@ export async function seedSkeleton(trip: Trip): Promise<number> {
   return rows.length;
 }
 
+/**
+ * Notes carrying exactly one auto FX note, for the rate actually used (none
+ * when `rate` is null). Re-pricing an edited expense replaces the old note
+ * instead of stacking another one into the sheet's Notes column.
+ */
+export function withFxNote(notes: string, currency: string, rate: number | null): string {
+  const parts = notes
+    .split(' · ')
+    .map((p) => p.trim())
+    .filter((p) => p && !/^FX: 1 [A-Z]{3} = £\S+$/.test(p));
+  if (rate != null) parts.push(`FX: 1 ${currency} = £${rate}`);
+  return parts.join(' · ');
+}
+
 function round2(n: number): number {
   return Math.round((n + Number.EPSILON) * 100) / 100;
 }
@@ -141,12 +155,11 @@ export async function resolvePendingFx(tripId?: string): Promise<number> {
         current.amountLocal !== e.amountLocal
       )
         return;
-      const fxNote = `FX: 1 ${current.currency} = £${rate}`;
       await db.expenses.update(e.id, {
         amountGBP: round2(current.amountLocal * rate),
         fxRate: rate,
         fxPending: false,
-        notes: current.notes.trim() ? `${current.notes.trim()} · ${fxNote}` : fxNote,
+        notes: withFxNote(current.notes, current.currency, rate),
       });
       resolved += 1;
     });

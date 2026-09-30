@@ -3,7 +3,13 @@
   import { db, type City, type Expense, type Trip } from '../lib/db';
   import { newId } from '../lib/ids';
   import { getRate } from '../lib/fx';
-  import { addExpense, deleteExpense, updateExpense, resolvePendingFx } from '../lib/expenses';
+  import {
+    addExpense,
+    deleteExpense,
+    updateExpense,
+    resolvePendingFx,
+    withFxNote,
+  } from '../lib/expenses';
   import { categories, subcategories, paymentMethods } from '../lib/vocab';
   import { formatAmount, formatGBP, perPersonNote } from '../lib/money';
   import { todayIso } from '../lib/sheet';
@@ -173,11 +179,9 @@
     try {
       const usingAutoRate = !keepRecorded && !isGBP && overrideNum == null && rate != null;
       const unpriced = !keepRecorded && !isGBP && overrideNum == null && rate == null;
-      let finalNotes = notes.trim();
-      if (usingAutoRate) {
-        const fxNote = `FX: 1 ${currency} = £${rate}`;
-        finalNotes = finalNotes ? `${finalNotes} · ${fxNote}` : fxNote;
-      }
+      const finalNotes = keepRecorded
+        ? notes.trim()
+        : withFxNote(notes, currency, usingAutoRate ? rate : null);
 
       const fields = {
         cityId,
