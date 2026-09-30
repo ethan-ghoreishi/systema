@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildTripCsv, buildAllTripsCsv } from '../../src/lib/csv';
+import { buildTripCsv, buildAllTripsCsv, csvNote } from '../../src/lib/csv';
 import { buildOverview } from '../../src/lib/insights';
 import type { Expense, Trip } from '../../src/lib/db';
 
@@ -109,4 +109,11 @@ describe('buildOverview', () => {
     expect(o.byCategory[0]).toEqual({ category: 'Transportation', total: 35 });
     expect(o.maxTripTotal).toBe(45);
   });
+});
+
+it('discloses expenses left out of the CSV while awaiting a rate', () => {
+  const rows = [exp({}), exp({ fxPending: true, amountGBP: 0 }), exp({ skeleton: true })];
+  expect(buildTripCsv(rows).trim().split('\n')).toHaveLength(3); // header, 1 row, subtotal
+  expect(csvNote(rows)).toContain('1 expense(s) awaiting an exchange rate were left out');
+  expect(csvNote([exp({})])).toBe('');
 });

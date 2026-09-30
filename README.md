@@ -173,7 +173,7 @@ src/
     vocab.ts               Expense controlled vocabularies
     fx.ts                  Frankfurter FX + local cache
     stops.ts               Stop + checklist mutations, plan extraction
-    photos.ts              Photo blobs (add / delete / offload)
+    photos.ts              Photo blobs (add / delete / download)
     prompt.ts              Research-prompt builder (pure text assembly)
     export.ts              Trip pack + JSON backup/import
     nas.svelte.ts          NAS backup vault (push snapshots/photos, restore)

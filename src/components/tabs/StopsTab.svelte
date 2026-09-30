@@ -278,7 +278,10 @@
         <Icon name="camera" size={20} /> Add photo
         <input type="file" accept="image/*" capture="environment" hidden onchange={onPhoto} />
       </label>
-      <p class="hint">Stored on this device. Save photos off-device, then delete, to free space.</p>
+      <p class="hint">
+        Stored on this device (and your NAS, if set up). Deleting a photo also removes it from this
+        trip's journal and future backups.
+      </p>
     </div>
 
     <div class="save-bar">

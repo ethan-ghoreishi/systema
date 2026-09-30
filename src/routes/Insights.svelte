@@ -3,7 +3,7 @@
   import { db } from '../lib/db';
   import TopBar from '../components/TopBar.svelte';
   import { buildOverview, buildCityInsights } from '../lib/insights';
-  import { buildAllTripsCsv } from '../lib/csv';
+  import { buildAllTripsCsv, csvNote } from '../lib/csv';
   import { formatGBP } from '../lib/money';
   import { formatDateRange } from '../lib/format';
   import { tripDisplayName } from '../lib/trip-shape';
@@ -49,7 +49,7 @@
       buildAllTripsCsv(trips, expenses),
       'text/csv',
     );
-    status = 'CSV downloaded — paste into the master sheet when reconciling.';
+    status = `CSV downloaded — paste into the master sheet when reconciling.${csvNote(expenses)}`;
   }
 
   function share(total: number, of: number): number {

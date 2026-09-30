@@ -9,7 +9,7 @@
     importBackup,
     importNote,
   } from '../../lib/export';
-  import { buildTripCsv } from '../../lib/csv';
+  import { buildTripCsv, csvNote } from '../../lib/csv';
   import { tripDisplayName } from '../../lib/trip-shape';
   import { copyText, downloadText } from '../../lib/download';
   import { settingsStore } from '../../lib/settings.svelte';
@@ -53,8 +53,14 @@
   });
 
   async function saveJournal() {
-    await updateTrip(trip.id, { journalText: journalDraft });
-    status = journalDraft.trim() ? 'Journal saved — view it on the Plan tab.' : 'Journal cleared.';
+    try {
+      await updateTrip(trip.id, { journalText: journalDraft });
+      status = journalDraft.trim()
+        ? 'Journal saved — view it on the Plan tab.'
+        : 'Journal cleared.';
+    } catch (err) {
+      status = `Journal not saved: ${err instanceof Error ? err.message : String(err)}. Copy your text before leaving.`;
+    }
   }
 
   function slug(): string {
@@ -87,7 +93,7 @@
 
   function downloadCsv() {
     downloadText(`${slug()}-expenses.csv`, buildTripCsv(expenses), 'text/csv');
-    status = 'CSV downloaded — sheet column format, subtotal row included.';
+    status = `CSV downloaded — sheet column format, subtotal row included.${csvNote(expenses)}`;
   }
 
   async function downloadBackup() {

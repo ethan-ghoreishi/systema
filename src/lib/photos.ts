@@ -1,7 +1,10 @@
 import { db, type Photo, type PhotoKind } from './db';
 import { newId } from './ids';
 
-/** Photo blobs live in IndexedDB (no cloud cost). Offload = download + delete. */
+/**
+ * Photo blobs live in IndexedDB (no cloud cost). Deleting one also drops its
+ * trip link from later backups; there is no reversible offload.
+ */
 
 export async function addPhoto(
   file: Blob,

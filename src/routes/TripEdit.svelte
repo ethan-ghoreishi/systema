@@ -172,7 +172,14 @@
                 <button
                   class="icon-btn icon-btn--sm"
                   aria-label="Remove leg"
-                  onclick={() => deleteCity(c.id)}
+                  onclick={() => {
+                    if (
+                      confirm(
+                        `Remove the ${c.name || 'unnamed'} leg? Its arrival, departure and overnight details go with it.`,
+                      )
+                    )
+                      void deleteCity(c.id);
+                  }}
                 >
                   <Icon name="trash" size={18} />
                 </button>
