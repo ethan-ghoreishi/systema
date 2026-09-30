@@ -1,18 +1,22 @@
 <script lang="ts">
   import { useRegisterSW } from 'virtual:pwa-register/svelte';
+  import { router } from '../lib/router.svelte';
 
   /**
-   * autoUpdate registration. When a new build is found the service worker takes
-   * over and we reload to it, so the installed PWA is never stuck on a stale
-   * version. We also poll for updates hourly and whenever the app is refocused,
-   * because iOS is lazy about checking on its own.
+   * autoUpdate registration. A new build activates on its own; we then reload
+   * to it, so the installed PWA is never stuck on a stale version. We also poll
+   * for updates hourly and whenever the app is refocused, because iOS is lazy
+   * about checking on its own.
    *
-   * To avoid yanking the screen mid-entry, the reload waits until no capture
-   * modal is open and the app is visible.
+   * The reload waits until the app is on Home, which holds no unsaved input
+   * (expense drafts, journal paste-back, prompt answers, NAS fields all live
+   * elsewhere). The old page keeps working meanwhile: the app is one bundle,
+   * already loaded. A cold start picks up the new version anyway.
    */
   const HOUR = 60 * 60 * 1000;
+  let reloadPending = $state(false);
 
-  const { needRefresh, offlineReady, updateServiceWorker } = useRegisterSW({
+  const { offlineReady } = useRegisterSW({
     onRegisteredSW(_url, reg) {
       if (!reg) return;
       setInterval(() => void reg.update(), HOUR);
@@ -20,19 +24,19 @@
         if (document.visibilityState === 'visible') void reg.update();
       });
     },
+    // Without this, the plugin reloads immediately — even mid-entry.
+    onNeedReload() {
+      reloadPending = true;
+    },
   });
 
-  // When an update is ready, apply it as soon as it's safe.
   $effect(() => {
-    if (!$needRefresh) return;
-    const tryApply = () => {
-      if (document.visibilityState === 'visible' && !document.querySelector('.modal')) {
-        void updateServiceWorker(true); // activates the new SW and reloads
-      }
-    };
-    tryApply();
-    const t = setInterval(tryApply, 3000);
-    return () => clearInterval(t);
+    if (!reloadPending || router.path !== '/') return;
+    // Give any save fired by leaving the previous screen time to finish.
+    const t = setTimeout(() => {
+      if (router.path === '/' && !document.querySelector('dialog[open]')) location.reload();
+    }, 1000);
+    return () => clearTimeout(t);
   });
 
   function dismiss() {

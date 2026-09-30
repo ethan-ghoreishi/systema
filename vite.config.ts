@@ -33,9 +33,9 @@ export default defineConfig(({ command, mode }) => {
             VitePWA({
               // 'autoUpdate': a new build activates itself and the app reloads
               // to it, so fixes always reach the installed PWA (with 'prompt',
-              // a missed toast froze the phone on a stale version). Reloads only
-              // happen when online and a new version exists; IndexedDB data is
-              // untouched.
+              // a missed toast froze the phone on a stale version). The reload
+              // waits for the Home screen (see UpdateToast.svelte); IndexedDB
+              // data is untouched.
               registerType: 'autoUpdate',
               injectRegister: 'auto',
               // Generates favicon, apple-touch-icon and maskable PWA icons from
