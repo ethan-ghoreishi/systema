@@ -177,7 +177,9 @@
     <h2 class="section-title">Backup &amp; transfer</h2>
     <p class="hint">
       A full JSON backup of all your data. Use it to move trips between devices — build the plan on
-      your Mac, then import on the phone you'll travel with.
+      your Mac, then import on the phone you'll travel with. Import only adds what the phone doesn't
+      have: later edits to a trip already on it don't transfer (the import message says how many
+      records differ).
     </p>
     <button class="btn btn--ghost" onclick={downloadBackup} disabled={busy}>
       Download backup (JSON)

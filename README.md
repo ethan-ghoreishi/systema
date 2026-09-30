@@ -193,10 +193,12 @@ tests/
 - The app stores only the NAS receiver URL and its token, on this device. No
   other secrets, no accounts, no API keys.
 - **Moving between devices:** Restore from NAS (below), or carry a trip across
-  via **Export → JSON** (backup + import). Imports add missing records by id and keep existing device records unchanged.
-  Existing edits are never replaced by an older backup. Import reports how many
-  records were kept; transferring edits to existing records needs manual reconciliation.
-  Receiver credentials are device-local and excluded from new backups.
+  via **Export → JSON** (backup + import). Imports only add records this device
+  doesn't have, so a backup can never overwrite edits here. The flip side: edits
+  to a trip that already exists on this device don't transfer; the import
+  message says how many records differ. Receiver credentials are device-local
+  and excluded from new backups. A device's first NAS backup merges the NAS copy
+  in before pushing, so a fresh install can't bury it.
 - **NAS backup vault:** optional, opportunistic push of data snapshots and
   photos to a Synology at home — token-gated PHP receiver that writes only into
   its own folder. Any device can also **Restore from NAS** (Settings → Data):
