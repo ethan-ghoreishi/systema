@@ -4,7 +4,7 @@
   import { settingsStore } from '../lib/settings.svelte';
   import { connectivity } from '../lib/connectivity.svelte';
   import { nasBackup } from '../lib/nas.svelte';
-  import { buildBackup, importBackup } from '../lib/export';
+  import { buildBackup, importBackup, importNote } from '../lib/export';
   import { downloadText } from '../lib/download';
   import { todayIso } from '../lib/sheet';
 
@@ -70,7 +70,7 @@
     try {
       const r = await importBackup(JSON.parse(raw));
       await settingsStore.load();
-      dataStatus = `Imported ${r.trips} trip(s), ${r.stops} stop(s), ${r.expenses} expense(s), ${r.photos} photo(s). Kept ${r.preserved} existing record(s) unchanged.`;
+      dataStatus = `Imported ${r.trips} trip(s), ${r.stops} stop(s), ${r.expenses} expense(s), ${r.photos} photo(s).${importNote(r)}`;
     } catch (err) {
       dataStatus = `Import failed: ${err instanceof Error ? err.message : String(err)}`;
     } finally {

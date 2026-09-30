@@ -54,6 +54,23 @@ test('photo backup restores atomically and preserves existing device records', a
   expect(result).toEqual({ error: '', plan: 'Newer device plan', photo: 'synthetic image' });
 });
 
+test('import reports only on-device records that differ from the backup', async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const dbPath = '/src/lib/db.ts';
+    const exportPath = '/src/lib/export.ts';
+    const { db } = await import(/* @vite-ignore */ dbPath);
+    const { buildBackup, importBackup } = await import(/* @vite-ignore */ exportPath);
+    const backup = await buildBackup();
+    const identical = await importBackup(backup);
+    await db.trips.update(sessionStorage.getItem('testTrip'), {
+      planText: 'Edited on this device',
+    });
+    const edited = await importBackup(backup);
+    return [identical.differing, edited.differing];
+  });
+  expect(result).toEqual([0, 1]);
+});
+
 test('invalid backup writes nothing', async ({ page }) => {
   const result = await page.evaluate(async () => {
     const dbPath = '/src/lib/db.ts';

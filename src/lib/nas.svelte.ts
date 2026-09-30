@@ -1,6 +1,12 @@
 import { db } from './db';
 import { settingsStore } from './settings.svelte';
-import { buildDataBackup, importBackup, type Backup, type ImportResult } from './export';
+import {
+  buildDataBackup,
+  importBackup,
+  importNote,
+  type Backup,
+  type ImportResult,
+} from './export';
 
 /**
  * Opportunistic NAS backup — the Hess design, built.
@@ -158,7 +164,7 @@ class NasBackup {
       const lost = missing + failed;
       return {
         ok: true,
-        message: `Restored ${r.trips} trips, ${r.stops} stops, ${r.expenses} expenses${photoNote}. Kept ${r.preserved} existing records unchanged.${lost ? ` ${lost} photo(s) could not be restored; keep your original backup.` : ''}`,
+        message: `Restored ${r.trips} trips, ${r.stops} stops, ${r.expenses} expenses${photoNote}.${importNote(r)}${lost ? ` ${lost} photo(s) could not be restored; keep your original backup.` : ''}`,
       };
     } catch (err) {
       this.lastError = err instanceof Error ? err.message : String(err);

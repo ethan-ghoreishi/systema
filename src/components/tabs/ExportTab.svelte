@@ -7,6 +7,7 @@
     buildMemoryPrompt,
     buildBackup,
     importBackup,
+    importNote,
   } from '../../lib/export';
   import { buildTripCsv } from '../../lib/csv';
   import { tripDisplayName } from '../../lib/trip-shape';
@@ -114,7 +115,7 @@
       const data = JSON.parse(await file.text());
       const r = await importBackup(data);
       await settingsStore.load();
-      status = `Imported ${r.trips} trip(s), ${r.stops} stop(s), ${r.expenses} expense(s), ${r.photos} photo(s). Kept ${r.preserved} existing record(s) unchanged.`;
+      status = `Imported ${r.trips} trip(s), ${r.stops} stop(s), ${r.expenses} expense(s), ${r.photos} photo(s).${importNote(r)}`;
     } catch (err) {
       status = `Import failed: ${err instanceof Error ? err.message : String(err)}`;
     } finally {

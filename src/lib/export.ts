@@ -279,7 +279,24 @@ export interface ImportResult {
   stops: number;
   expenses: number;
   photos: number;
-  preserved: number;
+  /** Records already on this device whose content differs from the backup (kept as they are). */
+  differing: number;
+}
+
+/** Status-message tail: flag edits that didn't transfer, stay quiet when identical. */
+export function importNote(r: ImportResult): string {
+  return r.differing
+    ? ` ${r.differing} record(s) on this device differ from the backup and were kept as they are.`
+    : '';
+}
+
+/** Key-order-independent JSON, for comparing a stored record with a backup's copy. */
+function canonical(v: unknown): string {
+  return JSON.stringify(v, (_k, x) =>
+    x && typeof x === 'object' && !Array.isArray(x)
+      ? Object.fromEntries(Object.entries(x).sort())
+      : x,
+  );
 }
 
 /** Add missing records only. A stale backup must never replace the device's only copy. */
@@ -294,7 +311,7 @@ export async function importBackup(data: Backup): Promise<ImportResult> {
       backedUp: false,
     })),
   );
-  const result: ImportResult = { trips: 0, stops: 0, expenses: 0, photos: 0, preserved: 0 };
+  const result: ImportResult = { trips: 0, stops: 0, expenses: 0, photos: 0, differing: 0 };
   await db.transaction(
     'rw',
     [db.trips, db.cities, db.stops, db.expenses, db.fxRates, db.kv, db.photos],
@@ -303,6 +320,7 @@ export async function importBackup(data: Backup): Promise<ImportResult> {
         table: Table<T, string>,
         rows: T[],
         key: (row: T) => string,
+        compare = true,
       ): Promise<number> {
         const existing = await table.bulkGet(rows.map(key));
         if (
@@ -317,7 +335,10 @@ export async function importBackup(data: Backup): Promise<ImportResult> {
           throw new Error('Backup IDs belong to different trips on this device. No data imported.');
         }
         const fresh = rows.filter((_, i) => existing[i] === undefined);
-        result.preserved += rows.length - fresh.length;
+        if (compare)
+          result.differing += rows.filter(
+            (row, i) => existing[i] && canonical(existing[i]) !== canonical(row),
+          ).length;
         if (fresh.length) await table.bulkAdd(fresh);
         return fresh.length;
       }
@@ -325,10 +346,11 @@ export async function importBackup(data: Backup): Promise<ImportResult> {
       await addMissing(db.cities, data.cities, (r) => r.id);
       result.stops = await addMissing(db.stops, data.stops, (r) => r.id);
       result.expenses = await addMissing(db.expenses, data.expenses, (r) => r.id);
-      await addMissing(db.fxRates, data.fxRates, (r) => r.code);
+      // Rates and photo files are this device's own cache/state; not user edits.
+      await addMissing(db.fxRates, data.fxRates, (r) => r.code, false);
       // Receiver credentials and backup-success markers belong to this device.
       // Never import them from a portable or NAS snapshot.
-      result.photos = await addMissing(db.photos, photos, (r) => r.id);
+      result.photos = await addMissing(db.photos, photos, (r) => r.id, false);
     },
   );
   return result;

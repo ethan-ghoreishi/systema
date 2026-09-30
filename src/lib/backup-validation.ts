@@ -2,8 +2,9 @@ import type { Backup } from './export';
 
 /** Reject malformed data before any write. Optional legacy fields stay optional. */
 export function validateBackup(value: unknown): asserts value is Backup {
-  const fail = () => {
-    throw new Error('Invalid or unsupported systema backup. No data imported.');
+  // Name the offending row, so a failed restore can be diagnosed and repaired.
+  const fail = (where: string) => {
+    throw new Error(`Invalid or unsupported systema backup (${where}). No data imported.`);
   };
   const object = (v: unknown): v is Record<string, any> =>
     !!v && typeof v === 'object' && !Array.isArray(v);
@@ -13,13 +14,14 @@ export function validateBackup(value: unknown): asserts value is Backup {
     keys.split(' ').every((k) => typeof r[k] === 'number' && Number.isFinite(r[k]));
   const optional = (r: Record<string, any>, keys: string, type: string) =>
     keys.split(' ').every((k) => r[k] === undefined || typeof r[k] === type);
-  if (!object(value) || value.app !== 'systema' || value.version !== 1) fail();
+  if (!object(value) || value.app !== 'systema' || value.version !== 1)
+    fail('not a version 1 systema backup');
   const data = value as Record<string, any>;
   const rows = (key: string, idKey: string, check: (r: Record<string, any>) => boolean) => {
     const list = data[key];
-    if (!Array.isArray(list)) return fail();
+    if (!Array.isArray(list)) return fail(`${key} missing`);
     const ids = new Set<string>();
-    for (const row of list) {
+    for (const [i, row] of list.entries()) {
       if (
         !object(row) ||
         typeof row[idKey] !== 'string' ||
@@ -27,7 +29,7 @@ export function validateBackup(value: unknown): asserts value is Backup {
         ids.has(row[idKey]) ||
         !check(row)
       )
-        fail();
+        fail(`${key} row ${i + 1}${typeof row?.[idKey] === 'string' ? `, ${row[idKey]}` : ''}`);
       ids.add(row[idKey]);
     }
   };
@@ -103,9 +105,9 @@ export function validateBackup(value: unknown): asserts value is Backup {
     ['stop', 'receipt', 'cover'].includes(r.kind) &&
     (r.stopId === null || typeof r.stopId === 'string') &&
     (r.expenseId === null || typeof r.expenseId === 'string');
-  if (!Array.isArray(data.photos)) fail();
+  if (!Array.isArray(data.photos)) fail('photos missing');
   const photoIds = new Set<string>();
-  for (const p of data.photos) {
+  for (const [i, p] of data.photos.entries()) {
     if (
       !object(p) ||
       !object(p.meta) ||
@@ -115,7 +117,7 @@ export function validateBackup(value: unknown): asserts value is Backup {
       typeof p.dataUrl !== 'string' ||
       !/^data:[^,]*;base64,[A-Za-z0-9+/]*={0,2}$/.test(p.dataUrl)
     )
-      fail();
+      fail(`photos row ${i + 1}`);
     photoIds.add(p.meta.id);
   }
   if (data.photosMeta !== undefined) rows('photosMeta', 'id', photoMeta);
@@ -123,14 +125,15 @@ export function validateBackup(value: unknown): asserts value is Backup {
   const stops = new Map(data.stops.map((r: any) => [r.id, r.tripId]));
   const expenses = new Map(data.expenses.map((r: any) => [r.id, r.tripId]));
   for (const row of [...data.stops, ...data.expenses]) {
-    if (row.cityId && cities.has(row.cityId) && cities.get(row.cityId) !== row.tripId) fail();
+    if (row.cityId && cities.has(row.cityId) && cities.get(row.cityId) !== row.tripId)
+      fail(`${row.id} links to a city in another trip`);
   }
   for (const p of [...data.photos.map((p: any) => p.meta), ...(data.photosMeta ?? [])]) {
     if (
       (p.stopId && stops.get(p.stopId) !== p.tripId) ||
       (p.expenseId && expenses.get(p.expenseId) !== p.tripId)
     )
-      fail();
+      fail(`photo ${p.id} links to a stop or expense outside its trip`);
   }
   const tripIds = new Set(data.trips.map((r: any) => r.id));
   for (const row of [
@@ -140,6 +143,6 @@ export function validateBackup(value: unknown): asserts value is Backup {
     ...data.photos.map((p: any) => p.meta),
     ...(data.photosMeta ?? []),
   ]) {
-    if (!tripIds.has(row.tripId)) fail();
+    if (!tripIds.has(row.tripId)) fail(`${row.id} belongs to no trip in the backup`);
   }
 }
