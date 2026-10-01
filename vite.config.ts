@@ -21,7 +21,13 @@ export default defineConfig(({ command, mode }) => {
     // fall back to Vite's default otherwise.
     server: { port: process.env.PORT ? Number(process.env.PORT) : 5173 },
     define: {
-      __APP_VERSION__: JSON.stringify(pkg.version),
+      // Deployed builds carry their commit, so the live version can be verified.
+      __APP_VERSION__: JSON.stringify(
+        process.env.APP_VERSION ??
+          (process.env.GITHUB_SHA
+            ? `${pkg.version}+${process.env.GITHUB_SHA.slice(0, 7)}`
+            : pkg.version),
+      ),
     },
     plugins: [
       svelte(),

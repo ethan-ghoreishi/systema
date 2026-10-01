@@ -1,4 +1,6 @@
 import type { BrowserContext, Page, Route } from '@playwright/test';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 /**
  * An in-test NAS receiver, faithful to nas/systema-backup.php: snapshots are
@@ -97,13 +99,14 @@ export class FakeNas {
 /** A fresh "device": its own browser context (own IndexedDB) wired to the NAS. */
 export async function device(
   makeContext: () => Promise<BrowserContext>,
-  nas: FakeNas,
+  nas: FakeNas | { url: string },
 ): Promise<Page> {
   const context = await makeContext();
-  await context.route('https://nas.test/**', nas.handle);
+  if (nas instanceof FakeNas) await context.route('https://nas.test/**', nas.handle);
+  const nasUrl = nas instanceof FakeNas ? 'https://nas.test/systema-backup.php' : nas.url;
   const page = context.pages()[0] ?? (await context.newPage());
   await page.goto('/');
-  await page.evaluate(async () => {
+  await page.evaluate(async (nasUrl) => {
     const paths = [
       '/src/lib/db.ts',
       '/src/lib/trips.ts',
@@ -116,18 +119,36 @@ export async function device(
     ];
     const mods = await Promise.all(paths.map((p) => import(/* @vite-ignore */ p)));
     const m = Object.assign({}, ...mods);
-    m.settingsStore.current = {
-      nasUrl: 'https://nas.test/systema-backup.php',
-      nasToken: 'synthetic',
-    };
+    m.settingsStore.current = { nasUrl, nasToken: 'synthetic' };
     // Tests drive every sync explicitly; no debounced background syncs.
     m.nasBackup.schedule = () => {};
     (window as any).m = m;
-  });
+  }, nasUrl);
   return page;
 }
 
 /** Run one sync on a device and return its outcome message. */
 export async function sync(page: Page): Promise<{ ok: boolean; message: string }> {
   return page.evaluate(() => (window as any).m.nasBackup.sync());
+}
+
+/**
+ * A real nas/systema-backup.php, one receiver folder per call, when a PHP
+ * server is running (CI): SYSTEMA_PHP_URL serves SYSTEMA_PHP_ROOT.
+ */
+export function phpReceiver(
+  receiver = 'nas/systema-backup.php',
+): { url: string; dir: string } | null {
+  const root = process.env.SYSTEMA_PHP_ROOT;
+  const base = process.env.SYSTEMA_PHP_URL;
+  if (!root || !base) return null;
+  const name = `r${Date.now()}${Math.random().toString(36).slice(2, 8)}`;
+  const dir = join(root, name);
+  mkdirSync(dir, { recursive: true });
+  const php = readFileSync(receiver, 'utf8').replace(
+    "'CHANGE-ME-to-a-long-random-string'",
+    "'synthetic'",
+  );
+  writeFileSync(join(dir, 'systema-backup.php'), php);
+  return { url: `${base}/${name}/systema-backup.php`, dir };
 }

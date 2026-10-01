@@ -421,13 +421,11 @@ test('a deleted trip comes back, photos included, from an older NAS snapshot fil
   expect(nas.latest().trips).toEqual([]);
 
   await phone.evaluate(() => (location.hash = '/settings'));
-  await phone
-    .locator('input[type="file"][accept*=".zip"]')
-    .setInputFiles({
-      name: 'systema-data-older.json',
-      mimeType: 'application/json',
-      buffer: Buffer.from(older),
-    });
+  await phone.locator('input[type="file"][accept*=".zip"]').setInputFiles({
+    name: 'systema-data-older.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(older),
+  });
   await phone.getByRole('button', { name: 'Restore these records' }).click();
   await expect(phone.getByRole('status')).toContainText('1 photo(s) fetched from the NAS');
   await sync(phone);

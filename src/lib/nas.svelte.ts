@@ -229,7 +229,7 @@ class NasBackup {
     return `${base}?kind=${kind}&token=${encodeURIComponent(nasToken.trim())}${extra}`;
   }
 
-  private async post(kind: string, extra: string, body: BodyInit): Promise<void> {
+  private async post(kind: string, extra: string, body: string | ArrayBuffer): Promise<void> {
     const res = await fetch(this.endpoint(kind, extra), {
       method: 'POST',
       // A CORS-simple type: no preflight round trip per upload. The receiver
@@ -237,9 +237,16 @@ class NasBackup {
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body,
     });
-    const json = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+    const json = (await res.json().catch(() => null)) as {
+      ok?: boolean;
+      error?: string;
+      bytes?: number;
+    } | null;
     if (!res.ok || !json?.ok)
       throw new Error(`${kind} upload: ${json?.error ?? `HTTP ${res.status}`}`);
+    // Receivers that report what they stored let a short write be caught.
+    if (body instanceof ArrayBuffer && json.bytes !== undefined && json.bytes !== body.byteLength)
+      throw new Error(`${kind} upload: stored ${json.bytes} of ${body.byteLength} bytes`);
   }
 
   /** Upload each photo the NAS doesn't have yet, one at a time (resumable). */
