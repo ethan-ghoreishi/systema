@@ -402,3 +402,37 @@ test('checking the NAS copy reports accurately and changes nothing', async ({ ma
   expect({ posts: nas.dataPosts, files: nas.files.size }).toEqual(before);
   expect((await state(phone)).trips[0].planText).toBe('Not synced yet');
 });
+
+test('a deleted trip comes back, photos included, from an older NAS snapshot file', async ({
+  makeContext,
+}) => {
+  const nas = new FakeNas();
+  const phone = await device(makeContext, nas);
+  const { trip } = await seedTrip(phone);
+  await app(
+    phone,
+    (m, id) => m.addPhoto(new Blob(['pic'], { type: 'image/png' }), { tripId: id, kind: 'cover' }),
+    trip,
+  );
+  await sync(phone);
+  const older = nas.files.get([...nas.files.keys()].sort().at(-1)!)!; // as picked from the share
+  await app(phone, (m, id) => m.deleteTrip(id), trip);
+  await sync(phone);
+  expect(nas.latest().trips).toEqual([]);
+
+  await phone.evaluate(() => (location.hash = '/settings'));
+  await phone
+    .locator('input[type="file"][accept*=".zip"]')
+    .setInputFiles({
+      name: 'systema-data-older.json',
+      mimeType: 'application/json',
+      buffer: Buffer.from(older),
+    });
+  await phone.getByRole('button', { name: 'Restore these records' }).click();
+  await expect(phone.getByRole('status')).toContainText('1 photo(s) fetched from the NAS');
+  await sync(phone);
+  const s = await state(phone);
+  expect(s.trips.map((t: any) => t.id)).toEqual([trip]);
+  expect(s.photos).toHaveLength(1); // the tombstone was cleared, so sync kept it
+  expect(nas.latest().photosMeta).toHaveLength(1);
+});

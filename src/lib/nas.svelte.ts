@@ -13,6 +13,7 @@ import {
   mergeRecords,
   same,
   type FieldConflict,
+  type PhotoMeta,
   type SyncRecords,
   type SyncTable,
 } from './sync';
@@ -419,6 +420,28 @@ class NasBackup {
     } finally {
       this.running = false;
     }
+  }
+
+  /**
+   * Fetch photo files from the NAS for photos restored without them (an older
+   * NAS snapshot picked from the share holds only their metadata), un-deleting
+   * them. Returns how many arrived.
+   */
+  async restorePhotos(metas: PhotoMeta[]): Promise<number> {
+    let fetched = 0;
+    for (const meta of metas) {
+      if (await db.photos.get(meta.id)) continue;
+      const res = await fetch(this.endpoint('photo', `&id=${meta.id}`));
+      if (!res.ok) continue;
+      const blob = await res.blob();
+      await db.transaction('rw', db.photos, db.kv, async () => {
+        if (await db.photos.get(meta.id)) return;
+        await db.photos.add({ ...meta, blob, backedUp: true });
+        await db.kv.delete(`${TOMBSTONE}${meta.id}`);
+        fetched += 1;
+      });
+    }
+    return fetched;
   }
 
   /** Note that a full backup file was prepared (for the backup-health status). */

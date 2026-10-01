@@ -43,6 +43,12 @@
   });
 
   async function saveJournal() {
+    if (
+      !journalDraft.trim() &&
+      (trip.journalText ?? '').trim() &&
+      !confirm('Clear the saved journal for this trip? This also clears it on your synced devices.')
+    )
+      return;
     try {
       await updateTrip(trip.id, { journalText: journalDraft });
       status = journalDraft.trim()

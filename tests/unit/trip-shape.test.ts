@@ -9,6 +9,7 @@ import {
   tripStartIso,
   tripEndIso,
   tripCityNames,
+  derivedTripFields,
 } from '../../src/lib/trip-shape';
 
 function trip(over: Partial<Trip> = {}): Trip {
@@ -202,4 +203,63 @@ it('counts hotel calendar nights independently of arrival and departure hours', 
       tripHotelNights(trip(), [city({ name: 'Test', arrival, departure, sleep: 'hotel' })]),
     ).toBe(nights);
   }
+});
+
+describe('derivedTripFields — stored trip dates mirror the legs', () => {
+  it('derives dates and the countdown target from leg wall-clock times', () => {
+    const legs = [
+      city({ arrival: '2026-10-02T09:00', departure: '2026-10-04T18:00', sleep: 'hotel' }),
+      city({ arrival: '2026-10-04T21:00', departure: '2026-10-06T07:30', sleep: 'hotel' }),
+    ];
+    expect(derivedTripFields(trip(), legs)).toEqual({
+      startDate: '2026-10-02',
+      endDate: '2026-10-06',
+      returnFlightAt: '2026-10-06T07:30',
+      accommodation: true,
+    });
+    // Only what changed is returned.
+    expect(
+      derivedTripFields(
+        trip({
+          startDate: '2026-10-02',
+          endDate: '2026-10-06',
+          returnFlightAt: '2026-10-06T07:30',
+          accommodation: true,
+        }),
+        legs,
+      ),
+    ).toEqual({});
+  });
+
+  it('keeps a legacy trip’s stored dates when its legs carry none', () => {
+    const legacy = trip({ startDate: '2024-10-03', endDate: '2024-10-06', accommodation: true });
+    expect(derivedTripFields(legacy, [city({ name: 'Vienna' })])).toEqual({});
+  });
+
+  it('clears stale dates and the countdown when the last leg date is removed', () => {
+    const stale = trip({
+      startDate: '2026-10-02',
+      endDate: '2026-10-06',
+      returnFlightAt: '2026-10-06T07:30',
+    });
+    expect(derivedTripFields(stale, [city({ name: 'Vienna' })], true)).toEqual({
+      startDate: '',
+      endDate: '',
+      returnFlightAt: '',
+    });
+  });
+
+  it('ends on the last arrival when no departure is set yet', () => {
+    expect(derivedTripFields(trip(), [city({ arrival: '2026-10-02T09:00' })])).toMatchObject({
+      startDate: '2026-10-02',
+      endDate: '2026-10-02',
+    });
+  });
+
+  it('is the same in every time zone (string order, not parsed instants)', () => {
+    const legs = [city({ arrival: '2026-03-29T01:30', departure: '2026-03-29T02:30' })];
+    // 02:30 doesn't exist in London that night (clocks go forward); a parsed
+    // Date would shift it. The stored target must stay as written.
+    expect(derivedTripFields(trip(), legs).returnFlightAt).toBe('2026-03-29T02:30');
+  });
 });

@@ -54,8 +54,10 @@
   async function removeTrip() {
     if (
       confirm(
-        'Delete this trip and all its cities, stops, photos and expenses from this device? ' +
-          'This cannot be undone. ' +
+        'Delete this trip and all its cities, stops, photos and expenses? ' +
+          'It is also removed from your other devices when they next sync. ' +
+          'Only a backup file, or an older snapshot from the NAS share, can bring it back ' +
+          '(Settings → Restore from a backup file). ' +
           'Tip: past trips can be kept instead by setting Status to Done.',
       )
     ) {

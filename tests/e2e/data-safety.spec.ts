@@ -352,3 +352,64 @@ test('quick successive checklist taps from a stale stop copy all stick', async (
   });
   expect(done).toEqual([true, true]);
 });
+
+test('clearing the last leg date clears stale trip dates; legacy dates survive edits', async ({
+  page,
+}) => {
+  const result = await page.evaluate(async () => {
+    const tripsPath = '/src/lib/trips.ts';
+    const dbPath = '/src/lib/db.ts';
+    const { addCity, updateCity } = await import(/* @vite-ignore */ tripsPath);
+    const { db } = await import(/* @vite-ignore */ dbPath);
+    const pick = async (id: string) => {
+      const t = await db.trips.get(id);
+      return [t.startDate, t.endDate, t.returnFlightAt];
+    };
+    const trip = sessionStorage.getItem('testTrip')!;
+    const city = await addCity(trip, 'Vienna', 'EUR');
+    await updateCity(city, { arrival: '2026-10-02T09:00', departure: '2026-10-04T18:00' });
+    const dated = await pick(trip);
+    await updateCity(city, { arrival: '', departure: '' });
+    const cleared = await pick(trip);
+    // A legacy (imported) trip: stored dates, legs without dates.
+    await db.trips.update(trip, { startDate: '2024-10-03', endDate: '2024-10-06' });
+    await updateCity(city, { name: 'Wien' });
+    return { dated, cleared, legacy: await pick(trip) };
+  });
+  expect(result).toEqual({
+    dated: ['2026-10-02', '2026-10-04', '2026-10-04T18:00'],
+    cleared: ['', '', ''],
+    legacy: ['2024-10-03', '2024-10-06', ''],
+  });
+});
+
+test('plan edits can be undone, and clearing a journal asks first', async ({ page }) => {
+  const trip = await page.evaluate(async () => {
+    const path = '/src/lib/trips.ts';
+    const { updateTrip } = await import(/* @vite-ignore */ path);
+    const id = sessionStorage.getItem('testTrip')!;
+    await updateTrip(id, { planText: '# Original plan', journalText: 'Kept journal' });
+    return id;
+  });
+  const stored = () =>
+    page.evaluate(async (id) => {
+      const path = '/src/lib/db.ts';
+      const { db } = await import(/* @vite-ignore */ path);
+      const t = await db.trips.get(id);
+      return { plan: t.planText, journal: t.journalText };
+    }, trip);
+
+  await page.evaluate((id) => (location.hash = `/trip/${id}/plan`), trip);
+  await page.getByRole('button', { name: 'Edit plan' }).click();
+  await page.getByLabel('Itinerary (Markdown)').fill('Accidental paste');
+  await expect.poll(stored).toMatchObject({ plan: 'Accidental paste' });
+  page.once('dialog', (d) => d.accept());
+  await page.getByRole('button', { name: 'Undo changes' }).click();
+  await expect.poll(stored).toMatchObject({ plan: '# Original plan' });
+
+  await page.evaluate((id) => (location.hash = `/trip/${id}/export`), trip);
+  await page.getByPlaceholder('Paste the finished journal here…').fill('');
+  page.once('dialog', (d) => d.dismiss());
+  await page.getByRole('button', { name: 'Save journal' }).click();
+  expect((await stored()).journal).toBe('Kept journal');
+});

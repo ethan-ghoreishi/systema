@@ -3,6 +3,7 @@
   import TopBar from '../components/TopBar.svelte';
   import ConflictList from '../components/ConflictList.svelte';
   import { settingsStore } from '../lib/settings.svelte';
+  import { db } from '../lib/db';
   import { connectivity } from '../lib/connectivity.svelte';
   import { nasBackup } from '../lib/nas.svelte';
   import {
@@ -124,9 +125,21 @@
 
   const confirmImport = () =>
     run('Restoring…', async () => {
-      const r = await importBackup(pending!.backup, pending!.files);
+      const { backup, files } = pending!;
+      const had = new Set(await db.trips.toCollection().primaryKeys());
+      const r = await importBackup(backup, files);
       pending = null;
-      return describe(r, false);
+      // An older NAS snapshot carries photo metadata only: fetch the photos of
+      // the trips it brought back from the NAS, where their files still are.
+      const restored = new Set(backup.trips.map((t) => t.id).filter((id) => !had.has(id)));
+      const metas = (backup.photosMeta ?? []).filter(
+        (m) => restored.has(m.tripId) && !files.has(m.id),
+      );
+      const fetched =
+        metas.length && nasBackup.configured && navigator.onLine
+          ? await nasBackup.restorePhotos(metas)
+          : 0;
+      return `${describe(r, false)}${fetched ? ` ${fetched} photo(s) fetched from the NAS.` : ''}`;
     });
 
   async function onImportFile(e: Event): Promise<void> {
