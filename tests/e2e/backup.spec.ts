@@ -176,7 +176,7 @@ test('200 photos back up and restore intact', async ({ page, makeContext }) => {
   const fresh = await freshDevice(makeContext);
   await chooseBackup(fresh, zip);
   await fresh.getByRole('button', { name: 'Restore these records' }).click();
-  await expect(fresh.getByRole('status')).toContainText('200 photo(s)');
+  await expect(fresh.getByRole('status')).toContainText('200 photo(s)', { timeout: 60_000 });
   const texts: string[] = await fresh.evaluate(async () =>
     Promise.all((await (window as any).m.db.photos.toArray()).map((p: any) => p.blob.text())),
   );

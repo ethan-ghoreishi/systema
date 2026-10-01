@@ -30,7 +30,10 @@ test('photo backup restores atomically and preserves existing device records', a
       blob: new Blob(['synthetic image'], { type: 'image/png' }),
       createdAt: 1,
     });
-    const { backup, files } = await readBackupFile(await buildZipBackup());
+    // As a saved file would be: bytes, not a Blob still backed by the database
+    // (the photo is deleted below, before restoring).
+    const saved = new Blob([await (await buildZipBackup()).arrayBuffer()]);
+    const { backup, files } = await readBackupFile(saved);
     await db.photos.delete('synthetic-photo');
     await db.trips.update(id, { planText: 'Newer device plan' });
     let error = '';

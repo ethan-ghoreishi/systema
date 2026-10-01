@@ -271,10 +271,18 @@ export async function readBackupFile(
     if (!json) throw new Error(`Not a systema backup: ${BACKUP_JSON} is missing.`);
     const backup = JSON.parse(await json.data.text());
     validateBackup(backup);
+    const types: Record<string, string> = {
+      jpg: 'image/jpeg',
+      png: 'image/png',
+      webp: 'image/webp',
+    };
     const files = new Map(
       entries
         .filter((e) => e.name.startsWith('photos/'))
-        .map((e) => [e.name.slice('photos/'.length).replace(/\.[^.]+$/, ''), e.data]),
+        .map((e) => {
+          const [, id, ext] = e.name.match(/^photos\/(.+)\.([^.]+)$/) ?? [];
+          return [id ?? e.name, e.data.slice(0, e.data.size, types[ext] ?? '')] as const;
+        }),
     );
     return { backup, files };
   }
@@ -367,12 +375,10 @@ export async function importBackup(
         })),
       );
   const metas = data.photosMeta ?? [];
-  const photos = [
-    ...legacy,
-    ...metas
-      .filter((m) => files.has(m.id))
-      .map((m) => ({ ...m, blob: files.get(m.id)!, backedUp: false })),
-  ];
+  const zipPhotos = metas
+    .filter((m) => files.has(m.id))
+    .map((m) => ({ ...m, blob: files.get(m.id)!, backedUp: false }));
+  let zipToAdd: Photo[] = [];
   const result: ImportResult = {
     trips: 0,
     stops: 0,
@@ -389,7 +395,7 @@ export async function importBackup(
         table: Table<T, string>,
         rows: T[],
         key: (row: T) => string,
-        compare = true,
+        { compare = true, write = !dryRun } = {},
       ): Promise<T[]> {
         const existing = await table.bulkGet(rows.map(key));
         if (
@@ -408,7 +414,7 @@ export async function importBackup(
           result.differing += rows.filter(
             (row, i) => existing[i] && !same(existing[i], row),
           ).length;
-        if (fresh.length && !dryRun) await table.bulkAdd(fresh);
+        if (fresh.length && write) await table.bulkAdd(fresh);
         return fresh;
       }
       result.trips = (await addMissing(db.trips, data.trips, (r) => r.id)).length;
@@ -416,13 +422,42 @@ export async function importBackup(
       result.stops = (await addMissing(db.stops, data.stops, (r) => r.id)).length;
       result.expenses = (await addMissing(db.expenses, data.expenses, (r) => r.id)).length;
       // Rates and photo files are this device's own cache/state; not user edits.
-      await addMissing(db.fxRates, data.fxRates, (r) => r.code, false);
+      await addMissing(db.fxRates, data.fxRates, (r) => r.code, { compare: false });
       // Device settings and sync state never come from a backup.
-      const added = await addMissing(db.photos, photos, (r) => r.id, false);
-      result.photos = added.length;
+      const added = await addMissing(db.photos, legacy, (r) => r.id, { compare: false });
       // Restoring a photo from a backup un-deletes it, here and (via sync) elsewhere.
       if (added.length && !dryRun) await db.kv.bulkDelete(added.map((p) => `${TOMBSTONE}${p.id}`));
+      // ZIP photos are checked now and written below, a few at a time.
+      zipToAdd = await addMissing(db.photos, zipPhotos, (r) => r.id, {
+        compare: false,
+        write: false,
+      });
+      result.photos = added.length + zipToAdd.length;
     },
   );
+  if (dryRun) return result;
+
+  // Never store a slice of the picked file: WebKit can store the whole file
+  // for each slice. Each photo is copied to its own bytes first, in batches of
+  // up to ~16 MB so memory stays bounded however large the backup. Re-running
+  // the restore completes any batch an interruption missed.
+  result.photos -= zipToAdd.length;
+  for (let i = 0; i < zipToAdd.length; ) {
+    const batch: typeof zipToAdd = [];
+    for (let bytes = 0; i < zipToAdd.length && (!batch.length || bytes < 16e6); i += 1) {
+      const p = zipToAdd[i];
+      const blob = new Blob([await p.blob.arrayBuffer()], { type: p.blob.type });
+      bytes += blob.size;
+      batch.push({ ...p, blob });
+    }
+    await db.transaction('rw', db.photos, db.kv, async () => {
+      const existing = await db.photos.bulkGet(batch.map((p) => p.id));
+      const fresh = batch.filter((_, j) => !existing[j]);
+      if (!fresh.length) return;
+      await db.photos.bulkAdd(fresh);
+      await db.kv.bulkDelete(fresh.map((p) => `${TOMBSTONE}${p.id}`));
+      result.photos += fresh.length;
+    });
+  }
   return result;
 }
