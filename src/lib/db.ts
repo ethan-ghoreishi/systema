@@ -117,7 +117,7 @@ export interface Photo {
   expenseId: string | null; // set for kind === 'receipt'
   kind: PhotoKind;
   blob: Blob;
-  /** Pushed to the NAS backup vault. Deletion also removes its local trip link. */
+  /** Uploaded to the NAS by sync. Deleting a photo removes it on every device (tombstone). */
   backedUp?: boolean;
   createdAt: number;
 }
