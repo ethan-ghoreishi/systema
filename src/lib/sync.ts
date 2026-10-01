@@ -189,14 +189,19 @@ export function mergeRecords(
   return { merged, conflicts };
 }
 
-/** How many records differ between two record sets (for "unsynced changes"). */
-export function countDifferences(a: SyncRecords, b: SyncRecords | null): number {
+/**
+ * How many records differ between two record sets. With `toSend`, photos `b`
+ * has and `a` lacks don't count: photos are union-only, so lacking one is
+ * never something to push (it may just be unfetchable from the NAS).
+ */
+export function countDifferences(a: SyncRecords, b: SyncRecords | null, toSend = false): number {
   let n = 0;
   for (const table of [...SYNC_TABLES, 'photosMeta'] as const) {
     const key = keyOf(table);
     const A = byKey(a[table] as unknown as Row[], key);
     const B = byKey(b?.[table] as Row[] | undefined, key);
-    for (const id of new Set([...A.keys(), ...B.keys()])) {
+    const ids = toSend && table === 'photosMeta' ? A.keys() : new Set([...A.keys(), ...B.keys()]);
+    for (const id of ids) {
       if (!same(A.get(id), B.get(id))) n += 1;
     }
   }

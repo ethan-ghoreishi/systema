@@ -177,4 +177,11 @@ describe('mergeRecords — combining two devices against their common base', () 
     expect(countDifferences(local, base)).toBe(2);
     expect(countDifferences(base, null)).toBe(2);
   });
+
+  it('never counts a photo the other side has but this one lacks as something to send', () => {
+    const remote = recs({ photosMeta: [photo('p1')] });
+    expect(countDifferences(recs(), remote)).toBe(1);
+    expect(countDifferences(recs(), remote, true)).toBe(0);
+    expect(countDifferences(recs({ photosMeta: [photo('p2')] }), remote, true)).toBe(1);
+  });
 });

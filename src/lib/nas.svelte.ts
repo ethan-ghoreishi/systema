@@ -389,7 +389,7 @@ class NasBackup {
       const snapshot = await buildDataBackup();
       const records = toRecords(snapshot);
       const ahead = remote
-        ? countDifferences(records, toRecords(remote)) > 0
+        ? countDifferences(records, toRecords(remote), true) > 0
         : records.trips.length + records.kv.length > 0;
       if (ahead) {
         snapshot.sync = {
@@ -502,7 +502,7 @@ class NasBackup {
         descends,
       );
       const incoming = countDifferences(merged, local);
-      const outgoing = countDifferences(merged, remoteRecs);
+      const outgoing = countDifferences(merged, remoteRecs, true);
       const when = new Date(remote.sync?.at ?? Date.parse(remote.exportedAt)).toLocaleString(
         'en-GB',
         { dateStyle: 'medium', timeStyle: 'short' },

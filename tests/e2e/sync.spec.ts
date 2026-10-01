@@ -434,3 +434,28 @@ test('a deleted trip comes back, photos included, from an older NAS snapshot fil
   expect(s.photos).toHaveLength(1); // the tombstone was cleared, so sync kept it
   expect(nas.latest().photosMeta).toHaveLength(1);
 });
+
+test('a photo file lost from the NAS causes no push ping-pong between devices', async ({
+  makeContext,
+}) => {
+  const nas = new FakeNas();
+  const phone = await device(makeContext, nas);
+  const mac = await device(makeContext, nas);
+  const { trip } = await seedTrip(phone);
+  await app(
+    phone,
+    (m, id) => m.addPhoto(new Blob(['pic'], { type: 'image/png' }), { tripId: id, kind: 'cover' }),
+    trip,
+  );
+  await sync(phone);
+  nas.photos.clear(); // e.g. removed by hand on the NAS
+  await sync(mac);
+  await sync(phone);
+  const posts = nas.dataPosts;
+  for (let i = 0; i < 5; i += 1) {
+    await sync(mac);
+    await sync(phone);
+  }
+  expect(nas.dataPosts).toBe(posts);
+  expect((await state(phone)).photos).toHaveLength(1); // still on the device that took it
+});
