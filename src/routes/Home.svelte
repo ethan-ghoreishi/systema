@@ -8,6 +8,7 @@
   import Icon from '../components/Icon.svelte';
   import TripCover from '../components/TripCover.svelte';
   import { conflictsQuery } from '../lib/conflicts';
+  import { nasBackup } from '../lib/nas.svelte';
 
   const tripsQ = liveQuery(() => db.trips.orderBy('order').reverse().toArray());
   const citiesQ = liveQuery(() => db.cities.toArray());
@@ -28,6 +29,16 @@
     const m: Record<string, number> = {};
     for (const id in grouped) m[id] = tripTotalGBP(realExpenses(grouped[id]));
     return m;
+  });
+
+  // Nudge only when action is needed: never backed up, or not for a week.
+  const backupNotice = $derived.by(() => {
+    if (!trips.length || !nasBackup.healthLoaded) return '';
+    const last = Math.max(nasBackup.lastSyncAt ?? 0, nasBackup.lastFileBackupAt ?? 0);
+    if (!last) return 'Not backed up yet — set up a backup';
+    if (Date.now() - last > 7 * 86_400_000)
+      return `Last backup ${new Date(last).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} — back up now`;
+    return '';
   });
 
   // Past trips (marked Done) live in their own journal section below.
@@ -76,6 +87,8 @@
       <a class="hint hint--warn home-notice" href="#/settings">
         {$conflictsQ.length} edit{$conflictsQ.length > 1 ? 's' : ''} made on two devices — review
       </a>
+    {:else if backupNotice}
+      <a class="hint hint--warn home-notice" href="#/settings">{backupNotice}</a>
     {/if}
 
     <a class="btn btn--ghost new-trip" href="#/insights">

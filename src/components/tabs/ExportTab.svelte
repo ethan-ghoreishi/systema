@@ -1,19 +1,10 @@
 <script lang="ts">
   import { liveQuery } from 'dexie';
   import { db, type Trip } from '../../lib/db';
-  import {
-    buildTripPack,
-    buildJournalingPrompt,
-    buildMemoryPrompt,
-    buildBackup,
-    importBackup,
-    importNote,
-  } from '../../lib/export';
+  import { buildTripPack, buildJournalingPrompt, buildMemoryPrompt } from '../../lib/export';
   import { buildTripCsv, csvNote } from '../../lib/csv';
   import { tripDisplayName } from '../../lib/trip-shape';
   import { copyText, downloadText } from '../../lib/download';
-  import { settingsStore } from '../../lib/settings.svelte';
-  import { todayIso } from '../../lib/sheet';
   import { updateTrip } from '../../lib/trips';
 
   let { trip }: { trip: Trip } = $props();
@@ -39,7 +30,6 @@
   const prompt = $derived(buildJournalingPrompt(pack));
 
   let status = $state('');
-  let busy = $state(false);
 
   // Journal paste-back: keeps the finished journal with the trip (Plan tab
   // grows a Plan | Journal toggle once saved).
@@ -95,39 +85,6 @@
     downloadText(`${slug()}-expenses.csv`, buildTripCsv(expenses), 'text/csv');
     status = `CSV downloaded — sheet column format, subtotal row included.${csvNote(expenses)}`;
   }
-
-  async function downloadBackup() {
-    busy = true;
-    status = 'Building backup…';
-    try {
-      const backup = await buildBackup();
-      downloadText(`systema-backup-${todayIso()}.json`, JSON.stringify(backup), 'application/json');
-      status = 'Backup prepared. Save it in Files and check it exists.';
-    } catch (err) {
-      status = `Backup failed: ${err instanceof Error ? err.message : String(err)}`;
-    } finally {
-      busy = false;
-    }
-  }
-
-  async function onImport(e: Event) {
-    const input = e.currentTarget as HTMLInputElement;
-    const file = input.files?.[0];
-    input.value = '';
-    if (!file) return;
-    busy = true;
-    status = 'Importing…';
-    try {
-      const data = JSON.parse(await file.text());
-      const r = await importBackup(data);
-      await settingsStore.load();
-      status = `Imported ${r.trips} trip(s), ${r.stops} stop(s), ${r.expenses} expense(s), ${r.photos} photo(s).${importNote(r)}`;
-    } catch (err) {
-      status = `Import failed: ${err instanceof Error ? err.message : String(err)}`;
-    } finally {
-      busy = false;
-    }
-  }
 </script>
 
 <div class="export">
@@ -173,28 +130,10 @@
     <button class="btn btn--primary" onclick={saveJournal}>Save journal</button>
   </div>
 
-  <div class="card">
-    <h2 class="section-title">Backup &amp; transfer</h2>
-    <p class="hint">
-      A full JSON backup of all your data. Use it to move trips between devices — build the plan on
-      your Mac, then import on the phone you'll travel with. Import only adds what the phone doesn't
-      have: later edits to a trip already on it don't transfer (the import message says how many
-      records differ).
-    </p>
-    <button class="btn btn--ghost" onclick={downloadBackup} disabled={busy}>
-      Download backup (JSON)
-    </button>
-    <label class="btn btn--ghost" class:btn--disabled={busy}>
-      Import backup (JSON)
-      <input
-        type="file"
-        accept="application/json,.json"
-        hidden
-        onchange={onImport}
-        disabled={busy}
-      />
-    </label>
-  </div>
+  <p class="hint">
+    Full backups, restore and NAS sync between your devices live in
+    <a href="#/settings">Settings</a>.
+  </p>
 
   {#if status}<p class="hint hint--ok">{status}</p>{/if}
 </div>

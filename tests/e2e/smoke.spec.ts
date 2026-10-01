@@ -17,7 +17,9 @@ test('settings is reachable and shows backup and storage controls', async ({ pag
   await page.goto('/');
   await page.getByLabel('Settings').click();
   await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'NAS backup vault' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Backup', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'NAS sync' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Download full backup (.zip)' })).toBeVisible();
 });
 
 test('creating a City break lands on trip edit with legs', async ({ page }) => {

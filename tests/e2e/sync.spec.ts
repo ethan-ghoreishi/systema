@@ -376,3 +376,29 @@ test('a conflict is reviewed in Settings and the chosen version syncs back', asy
     expect(s.conflicts).toEqual([]);
   }
 });
+
+test('checking the NAS copy reports accurately and changes nothing', async ({ makeContext }) => {
+  const nas = new FakeNas();
+  const phone = await device(makeContext, nas);
+  const { trip } = await seedTrip(phone);
+  await app(
+    phone,
+    (m, id) => m.addPhoto(new Blob(['pic'], { type: 'image/png' }), { tripId: id, kind: 'cover' }),
+    trip,
+  );
+  await sync(phone);
+  const check = () => phone.evaluate(() => (window as any).m.nasBackup.check());
+  expect((await check()).message).toContain(
+    '1 trip, 0 expenses, 1 photo. Every photo it lists is on the NAS. This device and the NAS match.',
+  );
+
+  await app(phone, (m, id) => m.updateTrip(id, { planText: 'Not synced yet' }), trip);
+  nas.photos.clear(); // the NAS lost its photo file
+  const before = { posts: nas.dataPosts, files: nas.files.size };
+  const r = await check();
+  expect(r.ok).toBe(false);
+  expect(r.message).toContain('1 photo listed but not on the NAS yet');
+  expect(r.message).toContain('A sync would bring 0 changes here and send 1 change.');
+  expect({ posts: nas.dataPosts, files: nas.files.size }).toEqual(before);
+  expect((await state(phone)).trips[0].planText).toBe('Not synced yet');
+});

@@ -1868,3 +1868,7 @@ textarea.field {
   text-align: center;
   font-weight: 600;
 }
+
+.cluster--wrap {
+  flex-wrap: wrap;
+}

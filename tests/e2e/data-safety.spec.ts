@@ -17,7 +17,9 @@ test('photo backup restores atomically and preserves existing device records', a
     const dbPath = '/src/lib/db.ts';
     const exportPath = '/src/lib/export.ts';
     const { db } = await import(/* @vite-ignore */ dbPath);
-    const { buildBackup, importBackup } = await import(/* @vite-ignore */ exportPath);
+    const { buildZipBackup, readBackupFile, importBackup } = await import(
+      /* @vite-ignore */ exportPath
+    );
     const id = sessionStorage.getItem('testTrip');
     await db.photos.add({
       id: 'synthetic-photo',
@@ -28,12 +30,12 @@ test('photo backup restores atomically and preserves existing device records', a
       blob: new Blob(['synthetic image'], { type: 'image/png' }),
       createdAt: 1,
     });
-    const backup = await buildBackup();
+    const { backup, files } = await readBackupFile(await buildZipBackup());
     await db.photos.delete('synthetic-photo');
     await db.trips.update(id, { planText: 'Newer device plan' });
     let error = '';
     try {
-      await importBackup(backup);
+      await importBackup(backup, files);
     } catch (e) {
       error = String(e);
     }
@@ -51,8 +53,10 @@ test('import reports only on-device records that differ from the backup', async 
     const dbPath = '/src/lib/db.ts';
     const exportPath = '/src/lib/export.ts';
     const { db } = await import(/* @vite-ignore */ dbPath);
-    const { buildBackup, importBackup } = await import(/* @vite-ignore */ exportPath);
-    const backup = await buildBackup();
+    const { buildZipBackup, readBackupFile, importBackup } = await import(
+      /* @vite-ignore */ exportPath
+    );
+    const { backup } = await readBackupFile(await buildZipBackup());
     const identical = await importBackup(backup);
     await db.trips.update(sessionStorage.getItem('testTrip'), {
       planText: 'Edited on this device',
@@ -68,8 +72,10 @@ test('invalid backup writes nothing', async ({ page }) => {
     const dbPath = '/src/lib/db.ts';
     const exportPath = '/src/lib/export.ts';
     const { db } = await import(/* @vite-ignore */ dbPath);
-    const { buildBackup, importBackup } = await import(/* @vite-ignore */ exportPath);
-    const backup = await buildBackup();
+    const { buildZipBackup, readBackupFile, importBackup } = await import(
+      /* @vite-ignore */ exportPath
+    );
+    const { backup } = await readBackupFile(await buildZipBackup());
     backup.trips[0].id = 'synthetic-new-trip';
     backup.expenses = [{ id: 'synthetic-broken', tripId: 'synthetic-new-trip' }];
     let rejected = false;

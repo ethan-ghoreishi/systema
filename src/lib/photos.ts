@@ -44,13 +44,17 @@ export async function deletePhoto(id: string): Promise<void> {
   await db.transaction('rw', db.photos, db.kv, () => deletePhotosWhere('id', id));
 }
 
+/** File extension for a photo blob (as stored on the NAS and in backups). */
+export function photoExt(blob: Blob): string {
+  return blob.type.includes('png') ? 'png' : blob.type.includes('webp') ? 'webp' : 'jpg';
+}
+
 /** Trigger a download so the photo can be saved off-device, then deleted here. */
 export function downloadPhoto(photo: Photo): void {
   const url = URL.createObjectURL(photo.blob);
   const a = document.createElement('a');
-  const ext = photo.blob.type.includes('png') ? 'png' : 'jpg';
   a.href = url;
-  a.download = `systema-${photo.kind}-${photo.createdAt}.${ext}`;
+  a.download = `systema-${photo.kind}-${photo.createdAt}.${photoExt(photo.blob)}`;
   document.body.appendChild(a);
   a.click();
   a.remove();

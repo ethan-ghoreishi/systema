@@ -2,6 +2,7 @@ import type { Transaction } from 'dexie';
 import { db, type Trip } from './db';
 import { newId } from './ids';
 import { settingsStore } from './settings.svelte';
+import { photoExt } from './photos';
 import { buildDataBackup, toRecords, type Backup } from './export';
 import { validateBackup } from './backup-validation';
 import {
@@ -42,6 +43,7 @@ import { derivedTripFields, tripDisplayName } from './trip-shape';
 const LAST_PUSH_KEY = 'nasLastDataAt'; // ms of the last successful push (name kept from v1)
 const BASE_KEY = 'local:syncBase'; // the last snapshot this device agreed with the NAS
 const SYNCED_AT_KEY = 'local:lastSyncAt';
+const FILE_BACKUP_KEY = 'local:lastFileBackupAt';
 const DEVICE_KEY = 'local:device';
 const HISTORY_CAP = 200;
 const DEBOUNCE_MS = 15_000;
@@ -155,6 +157,10 @@ class NasBackup {
   lastDataAt = $state<number | null>(null);
   /** Last sync that completed (pushed or already up to date). */
   lastSyncAt = $state<number | null>(null);
+  /** Last full backup file this device prepared for download. */
+  lastFileBackupAt = $state<number | null>(null);
+  /** The timestamps above have been read from storage. */
+  healthLoaded = $state(false);
   lastError = $state('');
   photosTotal = $state(0);
   photosBacked = $state(0);
@@ -171,10 +177,14 @@ class NasBackup {
     if (this.initialised || typeof window === 'undefined') return;
     this.initialised = true;
 
-    void db.kv.bulkGet([LAST_PUSH_KEY, SYNCED_AT_KEY]).then(([push, synced]) => {
-      if (typeof push?.value === 'number') this.lastDataAt = push.value;
-      if (typeof synced?.value === 'number') this.lastSyncAt = synced.value;
-    });
+    void db.kv
+      .bulkGet([LAST_PUSH_KEY, SYNCED_AT_KEY, FILE_BACKUP_KEY])
+      .then(([push, synced, file]) => {
+        if (typeof push?.value === 'number') this.lastDataAt = push.value;
+        if (typeof synced?.value === 'number') this.lastSyncAt = synced.value;
+        if (typeof file?.value === 'number') this.lastFileBackupAt = file.value;
+        this.healthLoaded = true;
+      });
     void this.refreshCounts();
 
     window.addEventListener('online', () => this.schedule(2_000));
@@ -237,11 +247,7 @@ class NasBackup {
     for (const id of ids) {
       const p = await db.photos.get(id);
       if (!p || p.backedUp) continue;
-      const ext = p.blob.type.includes('png')
-        ? 'png'
-        : p.blob.type.includes('webp')
-          ? 'webp'
-          : 'jpg';
+      const ext = photoExt(p.blob);
       // Bytes, not the stored Blob: IndexedDB-backed Blobs have uploaded empty
       // in WebKit. One photo in memory at a time.
       await this.post('photo', `&id=${p.id}&ext=${ext}`, await p.blob.arrayBuffer());
@@ -412,6 +418,83 @@ class NasBackup {
       return { ok: false, message: `Not synced (${msg}). Nothing on the NAS was replaced.` };
     } finally {
       this.running = false;
+    }
+  }
+
+  /** Note that a full backup file was prepared (for the backup-health status). */
+  async recordFileBackup(): Promise<void> {
+    this.lastFileBackupAt = Date.now();
+    await db.kv.put({ key: FILE_BACKUP_KEY, value: this.lastFileBackupAt });
+  }
+
+  /**
+   * Verify the NAS copy without changing anything: it must be readable and
+   * valid, every photo it lists must be on the NAS, and it reports what a sync
+   * would bring here and send from here.
+   */
+  async check(onProgress?: (done: number, total: number) => void): Promise<SyncOutcome> {
+    if (!this.configured) return { ok: false, message: 'Set the receiver URL and token first.' };
+    if (typeof navigator !== 'undefined' && !navigator.onLine)
+      return { ok: false, message: 'Offline — check again when connected.' };
+    try {
+      const res = await fetch(this.endpoint('latest'));
+      if (res.status === 404) return { ok: false, message: 'The NAS has no backup yet.' };
+      if (!res.ok) throw new Error(`reading the NAS copy: HTTP ${res.status}`);
+      const remote = (await res.json()) as Backup;
+      validateBackup(remote);
+
+      const metas = remote.photosMeta ?? [];
+      let missing = 0;
+      let done = 0;
+      const queue = [...metas];
+      const worker = async () => {
+        for (let meta = queue.shift(); meta; meta = queue.shift()) {
+          const ctrl = new AbortController();
+          const r = await fetch(this.endpoint('photo', `&id=${meta.id}`), { signal: ctrl.signal });
+          if (!r.ok) missing += 1;
+          ctrl.abort(); // only the status matters; don't download the photo
+          onProgress?.((done += 1), metas.length);
+        }
+      };
+      await Promise.all(Array.from({ length: 6 }, worker));
+
+      const local = toRecords(await buildDataBackup());
+      const base = (await db.kv.get(BASE_KEY))?.value as Backup | undefined;
+      const remoteRecs = toRecords(remote);
+      const descends =
+        !!base?.sync &&
+        !!remote.sync &&
+        (remote.sync.id === base.sync.id || remote.sync.history.includes(base.sync.id));
+      const { merged, conflicts } = mergeRecords(
+        base ? toRecords(base) : null,
+        local,
+        remoteRecs,
+        descends,
+      );
+      const incoming = countDifferences(merged, local);
+      const outgoing = countDifferences(merged, remoteRecs);
+      const when = new Date(remote.sync?.at ?? Date.parse(remote.exportedAt)).toLocaleString(
+        'en-GB',
+        { dateStyle: 'medium', timeStyle: 'short' },
+      );
+      const by = remote.sync ? ` by ${remote.sync.deviceName}` : '';
+      const lines = [
+        `NAS copy saved ${when}${by}: ${plural(remote.trips.length, 'trip')}, ${plural(remote.expenses.length, 'expense')}, ${plural(metas.length, 'photo')}.`,
+        missing
+          ? `${plural(missing, 'photo')} listed but not on the NAS yet (still on the device that took them).`
+          : metas.length
+            ? 'Every photo it lists is on the NAS.'
+            : '',
+        incoming || outgoing || conflicts.length
+          ? `A sync would bring ${plural(incoming, 'change')} here and send ${plural(outgoing, 'change')}${conflicts.length ? `, with ${plural(conflicts.length, 'edit')} made on two devices` : ''}.`
+          : 'This device and the NAS match.',
+      ];
+      return { ok: missing === 0, message: lines.filter(Boolean).join(' ') };
+    } catch (err) {
+      return {
+        ok: false,
+        message: `Check failed: ${err instanceof Error ? err.message : String(err)}`,
+      };
     }
   }
 

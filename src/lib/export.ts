@@ -1,12 +1,14 @@
 import type { Table } from 'dexie';
 import { validateBackup } from './backup-validation';
+import { photoExt } from './photos';
+import { isZip, unzip, verifyZip, zip } from './zip';
 import { db, type City, type Expense, type FxRate, type Photo, type Stop, type Trip } from './db';
 import { formatDateRange } from './format';
 import { formatSheetDate } from './sheet';
 import { realExpenses, tripTotalGBP, categorySummary } from './expenses';
 import { tripDisplayName, tripShape } from './trip-shape';
 import { formatGBP } from './money';
-import { isLocalKey, same, type SyncRecords } from './sync';
+import { TOMBSTONE, isLocalKey, same, type SyncRecords } from './sync';
 
 /**
  * Trip pack (Markdown) + the prefilled journaling prompt, and a full JSON
@@ -214,55 +216,76 @@ export function toRecords(b: Backup): SyncRecords {
   };
 }
 
-function blobToDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(blob);
-  });
-}
-
 async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
   const res = await fetch(dataUrl);
   return res.blob();
 }
 
-export async function buildBackup(): Promise<Backup> {
-  const [trips, cities, stops, expenses, fxRates, settings, photoRows] = await db.transaction(
+export const BACKUP_JSON = 'systema-backup.json';
+
+const README = `systema backup
+
+systema-backup.json  trips, legs, stops, expenses, journals (all text)
+photos/              every photo, as an ordinary image file named by its id
+
+Restore: systema -> Settings -> Restore from a backup file, and pick this .zip.
+Restoring only adds what the device doesn't already have.
+`;
+
+/**
+ * Full backup as a ZIP: the data snapshot plus every photo as its own file.
+ * Read in one transaction (a consistent copy); photos are composed by
+ * reference, so memory stays at about one photo however many there are.
+ */
+export async function buildZipBackup(
+  onProgress?: (done: number, total: number) => void,
+): Promise<Blob> {
+  const { data, photos } = await db.transaction(
     'r',
     [db.trips, db.cities, db.stops, db.expenses, db.fxRates, db.kv, db.photos],
-    () =>
-      Promise.all([
-        db.trips.toArray(),
-        db.cities.toArray(),
-        db.stops.toArray(),
-        db.expenses.toArray(),
-        db.fxRates.toArray(),
-        db.kv.toArray(),
-        db.photos.toArray(),
-      ]),
+    async () => ({ data: await buildDataBackup(), photos: await db.photos.toArray() }),
   );
-
-  const photos: BackupPhoto[] = await Promise.all(
-    photoRows.map(async (p) => {
-      const { blob, ...meta } = p;
-      return { meta, dataUrl: await blobToDataUrl(blob) };
-    }),
+  return zip(
+    [
+      { name: BACKUP_JSON, data: new Blob([JSON.stringify(data)], { type: 'application/json' }) },
+      { name: 'README.txt', data: new Blob([README]) },
+      ...photos.map((p) => ({ name: `photos/${p.id}.${photoExt(p.blob)}`, data: p.blob })),
+    ],
+    { onProgress },
   );
+}
 
-  return {
-    app: 'systema',
-    version: 1,
-    exportedAt: new Date().toISOString(),
-    trips,
-    cities,
-    stops,
-    expenses,
-    fxRates,
-    settings: settings.filter((r) => !isLocalKey(r.key)),
-    photos,
-  };
+/**
+ * Read a backup file — a ZIP from this version, or a JSON file from earlier
+ * ones — checking every checksum and the data's shape before anything is
+ * written. Photos come back as lazy slices of the file.
+ */
+export async function readBackupFile(
+  file: Blob,
+  onProgress?: (done: number, total: number) => void,
+): Promise<{ backup: Backup; files: Map<string, Blob> }> {
+  if (await isZip(file)) {
+    const entries = await unzip(file);
+    await verifyZip(entries, onProgress);
+    const json = entries.find((e) => e.name === BACKUP_JSON);
+    if (!json) throw new Error(`Not a systema backup: ${BACKUP_JSON} is missing.`);
+    const backup = JSON.parse(await json.data.text());
+    validateBackup(backup);
+    const files = new Map(
+      entries
+        .filter((e) => e.name.startsWith('photos/'))
+        .map((e) => [e.name.slice('photos/'.length).replace(/\.[^.]+$/, ''), e.data]),
+    );
+    return { backup, files };
+  }
+  let backup: unknown;
+  try {
+    backup = JSON.parse(await file.text());
+  } catch {
+    throw new Error('That file is not a systema backup (.zip or .json).');
+  }
+  validateBackup(backup);
+  return { backup, files: new Map() };
 }
 
 /**
@@ -307,30 +330,59 @@ export interface ImportResult {
   photos: number;
   /** Records already on this device whose content differs from the backup (kept as they are). */
   differing: number;
+  /** Photos listed in the backup whose file is missing from it. */
+  missingPhotos: number;
 }
 
 /** Status-message tail: flag edits that didn't transfer, stay quiet when identical. */
 export function importNote(r: ImportResult): string {
-  return r.differing
-    ? ` ${r.differing} record(s) on this device differ from the backup and were kept as they are.`
-    : '';
+  return (
+    (r.differing
+      ? ` ${r.differing} record(s) on this device differ from the backup and stay as they are.`
+      : '') +
+    (r.missingPhotos ? ` ${r.missingPhotos} photo file(s) were missing from the backup.` : '')
+  );
 }
 
-/** Add missing records only. A stale backup must never replace the device's only copy. */
-export async function importBackup(data: Backup): Promise<ImportResult> {
+/**
+ * Add missing records only: a backup can never overwrite this device's data.
+ * `files` holds a ZIP backup's photos by id. With `dryRun`, nothing is
+ * written and the result says what an import would do.
+ */
+export async function importBackup(
+  data: Backup,
+  files = new Map<string, Blob>(),
+  { dryRun = false } = {},
+): Promise<ImportResult> {
   validateBackup(data);
   // Blob decoding is asynchronous work outside IndexedDB. Doing it inside the
   // write transaction can let that transaction commit before all photos arrive.
-  const photos = await Promise.all(
-    data.photos.map(async (p) => ({
-      ...p.meta,
-      blob: await dataUrlToBlob(p.dataUrl),
-      backedUp: false,
-    })),
-  );
-  const result: ImportResult = { trips: 0, stops: 0, expenses: 0, photos: 0, differing: 0 };
+  const legacy = dryRun
+    ? data.photos.map((p) => ({ ...p.meta, blob: new Blob(), backedUp: false }))
+    : await Promise.all(
+        data.photos.map(async (p) => ({
+          ...p.meta,
+          blob: await dataUrlToBlob(p.dataUrl),
+          backedUp: false,
+        })),
+      );
+  const metas = data.photosMeta ?? [];
+  const photos = [
+    ...legacy,
+    ...metas
+      .filter((m) => files.has(m.id))
+      .map((m) => ({ ...m, blob: files.get(m.id)!, backedUp: false })),
+  ];
+  const result: ImportResult = {
+    trips: 0,
+    stops: 0,
+    expenses: 0,
+    photos: 0,
+    differing: 0,
+    missingPhotos: files.size ? metas.filter((m) => !files.has(m.id)).length : 0,
+  };
   await db.transaction(
-    'rw',
+    dryRun ? 'r' : 'rw',
     [db.trips, db.cities, db.stops, db.expenses, db.fxRates, db.kv, db.photos],
     async () => {
       async function addMissing<T extends object>(
@@ -338,7 +390,7 @@ export async function importBackup(data: Backup): Promise<ImportResult> {
         rows: T[],
         key: (row: T) => string,
         compare = true,
-      ): Promise<number> {
+      ): Promise<T[]> {
         const existing = await table.bulkGet(rows.map(key));
         if (
           rows.some(
@@ -356,18 +408,20 @@ export async function importBackup(data: Backup): Promise<ImportResult> {
           result.differing += rows.filter(
             (row, i) => existing[i] && !same(existing[i], row),
           ).length;
-        if (fresh.length) await table.bulkAdd(fresh);
-        return fresh.length;
+        if (fresh.length && !dryRun) await table.bulkAdd(fresh);
+        return fresh;
       }
-      result.trips = await addMissing(db.trips, data.trips, (r) => r.id);
+      result.trips = (await addMissing(db.trips, data.trips, (r) => r.id)).length;
       await addMissing(db.cities, data.cities, (r) => r.id);
-      result.stops = await addMissing(db.stops, data.stops, (r) => r.id);
-      result.expenses = await addMissing(db.expenses, data.expenses, (r) => r.id);
+      result.stops = (await addMissing(db.stops, data.stops, (r) => r.id)).length;
+      result.expenses = (await addMissing(db.expenses, data.expenses, (r) => r.id)).length;
       // Rates and photo files are this device's own cache/state; not user edits.
       await addMissing(db.fxRates, data.fxRates, (r) => r.code, false);
-      // Receiver credentials and backup-success markers belong to this device.
-      // Never import them from a portable or NAS snapshot.
-      result.photos = await addMissing(db.photos, photos, (r) => r.id, false);
+      // Device settings and sync state never come from a backup.
+      const added = await addMissing(db.photos, photos, (r) => r.id, false);
+      result.photos = added.length;
+      // Restoring a photo from a backup un-deletes it, here and (via sync) elsewhere.
+      if (added.length && !dryRun) await db.kv.bulkDelete(added.map((p) => `${TOMBSTONE}${p.id}`));
     },
   );
   return result;
