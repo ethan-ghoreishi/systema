@@ -1,4 +1,4 @@
-import type { Browser, Page, Route, TestInfo } from '@playwright/test';
+import type { BrowserContext, Page, Route } from '@playwright/test';
 
 /**
  * An in-test NAS receiver, faithful to nas/systema-backup.php: snapshots are
@@ -95,14 +95,13 @@ export class FakeNas {
 }
 
 /** A fresh "device": its own browser context (own IndexedDB) wired to the NAS. */
-export async function device(browser: Browser, nas: FakeNas, info: TestInfo): Promise<Page> {
-  const { viewport, userAgent, deviceScaleFactor, isMobile, hasTouch, baseURL } = info.project.use;
-  const context = await browser.newContext({
-    ...{ viewport, userAgent, deviceScaleFactor, isMobile, hasTouch, baseURL },
-    serviceWorkers: 'block',
-  });
+export async function device(
+  makeContext: () => Promise<BrowserContext>,
+  nas: FakeNas,
+): Promise<Page> {
+  const context = await makeContext();
   await context.route('https://nas.test/**', nas.handle);
-  const page = await context.newPage();
+  const page = context.pages()[0] ?? (await context.newPage());
   await page.goto('/');
   await page.evaluate(async () => {
     const paths = [

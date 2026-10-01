@@ -1,6 +1,5 @@
-import { test, expect, type Page } from '@playwright/test';
-
-test.use({ serviceWorkers: 'block' });
+import type { Page } from '@playwright/test';
+import { test, expect } from './fixtures';
 
 // Fresh Playwright contexts only. These fixtures never touch the installed PWA.
 test.beforeEach(async ({ page }) => {
@@ -13,14 +12,7 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test('photo backup restores atomically and preserves existing device records', async ({
-  page,
-  browserName,
-}) => {
-  test.skip(
-    browserName === 'webkit' && process.platform === 'darwin',
-    'This macOS Playwright WebKit rejects IndexedDB Blob writes; covered in Chromium and Linux WebKit.',
-  );
+test('photo backup restores atomically and preserves existing device records', async ({ page }) => {
   const result = await page.evaluate(async () => {
     const dbPath = '/src/lib/db.ts';
     const exportPath = '/src/lib/export.ts';
@@ -277,14 +269,7 @@ async function nasBackupRun(page: Page, latest: { status: number; json?: unknown
   return { posts, lastError };
 }
 
-test('a first NAS push merges the NAS copy first, so it never buries it', async ({
-  page,
-  browserName,
-}) => {
-  test.skip(
-    browserName === 'webkit' && process.platform === 'darwin',
-    'This macOS Playwright WebKit rejects IndexedDB Blob writes; covered in Chromium.',
-  );
+test('a first NAS push merges the NAS copy first, so it never buries it', async ({ page }) => {
   const nasTrip = {
     id: 'nas-trip',
     name: 'NAS trip',

@@ -1,4 +1,5 @@
-import { test, expect, type Page } from '@playwright/test';
+import type { Page } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { FakeNas, device, sync } from './nas-fake';
 
 // Two "devices" (separate browser contexts, separate IndexedDB) syncing
@@ -36,22 +37,19 @@ const state = (page: Page) =>
     ),
   }));
 
-test('a fresh install restores everything, photos included', async ({
-  browser,
-  browserName,
-}, info) => {
-  test.skip(!blobsWork(browserName), BLOB_SKIP);
+test('a fresh install restores everything, photos included', async ({ makeContext }) => {
   const nas = new FakeNas();
-  const phone = await device(browser, nas, info);
+  const phone = await device(makeContext, nas);
   const { trip, stop } = await seedTrip(phone);
   await app(phone, (m, a: any) => m.addPhoto(new Blob(['pic'], { type: 'image/png' }), a), {
     tripId: trip,
     stopId: stop,
     kind: 'stop',
   });
-  expect((await sync(phone)).ok).toBe(true);
+  const first = await sync(phone);
+  expect(first.message).toMatch(/^Synced/);
 
-  const fresh = await device(browser, nas, info);
+  const fresh = await device(makeContext, nas);
   const outcome = await sync(fresh);
   expect(outcome.message).toContain('photo downloaded');
   const s = await state(fresh);
@@ -63,23 +61,23 @@ test('a fresh install restores everything, photos included', async ({
   expect(nas.dataPosts).toBe(1);
 });
 
-test('an empty device never replaces a good NAS copy', async ({ browser }, info) => {
+test('an empty device never replaces a good NAS copy', async ({ makeContext }) => {
   const nas = new FakeNas();
-  const phone = await device(browser, nas, info);
+  const phone = await device(makeContext, nas);
   await seedTrip(phone);
   await sync(phone);
-  const empty = await device(browser, nas, info);
+  const empty = await device(makeContext, nas);
   await sync(empty);
   await sync(empty);
   expect(nas.latest().trips).toHaveLength(1);
 });
 
 test('edits to different fields on two devices combine without conflict', async ({
-  browser,
-}, info) => {
+  makeContext,
+}) => {
   const nas = new FakeNas();
-  const phone = await device(browser, nas, info);
-  const mac = await device(browser, nas, info);
+  const phone = await device(makeContext, nas);
+  const mac = await device(makeContext, nas);
   const { stop } = await seedTrip(phone);
   await sync(phone);
   await sync(mac);
@@ -98,11 +96,11 @@ test('edits to different fields on two devices combine without conflict', async 
 });
 
 test('the same field edited on two devices keeps the newer and records the other', async ({
-  browser,
-}, info) => {
+  makeContext,
+}) => {
   const nas = new FakeNas();
-  const phone = await device(browser, nas, info);
-  const mac = await device(browser, nas, info);
+  const phone = await device(makeContext, nas);
+  const mac = await device(makeContext, nas);
   const { trip } = await seedTrip(phone);
   await sync(phone);
   await sync(mac);
@@ -122,11 +120,11 @@ test('the same field edited on two devices keeps the newer and records the other
 });
 
 test('a record deleted on one device but edited on the other comes back', async ({
-  browser,
-}, info) => {
+  makeContext,
+}) => {
   const nas = new FakeNas();
-  const phone = await device(browser, nas, info);
-  const mac = await device(browser, nas, info);
+  const phone = await device(makeContext, nas);
+  const mac = await device(makeContext, nas);
   const { stop } = await seedTrip(phone);
   await sync(phone);
   await sync(mac);
@@ -140,12 +138,10 @@ test('a record deleted on one device but edited on the other comes back', async 
     expect((await state(page)).stops.map((s: any) => s.notes)).toEqual(['Kept by the edit']);
 });
 
-test('a deletion reaches the other device when it made no edit there', async ({
-  browser,
-}, info) => {
+test('a deletion reaches the other device when it made no edit there', async ({ makeContext }) => {
   const nas = new FakeNas();
-  const phone = await device(browser, nas, info);
-  const mac = await device(browser, nas, info);
+  const phone = await device(makeContext, nas);
+  const mac = await device(makeContext, nas);
   const { stop } = await seedTrip(phone);
   await sync(phone);
   await sync(mac);
@@ -155,10 +151,10 @@ test('a deletion reaches the other device when it made no edit there', async ({
   expect((await state(phone)).stops).toEqual([]);
 });
 
-test('two devices pushing in the same second lose nothing', async ({ browser }, info) => {
+test('two devices pushing in the same second lose nothing', async ({ makeContext }) => {
   const nas = new FakeNas();
-  const phone = await device(browser, nas, info);
-  const mac = await device(browser, nas, info);
+  const phone = await device(makeContext, nas);
+  const mac = await device(makeContext, nas);
   await seedTrip(phone);
   await sync(phone);
   await sync(mac);
@@ -179,10 +175,10 @@ test('two devices pushing in the same second lose nothing', async ({ browser }, 
   }
 });
 
-test('idle syncs write nothing and push nothing', async ({ browser }, info) => {
+test('idle syncs write nothing and push nothing', async ({ makeContext }) => {
   const nas = new FakeNas();
-  const phone = await device(browser, nas, info);
-  const mac = await device(browser, nas, info);
+  const phone = await device(makeContext, nas);
+  const mac = await device(makeContext, nas);
   await seedTrip(phone);
   await sync(phone);
   await sync(mac);
@@ -205,9 +201,9 @@ test('idle syncs write nothing and push nothing', async ({ browser }, info) => {
   expect(writes + (await phone.evaluate(() => (window as any).writes))).toBe(0);
 });
 
-test('a malformed or unreadable NAS copy changes and pushes nothing', async ({ browser }, info) => {
+test('a malformed or unreadable NAS copy changes and pushes nothing', async ({ makeContext }) => {
   const nas = new FakeNas();
-  const phone = await device(browser, nas, info);
+  const phone = await device(makeContext, nas);
   await seedTrip(phone);
   for (const bad of [
     { status: 200, body: '{"app":"systema","version":1,"trips":"oops"}' },
@@ -223,13 +219,9 @@ test('a malformed or unreadable NAS copy changes and pushes nothing', async ({ b
   expect((await state(phone)).trips).toHaveLength(1);
 });
 
-test('a photo upload failing midway pushes no snapshot, then resumes', async ({
-  browser,
-  browserName,
-}, info) => {
-  test.skip(!blobsWork(browserName), BLOB_SKIP);
+test('a photo upload failing midway pushes no snapshot, then resumes', async ({ makeContext }) => {
   const nas = new FakeNas();
-  const phone = await device(browser, nas, info);
+  const phone = await device(makeContext, nas);
   const { trip } = await seedTrip(phone);
   await app(
     phone,
@@ -251,11 +243,10 @@ test('a photo upload failing midway pushes no snapshot, then resumes', async ({
   expect(nas.latest().photosMeta).toHaveLength(5);
 });
 
-test('150 photos sync to a second device', async ({ browser, browserName }, info) => {
-  test.skip(!blobsWork(browserName), BLOB_SKIP);
+test('150 photos sync to a second device', async ({ makeContext }) => {
   test.setTimeout(120_000);
   const nas = new FakeNas();
-  const phone = await device(browser, nas, info);
+  const phone = await device(makeContext, nas);
   const { trip } = await seedTrip(phone);
   await app(
     phone,
@@ -269,7 +260,7 @@ test('150 photos sync to a second device', async ({ browser, browserName }, info
     trip,
   );
   expect((await sync(phone)).ok).toBe(true);
-  const mac = await device(browser, nas, info);
+  const mac = await device(makeContext, nas);
   expect((await sync(mac)).message).toContain('150 photos downloaded');
   expect((await state(mac)).photos).toHaveLength(150);
   const bytes = await app(mac, async (m) =>
@@ -278,14 +269,10 @@ test('150 photos sync to a second device', async ({ browser, browserName }, info
   expect(bytes).toContain('photo 149');
 });
 
-test('a deleted photo stays deleted on the other device', async ({
-  browser,
-  browserName,
-}, info) => {
-  test.skip(!blobsWork(browserName), BLOB_SKIP);
+test('a deleted photo stays deleted on the other device', async ({ makeContext }) => {
   const nas = new FakeNas();
-  const phone = await device(browser, nas, info);
-  const mac = await device(browser, nas, info);
+  const phone = await device(makeContext, nas);
+  const mac = await device(makeContext, nas);
   const { trip } = await seedTrip(phone);
   const photo = await app(
     phone,
@@ -303,11 +290,11 @@ test('a deleted photo stays deleted on the other device', async ({
 });
 
 test('a failure while applying a merge leaves the device and the NAS untouched', async ({
-  browser,
-}, info) => {
+  makeContext,
+}) => {
   const nas = new FakeNas();
-  const phone = await device(browser, nas, info);
-  const mac = await device(browser, nas, info);
+  const phone = await device(makeContext, nas);
+  const mac = await device(makeContext, nas);
   const { trip } = await seedTrip(phone);
   await app(phone, (m, id) => m.addStop(id, 'Second stop'), trip);
   await sync(phone);
@@ -325,10 +312,10 @@ test('a failure while applying a merge leaves the device and the NAS untouched',
 });
 
 test('first sync after updating adopts its own last push as the base (no false conflicts)', async ({
-  browser,
-}, info) => {
+  makeContext,
+}) => {
   const nas = new FakeNas();
-  const phone = await device(browser, nas, info);
+  const phone = await device(makeContext, nas);
   const { trip } = await seedTrip(phone);
   // Simulate the old add-only version: a lineage-less snapshot it pushed itself.
   const legacy = await app(phone, async (m) => {
@@ -344,10 +331,10 @@ test('first sync after updating adopts its own last push as the base (no false c
 });
 
 test('first sync against an unrelated old snapshot unions and records real differences', async ({
-  browser,
-}, info) => {
+  makeContext,
+}) => {
   const nas = new FakeNas();
-  const phone = await device(browser, nas, info);
+  const phone = await device(makeContext, nas);
   const { trip } = await seedTrip(phone);
   const legacy = await app(phone, (m) => m.buildDataBackup());
   legacy.trips[0].planText = 'Older plan from another device';

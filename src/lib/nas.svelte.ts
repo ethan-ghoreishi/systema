@@ -221,9 +221,9 @@ class NasBackup {
   private async post(kind: string, extra: string, body: BodyInit): Promise<void> {
     const res = await fetch(this.endpoint(kind, extra), {
       method: 'POST',
-      ...(typeof body === 'string'
-        ? { headers: { 'Content-Type': 'text/plain;charset=utf-8' } }
-        : {}),
+      // A CORS-simple type: no preflight round trip per upload. The receiver
+      // reads the raw body either way.
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body,
     });
     const json = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
@@ -242,7 +242,9 @@ class NasBackup {
         : p.blob.type.includes('webp')
           ? 'webp'
           : 'jpg';
-      await this.post('photo', `&id=${p.id}&ext=${ext}`, p.blob);
+      // Bytes, not the stored Blob: IndexedDB-backed Blobs have uploaded empty
+      // in WebKit. One photo in memory at a time.
+      await this.post('photo', `&id=${p.id}&ext=${ext}`, await p.blob.arrayBuffer());
       await db.photos.update(p.id, { backedUp: true });
     }
     return ids.length;

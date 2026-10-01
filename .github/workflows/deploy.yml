@@ -38,11 +38,8 @@ jobs:
       - run: npm run test
       - run: npm run build
       - run: npx playwright install --with-deps webkit chromium
-      - run: npx playwright test --project=chromium
-      # iPhone engine: reported but not yet a deploy gate. Promote it once a
-      # Linux WebKit run has been seen passing (the Blob round-trip is untested there).
-      - run: npx playwright test --project=mobile-safari
-        continue-on-error: true
+      # Chromium and WebKit (the iPhone's engine), both blocking.
+      - run: npm run test:e2e
 
       - uses: actions/upload-pages-artifact@v3
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'

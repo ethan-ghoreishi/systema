@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 
 // Phase 1 smoke test. Run with `npm run test:e2e` (after `npx playwright install`).
 
