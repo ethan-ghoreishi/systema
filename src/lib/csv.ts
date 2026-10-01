@@ -16,6 +16,19 @@ function csvLine(row: SheetRow): string {
   return row.map(csvCell).join(',');
 }
 
+/** Real expenses still awaiting an FX rate: no GBP amount yet, so left out of the CSV. */
+export function unpricedCount(expenses: Expense[]): number {
+  return realExpenses(expenses).filter((e) => e.fxPending).length;
+}
+
+/** Status-message tail for a CSV download, disclosing any rows left out. */
+export function csvNote(expenses: Expense[]): string {
+  const n = unpricedCount(expenses);
+  return n
+    ? ` ${n} expense(s) awaiting an exchange rate were left out; export again once they're priced.`
+    : '';
+}
+
 /** One trip's rows in sheet order, closed by its subtotal row. */
 export function tripCsvRows(expenses: Expense[]): SheetRow[] {
   const real = realExpenses(expenses).filter((e) => !e.fxPending);

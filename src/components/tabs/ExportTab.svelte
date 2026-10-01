@@ -1,18 +1,10 @@
 <script lang="ts">
   import { liveQuery } from 'dexie';
   import { db, type Trip } from '../../lib/db';
-  import {
-    buildTripPack,
-    buildJournalingPrompt,
-    buildMemoryPrompt,
-    buildBackup,
-    importBackup,
-  } from '../../lib/export';
-  import { buildTripCsv } from '../../lib/csv';
+  import { buildTripPack, buildJournalingPrompt, buildMemoryPrompt } from '../../lib/export';
+  import { buildTripCsv, csvNote } from '../../lib/csv';
   import { tripDisplayName } from '../../lib/trip-shape';
   import { copyText, downloadText } from '../../lib/download';
-  import { settingsStore } from '../../lib/settings.svelte';
-  import { todayIso } from '../../lib/sheet';
   import { updateTrip } from '../../lib/trips';
 
   let { trip }: { trip: Trip } = $props();
@@ -38,7 +30,6 @@
   const prompt = $derived(buildJournalingPrompt(pack));
 
   let status = $state('');
-  let busy = $state(false);
 
   // Journal paste-back: keeps the finished journal with the trip (Plan tab
   // grows a Plan | Journal toggle once saved).
@@ -52,8 +43,20 @@
   });
 
   async function saveJournal() {
-    await updateTrip(trip.id, { journalText: journalDraft });
-    status = journalDraft.trim() ? 'Journal saved — view it on the Plan tab.' : 'Journal cleared.';
+    if (
+      !journalDraft.trim() &&
+      (trip.journalText ?? '').trim() &&
+      !confirm('Clear the saved journal for this trip? This also clears it on your synced devices.')
+    )
+      return;
+    try {
+      await updateTrip(trip.id, { journalText: journalDraft });
+      status = journalDraft.trim()
+        ? 'Journal saved — view it on the Plan tab.'
+        : 'Journal cleared.';
+    } catch (err) {
+      status = `Journal not saved: ${err instanceof Error ? err.message : String(err)}. Copy your text before leaving.`;
+    }
   }
 
   function slug(): string {
@@ -86,38 +89,7 @@
 
   function downloadCsv() {
     downloadText(`${slug()}-expenses.csv`, buildTripCsv(expenses), 'text/csv');
-    status = 'CSV downloaded — sheet column format, subtotal row included.';
-  }
-
-  async function downloadBackup() {
-    busy = true;
-    status = 'Building backup…';
-    try {
-      const backup = await buildBackup();
-      downloadText(`systema-backup-${todayIso()}.json`, JSON.stringify(backup), 'application/json');
-      status = 'Backup downloaded.';
-    } finally {
-      busy = false;
-    }
-  }
-
-  async function onImport(e: Event) {
-    const input = e.currentTarget as HTMLInputElement;
-    const file = input.files?.[0];
-    input.value = '';
-    if (!file) return;
-    busy = true;
-    status = 'Importing…';
-    try {
-      const data = JSON.parse(await file.text());
-      const r = await importBackup(data);
-      await settingsStore.load();
-      status = `Imported ${r.trips} trip(s), ${r.stops} stop(s), ${r.expenses} expense(s), ${r.photos} photo(s).`;
-    } catch (err) {
-      status = `Import failed: ${err instanceof Error ? err.message : String(err)}`;
-    } finally {
-      busy = false;
-    }
+    status = `CSV downloaded — sheet column format, subtotal row included.${csvNote(expenses)}`;
   }
 </script>
 
@@ -164,26 +136,10 @@
     <button class="btn btn--primary" onclick={saveJournal}>Save journal</button>
   </div>
 
-  <div class="card">
-    <h2 class="section-title">Backup &amp; transfer</h2>
-    <p class="hint">
-      A full JSON backup of all your data. Use it to move trips between devices — build the plan on
-      your Mac, then import on the phone you'll travel with.
-    </p>
-    <button class="btn btn--ghost" onclick={downloadBackup} disabled={busy}>
-      Download backup (JSON)
-    </button>
-    <label class="btn btn--ghost" class:btn--disabled={busy}>
-      Import backup (JSON)
-      <input
-        type="file"
-        accept="application/json,.json"
-        hidden
-        onchange={onImport}
-        disabled={busy}
-      />
-    </label>
-  </div>
+  <p class="hint">
+    Full backups, restore and NAS sync between your devices live in
+    <a href="#/settings">Settings</a>.
+  </p>
 
   {#if status}<p class="hint hint--ok">{status}</p>{/if}
 </div>

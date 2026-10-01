@@ -54,8 +54,10 @@
   async function removeTrip() {
     if (
       confirm(
-        'Delete this trip and all its cities, stops, photos and expenses from this device? ' +
-          'This cannot be undone. ' +
+        'Delete this trip and all its cities, stops, photos and expenses? ' +
+          'It is also removed from your other devices when they next sync. ' +
+          'Only a backup file, or an older snapshot from the NAS share, can bring it back ' +
+          '(Settings → Restore from a backup file). ' +
           'Tip: past trips can be kept instead by setting Status to Done.',
       )
     ) {
@@ -172,7 +174,14 @@
                 <button
                   class="icon-btn icon-btn--sm"
                   aria-label="Remove leg"
-                  onclick={() => deleteCity(c.id)}
+                  onclick={() => {
+                    if (
+                      confirm(
+                        `Remove the ${c.name || 'unnamed'} leg? Its arrival, departure and overnight details go with it.`,
+                      )
+                    )
+                      void deleteCity(c.id);
+                  }}
                 >
                   <Icon name="trash" size={18} />
                 </button>

@@ -2,6 +2,7 @@ import { db, type Expense, type Trip } from './db';
 import { presetByType } from './presets';
 import { newId } from './ids';
 import { getRateForDate } from './fx';
+import { deletePhotosWhere } from './photos';
 
 /**
  * Expense mutations + pure summaries. Transaction numbers are derived from row
@@ -44,8 +45,8 @@ export async function updateExpense(id: string, patch: Partial<Expense>): Promis
 }
 
 export async function deleteExpense(id: string): Promise<void> {
-  await db.transaction('rw', db.expenses, db.photos, async () => {
-    await db.photos.where('expenseId').equals(id).delete();
+  await db.transaction('rw', db.expenses, db.photos, db.kv, async () => {
+    await deletePhotosWhere('expenseId', id);
     await db.expenses.delete(id);
   });
 }
@@ -81,6 +82,20 @@ export async function seedSkeleton(trip: Trip): Promise<number> {
 
   await db.expenses.bulkAdd(rows);
   return rows.length;
+}
+
+/**
+ * Notes carrying exactly one auto FX note, for the rate actually used (none
+ * when `rate` is null). Re-pricing an edited expense replaces the old note
+ * instead of stacking another one into the sheet's Notes column.
+ */
+export function withFxNote(notes: string, currency: string, rate: number | null): string {
+  const parts = notes
+    .split(' · ')
+    .map((p) => p.trim())
+    .filter((p) => p && !/^FX: 1 [A-Z]{3} = £\S+$/.test(p));
+  if (rate != null) parts.push(`FX: 1 ${currency} = £${rate}`);
+  return parts.join(' · ');
 }
 
 function round2(n: number): number {
@@ -131,14 +146,24 @@ export async function resolvePendingFx(tripId?: string): Promise<number> {
   for (const e of pending) {
     const rate = await getRateForDate(e.currency, e.date);
     if (rate == null) continue;
-    const fxNote = `FX: 1 ${e.currency} = £${rate}`;
-    await db.expenses.update(e.id, {
-      amountGBP: round2(e.amountLocal * rate),
-      fxRate: rate,
-      fxPending: false,
-      notes: e.notes.trim() ? `${e.notes.trim()} · ${fxNote}` : fxNote,
+    await db.transaction('rw', db.expenses, async () => {
+      const current = await db.expenses.get(e.id);
+      if (
+        !current?.fxPending ||
+        current.skeleton ||
+        current.currency !== e.currency ||
+        current.date !== e.date ||
+        current.amountLocal !== e.amountLocal
+      )
+        return;
+      await db.expenses.update(e.id, {
+        amountGBP: round2(current.amountLocal * rate),
+        fxRate: rate,
+        fxPending: false,
+        notes: withFxNote(current.notes, current.currency, rate),
+      });
+      resolved += 1;
     });
-    resolved += 1;
   }
   return resolved;
 }

@@ -21,7 +21,13 @@ export default defineConfig(({ command, mode }) => {
     // fall back to Vite's default otherwise.
     server: { port: process.env.PORT ? Number(process.env.PORT) : 5173 },
     define: {
-      __APP_VERSION__: JSON.stringify(pkg.version),
+      // Deployed builds carry their commit, so the live version can be verified.
+      __APP_VERSION__: JSON.stringify(
+        process.env.APP_VERSION ??
+          (process.env.GITHUB_SHA
+            ? `${pkg.version}+${process.env.GITHUB_SHA.slice(0, 7)}`
+            : pkg.version),
+      ),
     },
     plugins: [
       svelte(),
@@ -33,9 +39,9 @@ export default defineConfig(({ command, mode }) => {
             VitePWA({
               // 'autoUpdate': a new build activates itself and the app reloads
               // to it, so fixes always reach the installed PWA (with 'prompt',
-              // a missed toast froze the phone on a stale version). Reloads only
-              // happen when online and a new version exists; IndexedDB data is
-              // untouched.
+              // a missed toast froze the phone on a stale version). The reload
+              // waits for the Home screen (see UpdateToast.svelte); IndexedDB
+              // data is untouched.
               registerType: 'autoUpdate',
               injectRegister: 'auto',
               // Generates favicon, apple-touch-icon and maskable PWA icons from

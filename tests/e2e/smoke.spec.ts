@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 
 // Phase 1 smoke test. Run with `npm run test:e2e` (after `npx playwright install`).
 
@@ -13,17 +13,19 @@ test('a web manifest is linked', async ({ page }) => {
   await expect(page.locator('link[rel="manifest"]')).toHaveCount(1);
 });
 
-test('settings is reachable and shows capture sync', async ({ page }) => {
+test('settings is reachable and shows backup and storage controls', async ({ page }) => {
   await page.goto('/');
   await page.getByLabel('Settings').click();
   await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
-  await expect(page.getByText('Capture sync')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Backup', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'NAS sync' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Download full backup (.zip)' })).toBeVisible();
 });
 
-test('creating a Weekend Getaway lands on trip edit with cities', async ({ page }) => {
+test('creating a City break lands on trip edit with legs', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('link', { name: /new trip/i }).click();
-  await page.getByRole('button', { name: /Weekend Getaway/i }).click();
+  await page.getByRole('button', { name: /City break/i }).click();
   await expect(page.getByRole('heading', { name: 'Edit trip' })).toBeVisible();
-  await expect(page.getByText('Cities')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Legs' })).toBeVisible();
 });

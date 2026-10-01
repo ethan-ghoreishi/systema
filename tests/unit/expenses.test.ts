@@ -5,6 +5,7 @@ import {
   categorySummary,
   looksAnomalous,
   assignTransactionNumbers,
+  withFxNote,
 } from '../../src/lib/expenses';
 import type { Expense } from '../../src/lib/db';
 
@@ -84,5 +85,19 @@ describe('looksAnomalous', () => {
     expect(
       looksAnomalous(exp({ currency: 'CZK', amountLocal: 100, amountGBP: 3.4, fxRate: 0.034 })),
     ).toBe(false);
+  });
+});
+
+describe('withFxNote', () => {
+  it('keeps one FX note for the rate used and preserves the rest', () => {
+    const priced = withFxNote('2x tickets (€4.5 each)', 'EUR', 0.85);
+    expect(priced).toBe('2x tickets (€4.5 each) · FX: 1 EUR = £0.85');
+    // Re-pricing after an edit replaces, never stacks.
+    expect(withFxNote(priced, 'EUR', 0.86)).toBe('2x tickets (€4.5 each) · FX: 1 EUR = £0.86');
+    // A manual £ override or a switch to GBP drops the stale note.
+    expect(withFxNote(`FX: 1 CZK = £0.034 · ${priced}`, 'GBP', null)).toBe(
+      '2x tickets (€4.5 each)',
+    );
+    expect(withFxNote('', 'EUR', 0.85)).toBe('FX: 1 EUR = £0.85');
   });
 });

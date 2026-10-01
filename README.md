@@ -18,25 +18,26 @@ subscription.**
   done in your own Claude subscription. The app calls **no** paid API.
 - **No application server** — the app is the ledger. Expenses live in IndexedDB
   and export to CSV in your master sheet's column format when you reconcile.
-  Optional: opportunistic backup to a Synology NAS you host (a token-gated PHP
-  receiver); no third-party accounts, no API keys.
+  Optional: sync and backup through a Synology NAS you host (a token-gated PHP
+  receiver) — the iPhone and the Mac stay in step; no third-party accounts, no
+  API keys.
 
 ## Stack
 
-| Concern       | Choice                                                    |
-| ------------- | --------------------------------------------------------- |
-| Framework     | Svelte 5 (runes)                                          |
-| Build / dev   | Vite                                                      |
-| Language      | TypeScript                                                |
-| PWA / offline | `vite-plugin-pwa` (Workbox)                               |
-| Local store   | Dexie.js over IndexedDB                                   |
-| Plan render   | `marked` + `DOMPurify` (offline Markdown, sanitised)      |
-| Routing       | Tiny hash router (no server rewrites; offline-safe)       |
-| FX            | Frankfurter (ECB, no key), cached locally (Phase 2)       |
-| Backup        | Optional opportunistic push to a self-hosted Synology NAS |
-| Tests         | Vitest (unit) + Playwright (e2e smoke)                    |
-| Styling       | Hand-rolled CSS design tokens                             |
-| Host          | GitHub Pages (Cloudflare Pages is a drop-in alternative)  |
+| Concern       | Choice                                                   |
+| ------------- | -------------------------------------------------------- |
+| Framework     | Svelte 5 (runes)                                         |
+| Build / dev   | Vite                                                     |
+| Language      | TypeScript                                               |
+| PWA / offline | `vite-plugin-pwa` (Workbox)                              |
+| Local store   | Dexie.js over IndexedDB                                  |
+| Plan render   | `marked` + `DOMPurify` (offline Markdown, sanitised)     |
+| Routing       | Tiny hash router (no server rewrites; offline-safe)      |
+| FX            | Frankfurter (ECB, no key), cached locally (Phase 2)      |
+| Backup / sync | Self-hosted NAS (3-way merge) + ZIP backup files         |
+| Tests         | Vitest (unit) + Playwright (Chromium + WebKit e2e)       |
+| Styling       | Hand-rolled CSS design tokens                            |
+| Host          | GitHub Pages (Cloudflare Pages is a drop-in alternative) |
 
 ## App shape
 
@@ -78,10 +79,11 @@ subscription.**
      when online.
   4. **Export** — journaling prompt prefilled with the trip pack (photo
      placeholders included), a **reconstruction prompt** for pre-app trips
-     (expense trail as memory scaffold), journal paste-back, per-trip CSV, and
-     full JSON backup/import.
-- **Settings** (gear on Home) — NAS backup receiver URL/token, on-device data
-  (restore / import / paste / download), and storage/install status.
+     (expense trail as memory scaffold), journal paste-back and per-trip CSV.
+- **Settings** (gear on Home) — backup health (last sync, changes not yet on
+  the NAS, photos uploaded, last backup file), Sync now, Check NAS copy, full
+  backup download (.zip), restore from a file (checked and previewed first),
+  edits made on two devices to review, NAS sync setup, storage/install status.
 
 ## Develop
 
@@ -149,7 +151,7 @@ src/
     NewTrip.svelte         Starting-point (template) picker
     Trip.svelte            Four-tab trip frame
     TripEdit.svelte        Legs editor + details + cover
-    Settings.svelte        NAS backup + on-device data + storage/install
+    Settings.svelte        Backup health, restore, conflicts, NAS setup, storage
     NotFound.svelte
   lib/
     db.ts                  Dexie schema (Trip/City/Stop/Expense/Photo)
@@ -173,16 +175,22 @@ src/
     vocab.ts               Expense controlled vocabularies
     fx.ts                  Frankfurter FX + local cache
     stops.ts               Stop + checklist mutations, plan extraction
-    photos.ts              Photo blobs (add / delete / offload)
+    photos.ts              Photo blobs (add / delete / download)
     prompt.ts              Research-prompt builder (pure text assembly)
-    export.ts              Trip pack + JSON backup/import
-    nas.svelte.ts          NAS backup vault (push snapshots/photos, restore)
+    export.ts              Trip pack, ZIP backup, add-only restore (+ dry run)
+    zip.ts                 Minimal store-only ZIP (CRC-checked, ZIP64 when needed)
+    sync.ts                Pure three-way merge for device-to-device sync
+    conflicts.ts           Edits made on two devices: list + resolve
+    backup-validation.ts   Backup/snapshot shape checks before any write
+    nas.svelte.ts          NAS sync (photos first, merge, push), health, check
     download.ts            Clipboard + file download helpers
 nas/systema-backup.php     Token-gated NAS receiver (self-hosted)
 docs/nas-backup-setup.md   Synology setup + Tailscale/CGNAT notes
 tests/
   unit/                    Vitest
-  e2e/                     Playwright
+  e2e/                     Playwright: two-device sync (fake NAS + real PHP),
+                           backups, data safety; Chromium + WebKit
+  pwa/                     Update-while-editing test on two production builds
 ```
 
 ## Security & cost guarantees
@@ -192,14 +200,23 @@ tests/
   reconcile. Nothing is sent to a third party.
 - The app stores only the NAS receiver URL and its token, on this device. No
   other secrets, no accounts, no API keys.
-- **Moving between devices:** Restore from NAS (below), or carry a trip across
-  via **Export → JSON** (backup + import). Imports merge by id — safe to re-run.
-- **NAS backup vault:** optional, opportunistic push of data snapshots and
-  photos to a Synology at home — token-gated PHP receiver that writes only into
-  its own folder. Any device can also **Restore from NAS** (Settings → Data):
-  newest snapshot plus missing photos, so a fresh install picks everything up.
-  File-import and clipboard-paste restores work with no NAS setup at all. See
-  [`docs/nas-backup-setup.md`](docs/nas-backup-setup.md).
+- **Sync between devices (iPhone + Mac):** each device syncs through the NAS
+  and keeps the last snapshot it agreed on, so changes merge three ways
+  instead of "last device wins": edits to different things combine; the same
+  thing edited on both keeps the newer edit and lists the other in Settings to
+  choose from; a deletion applies unless the other device edited the record.
+  Photos upload before any snapshot that lists them, never leave because a
+  snapshot lacks them (only an explicit delete does), and download one at a
+  time. A new, reset or empty device merges before it pushes, so it can't
+  replace the NAS copy; an idle sync writes and pushes nothing.
+- **Backup files:** Settings → Download full backup gives a ZIP — the data
+  plus every photo as a normal image file — built without holding the photos in
+  memory. Restore checks every checksum and shows what would be added before
+  writing; it only ever adds what the device lacks. Older .json backups and NAS
+  snapshot files restore too (a snapshot's photos are fetched from the NAS).
+- **Check NAS copy** verifies the NAS snapshot and that every photo it lists is
+  on the NAS, and says what a sync would change — without changing anything.
+  See [`docs/nas-backup-setup.md`](docs/nas-backup-setup.md).
 - No paid hosting, no metered AI, no paid backend. If a feature would need
   ongoing payment, it isn't built — a free alternative is used or it's flagged.
 
@@ -212,7 +229,7 @@ tests/
       helper, skeleton rows, running total + per-category summary). Non-GBP rows
       price themselves from the day's ECB rate when online.
 - [x] **Phase 3** — Stops tab (ordered tickable list, notes, checklist, local
-      photos with offload, reorder) + deterministic "split plan by headings".
+      photos, reorder) + deterministic "split plan by headings".
 - [x] **Phase 4** — Export tab (trip-pack Markdown + prefilled journaling prompt;
       full JSON backup and import for device transfer).
 - [x] **Phase 5** — PWA polish: prompt-style update + offline-ready toast,

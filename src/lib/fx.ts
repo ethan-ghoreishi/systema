@@ -37,7 +37,7 @@ export async function getRateForDate(code: string, date: string): Promise<number
     if (!res.ok) return null;
     const data = (await res.json()) as { rates?: Record<string, number> };
     const rate = data.rates?.GBP;
-    return typeof rate === 'number' && Number.isFinite(rate) ? rate : null;
+    return typeof rate === 'number' && Number.isFinite(rate) && rate > 0 ? rate : null;
   } catch {
     return null;
   }
@@ -48,13 +48,17 @@ export async function getRateForDate(code: string, date: string): Promise<number
  * network, then any stale cache. Returns null if unavailable (offline with no
  * cache, or an ECB-unsupported currency).
  */
-export async function getRate(code: string): Promise<FxResult | null> {
+export async function getRate(code: string, requestedDate = todayIso()): Promise<FxResult | null> {
   const c = code.trim().toUpperCase();
   if (!c || c === 'GBP') {
     return { rate: 1, date: todayIso(), cached: true, stale: false };
   }
 
   const today = todayIso();
+  if (requestedDate && requestedDate !== today) {
+    const rate = await getRateForDate(c, requestedDate);
+    return rate == null ? null : { rate, date: requestedDate, cached: false, stale: false };
+  }
   const cached = await db.fxRates.get(c);
   if (cached && cached.date === today) {
     return { rate: cached.rate, date: cached.date, cached: true, stale: false };
@@ -66,7 +70,7 @@ export async function getRate(code: string): Promise<FxResult | null> {
       if (res.ok) {
         const data = (await res.json()) as { date?: string; rates?: Record<string, number> };
         const rate = data.rates?.GBP;
-        if (typeof rate === 'number' && Number.isFinite(rate)) {
+        if (typeof rate === 'number' && Number.isFinite(rate) && rate > 0) {
           const date = data.date ?? today;
           await db.fxRates.put({ code: c, rate, date, fetchedAt: Date.now() });
           return { rate, date, cached: false, stale: false };

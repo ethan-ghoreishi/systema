@@ -8,6 +8,7 @@ export default ts.config(
     ignores: [
       'dist/',
       'dev-dist/',
+      'dist-pwa/',
       'coverage/',
       'playwright-report/',
       'test-results/',

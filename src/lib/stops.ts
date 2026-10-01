@@ -1,6 +1,7 @@
 import { db, type ChecklistItem, type City, type Stop } from './db';
 import { newId } from './ids';
 import { extractSections, type Section } from './headings';
+import { deletePhotosWhere } from './photos';
 
 /** Stop + checklist mutations over Dexie. */
 
@@ -31,8 +32,8 @@ export async function updateStop(id: string, patch: Partial<Stop>): Promise<void
 }
 
 export async function deleteStop(id: string): Promise<void> {
-  await db.transaction('rw', db.stops, db.photos, async () => {
-    await db.photos.where('stopId').equals(id).delete();
+  await db.transaction('rw', db.stops, db.photos, db.kv, async () => {
+    await deletePhotosWhere('stopId', id);
     await db.stops.delete(id);
   });
 }
@@ -63,16 +64,24 @@ export async function addChecklistItem(stop: Stop, text: string): Promise<void> 
   const t = text.trim();
   if (!t) return;
   const item: ChecklistItem = { id: newId(), text: t, done: false };
-  await db.stops.update(stop.id, { checklist: [...stop.checklist, item] });
+  // Checklist writes mutate the stored row, not the caller's possibly stale
+  // copy, so quick successive taps can't undo each other.
+  await db.stops.update(stop.id, (s) => {
+    s.checklist.push(item);
+  });
 }
 
 export async function toggleChecklistItem(stop: Stop, itemId: string): Promise<void> {
-  const checklist = stop.checklist.map((c) => (c.id === itemId ? { ...c, done: !c.done } : c));
-  await db.stops.update(stop.id, { checklist });
+  await db.stops.update(stop.id, (s) => {
+    const item = s.checklist.find((c) => c.id === itemId);
+    if (item) item.done = !item.done;
+  });
 }
 
 export async function deleteChecklistItem(stop: Stop, itemId: string): Promise<void> {
-  await db.stops.update(stop.id, { checklist: stop.checklist.filter((c) => c.id !== itemId) });
+  await db.stops.update(stop.id, (s) => {
+    s.checklist = s.checklist.filter((c) => c.id !== itemId);
+  });
 }
 
 export interface Progress {

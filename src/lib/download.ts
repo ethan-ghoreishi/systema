@@ -10,7 +10,10 @@ export async function copyText(text: string): Promise<boolean> {
 }
 
 export function downloadText(filename: string, text: string, mime = 'text/plain'): void {
-  const blob = new Blob([text], { type: `${mime};charset=utf-8` });
+  downloadBlob(filename, new Blob([text], { type: `${mime};charset=utf-8` }));
+}
+
+export function downloadBlob(filename: string, blob: Blob): void {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -18,5 +21,6 @@ export function downloadText(filename: string, text: string, mime = 'text/plain'
   document.body.appendChild(a);
   a.click();
   a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  // Generous: a large backup may still be streaming to disk.
+  setTimeout(() => URL.revokeObjectURL(url), 120_000);
 }

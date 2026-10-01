@@ -1844,3 +1844,31 @@ textarea.field {
   font-size: 14px;
   font-weight: 500;
 }
+
+/* ---------- Edit conflicts ---------- */
+
+.conflict {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding-top: var(--s3);
+  border-top: 1px solid var(--hairline);
+}
+
+.conflict-label {
+  font-weight: 600;
+}
+
+.conflict .cluster {
+  flex-wrap: wrap;
+}
+
+.home-notice {
+  display: block;
+  text-align: center;
+  font-weight: 600;
+}
+
+.cluster--wrap {
+  flex-wrap: wrap;
+}

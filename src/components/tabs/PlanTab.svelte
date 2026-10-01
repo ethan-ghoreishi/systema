@@ -40,29 +40,52 @@
     return () => clearInterval(timer);
   });
   const target = $derived(trip.returnFlightAt ? new Date(trip.returnFlightAt).getTime() : null);
+  // Leg times are each city's local wall-clock time; show the target as written.
+  const departs = $derived.by(() => {
+    const m = trip.returnFlightAt.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/);
+    if (!m) return '';
+    const day = new Date(`${m[1]}T12:00:00`).toLocaleDateString('en-GB', {
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short',
+    });
+    return `${day}, ${m[2]} local time`;
+  });
   const countdown = $derived(
     target && !Number.isNaN(target) ? computeCountdown(target, now) : null,
   );
 
-  let saveTimer: ReturnType<typeof setTimeout> | null = null;
-  function scheduleSave() {
-    if (saveTimer) clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => void updateTrip(trip.id, { planText: draft }), 400);
+  let saveError = $state('');
+  async function scheduleSave() {
+    try {
+      await updateTrip(trip.id, { planText: draft });
+      saveError = '';
+      return true;
+    } catch (err) {
+      saveError = `Not saved: ${err instanceof Error ? err.message : String(err)}. Copy your text before leaving.`;
+      return false;
+    }
+  }
+
+  // The text when this edit began: autosave is per keystroke, so this is the
+  // way back from an accidental select-all-and-paste.
+  let original = $state('');
+  async function undoEdits() {
+    if (confirm('Undo every change made since you started editing this plan?')) {
+      draft = original;
+      await scheduleSave();
+    }
   }
 
   function startEdit() {
+    original = trip.planText;
     draft = trip.planText;
     view = 'plan';
     editing = true;
   }
 
   async function done() {
-    if (saveTimer) {
-      clearTimeout(saveTimer);
-      saveTimer = null;
-    }
-    await updateTrip(trip.id, { planText: draft });
-    editing = false;
+    if (await scheduleSave()) editing = false;
   }
 
   function scrollTo(slug: string) {
@@ -75,6 +98,7 @@
     <div class="countdown" class:countdown--expired={countdown.expired}>
       <span class="countdown-label">{countdown.expired ? 'Return flight' : 'Departure in'}</span>
       <span class="countdown-value">{countdown.expired ? 'Departed' : countdown.text}</span>
+      {#if departs}<span class="countdown-label">{departs}</span>{/if}
     </div>
   {/if}
 
@@ -87,8 +111,12 @@
       placeholder="Paste the plan you generated in Claude…"
       bind:value={draft}
       oninput={scheduleSave}></textarea>
+    {#if saveError}<p role="alert" class="hint hint--warn">{saveError}</p>{/if}
     <div class="save-bar">
       <button class="btn btn--primary" onclick={done}>Done</button>
+      {#if draft !== original}
+        <button class="btn btn--ghost" onclick={undoEdits}>Undo changes</button>
+      {/if}
       <span class="hint">Saved automatically as you type.</span>
     </div>
   {:else}
