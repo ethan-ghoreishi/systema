@@ -6,6 +6,7 @@ import { formatSheetDate } from './sheet';
 import { realExpenses, tripTotalGBP, categorySummary } from './expenses';
 import { tripDisplayName, tripShape } from './trip-shape';
 import { formatGBP } from './money';
+import { isLocalKey, same, type SyncRecords } from './sync';
 
 /**
  * Trip pack (Markdown) + the prefilled journaling prompt, and a full JSON
@@ -181,11 +182,36 @@ export interface Backup {
   stops: Stop[];
   expenses: Expense[];
   fxRates: FxRate[];
+  /** Synced key/value rows (edit conflicts, photo tombstones). Never device settings. */
   settings: { key: string; value: unknown }[];
   photos: BackupPhoto[];
   /** Photo records without blobs (data snapshots) — lets a restoring device
    *  know which photo files to fetch from the NAS and how to re-link them. */
   photosMeta?: Omit<Photo, 'blob'>[];
+  /** NAS sync lineage (absent on file backups and older snapshots). */
+  sync?: SyncMeta;
+}
+
+export interface SyncMeta {
+  /** This snapshot's id. */
+  id: string;
+  device: string;
+  deviceName: string;
+  at: number;
+  /** Ids of the snapshots this one was merged from, newest last (capped). */
+  history: string[];
+}
+
+/** The syncable record sets of a backup or snapshot. */
+export function toRecords(b: Backup): SyncRecords {
+  return {
+    trips: b.trips,
+    cities: b.cities,
+    stops: b.stops,
+    expenses: b.expenses,
+    kv: b.settings.filter((r) => !isLocalKey(r.key)),
+    photosMeta: b.photosMeta ?? b.photos.map((p) => p.meta),
+  };
 }
 
 function blobToDataUrl(blob: Blob): Promise<string> {
@@ -234,7 +260,7 @@ export async function buildBackup(): Promise<Backup> {
     stops,
     expenses,
     fxRates,
-    settings: settings.filter((r) => r.key !== 'settings' && r.key !== 'nasLastDataAt'),
+    settings: settings.filter((r) => !isLocalKey(r.key)),
     photos,
   };
 }
@@ -268,7 +294,7 @@ export async function buildDataBackup(): Promise<Backup> {
     stops,
     expenses,
     fxRates,
-    settings: settings.filter((r) => r.key !== 'settings' && r.key !== 'nasLastDataAt'),
+    settings: settings.filter((r) => !isLocalKey(r.key)),
     photos: [],
     photosMeta: photoRows.map(({ blob: _blob, ...meta }) => meta),
   };
@@ -288,15 +314,6 @@ export function importNote(r: ImportResult): string {
   return r.differing
     ? ` ${r.differing} record(s) on this device differ from the backup and were kept as they are.`
     : '';
-}
-
-/** Key-order-independent JSON, for comparing a stored record with a backup's copy. */
-function canonical(v: unknown): string {
-  return JSON.stringify(v, (_k, x) =>
-    x && typeof x === 'object' && !Array.isArray(x)
-      ? Object.fromEntries(Object.entries(x).sort())
-      : x,
-  );
 }
 
 /** Add missing records only. A stale backup must never replace the device's only copy. */
@@ -337,7 +354,7 @@ export async function importBackup(data: Backup): Promise<ImportResult> {
         const fresh = rows.filter((_, i) => existing[i] === undefined);
         if (compare)
           result.differing += rows.filter(
-            (row, i) => existing[i] && canonical(existing[i]) !== canonical(row),
+            (row, i) => existing[i] && !same(existing[i], row),
           ).length;
         if (fresh.length) await table.bulkAdd(fresh);
         return fresh.length;

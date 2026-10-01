@@ -271,7 +271,7 @@ async function nasBackupRun(page: Page, latest: { status: number; json?: unknown
       nasUrl: 'https://nas.test/systema-backup.php',
       nasToken: 'synthetic',
     };
-    await nasBackup.run();
+    await nasBackup.sync();
     return nasBackup.lastError;
   });
   return { posts, lastError };
@@ -341,7 +341,7 @@ test('a first NAS push goes ahead when the NAS has no snapshot yet', async ({ pa
 test('a first NAS push is withheld when the NAS copy cannot be merged', async ({ page }) => {
   const { posts, lastError } = await nasBackupRun(page, { status: 500 });
   expect(posts).toHaveLength(0);
-  expect(lastError).toContain("Couldn't merge the NAS copy first");
+  expect(lastError).toContain('HTTP 500');
 });
 
 test('quick successive checklist taps from a stale stop copy all stick', async ({ page }) => {

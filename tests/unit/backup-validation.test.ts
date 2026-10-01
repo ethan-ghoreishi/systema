@@ -21,10 +21,6 @@ it('validates backup versions, identities, amounts, photo sources and ownership 
     { ...empty, fxRates: [{ code: 'EUR', rate: 0, date: '2026-09-17', fetchedAt: 0 }] },
     {
       ...empty,
-      cities: [{ id: 'orphan', tripId: 'missing', name: 'Test', currency: 'EUR', order: 0 }],
-    },
-    {
-      ...empty,
       photos: [
         {
           meta: {
@@ -48,6 +44,14 @@ it('validates backup versions, identities, amounts, photo sources and ownership 
     },
   ])
     expect(() => validateBackup(invalid)).toThrow('Invalid or unsupported');
+  // Orphaned or dangling rows are harmless and must not block a restore.
+  expect(() =>
+    validateBackup({
+      ...empty,
+      cities: [{ id: 'orphan', tripId: 'missing', name: 'Test', currency: 'EUR', order: 0 }],
+    }),
+  ).not.toThrow();
+  expect(() => validateBackup({ ...empty, sync: { id: 'x' } })).toThrow('sync lineage');
 });
 
 it('accepts the exact record shape the history importer script emits', () => {

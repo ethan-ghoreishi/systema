@@ -1,5 +1,6 @@
 import { db, type Photo, type PhotoKind } from './db';
 import { newId } from './ids';
+import { TOMBSTONE } from './sync';
 
 /**
  * Photo blobs live in IndexedDB (no cloud cost). Deleting one also drops its
@@ -23,8 +24,24 @@ export async function addPhoto(
   return id;
 }
 
+/**
+ * Delete photos and record a tombstone for each, so the deletion reaches other
+ * devices (sync never infers a photo deletion from absence: it may be the only
+ * copy). Call inside a transaction that includes db.photos and db.kv.
+ */
+export async function deletePhotosWhere(
+  index: 'id' | 'tripId' | 'stopId' | 'expenseId',
+  value: string,
+): Promise<void> {
+  const ids = (await db.photos.where(index).equals(value).primaryKeys()) as string[];
+  if (!ids.length) return;
+  const at = Date.now();
+  await db.kv.bulkPut(ids.map((id) => ({ key: `${TOMBSTONE}${id}`, value: at })));
+  await db.photos.bulkDelete(ids);
+}
+
 export async function deletePhoto(id: string): Promise<void> {
-  await db.photos.delete(id);
+  await db.transaction('rw', db.photos, db.kv, () => deletePhotosWhere('id', id));
 }
 
 /** Trigger a download so the photo can be saved off-device, then deleted here. */

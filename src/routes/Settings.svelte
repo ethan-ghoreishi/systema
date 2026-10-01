@@ -60,8 +60,8 @@
   async function restoreFromNas(): Promise<void> {
     dataBusy = true;
     dataStatus = 'Restoring from NAS…';
-    const r = await nasBackup.restore();
-    dataStatus = r.ok ? r.message : `Restore failed: ${r.message}`;
+    const r = await nasBackup.sync();
+    dataStatus = r.message;
     dataBusy = false;
   }
 
@@ -175,7 +175,7 @@
         </button>
         <button
           class="btn btn--ghost"
-          onclick={() => nasBackup.run().then(() => nasBackup.refreshCounts())}
+          onclick={() => nasBackup.sync()}
           disabled={nasBackup.running || !s.current.nasUrl.trim()}
         >
           {nasBackup.running ? 'Backing up…' : 'Back up now'}

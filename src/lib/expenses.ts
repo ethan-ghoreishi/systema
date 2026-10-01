@@ -2,6 +2,7 @@ import { db, type Expense, type Trip } from './db';
 import { presetByType } from './presets';
 import { newId } from './ids';
 import { getRateForDate } from './fx';
+import { deletePhotosWhere } from './photos';
 
 /**
  * Expense mutations + pure summaries. Transaction numbers are derived from row
@@ -44,8 +45,8 @@ export async function updateExpense(id: string, patch: Partial<Expense>): Promis
 }
 
 export async function deleteExpense(id: string): Promise<void> {
-  await db.transaction('rw', db.expenses, db.photos, async () => {
-    await db.photos.where('expenseId').equals(id).delete();
+  await db.transaction('rw', db.expenses, db.photos, db.kv, async () => {
+    await deletePhotosWhere('expenseId', id);
     await db.expenses.delete(id);
   });
 }

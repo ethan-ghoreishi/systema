@@ -82,6 +82,8 @@ export interface City {
   arrival?: string; // 'YYYY-MM-DDTHH:mm'
   departure?: string; // 'YYYY-MM-DDTHH:mm'
   sleep?: SleepKind;
+  /** Last write (ms). Set automatically; absent on records from older versions. */
+  updatedAt?: number;
 }
 
 export interface ChecklistItem {
@@ -103,6 +105,7 @@ export interface Stop {
   lng?: number;
   order: number;
   createdAt: number;
+  updatedAt?: number;
 }
 
 export type PhotoKind = 'stop' | 'receipt' | 'cover';
@@ -143,6 +146,7 @@ export interface Expense {
   skeleton: boolean; // pre-seeded placeholder row vs. a real entry
   order: number;
   createdAt: number;
+  updatedAt?: number;
 }
 
 export interface FxRate {
@@ -196,3 +200,17 @@ export class SystemaDB extends Dexie {
 }
 
 export const db = new SystemaDB();
+
+// Every user record carries `updatedAt`, so sync can tell which of two
+// conflicting edits is newer. Set on every write unless the writer (e.g. a
+// sync merge) supplies its own.
+for (const table of [db.trips, db.cities, db.stops, db.expenses] as Table<{
+  updatedAt?: number;
+}>[]) {
+  table.hook('creating', (_key, obj) => {
+    obj.updatedAt ??= Date.now();
+  });
+  table.hook('updating', (mods) =>
+    'updatedAt' in (mods as object) ? undefined : { updatedAt: Date.now() },
+  );
+}

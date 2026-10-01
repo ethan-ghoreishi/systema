@@ -31,14 +31,6 @@ function ms(v?: string): number | undefined {
   return Number.isNaN(d.getTime()) ? undefined : d.getTime();
 }
 
-function isoDate(msVal: number): string {
-  const d = new Date(msVal);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
-
 /** Cities in travel order, normalised into legs with parsed times. */
 export function tripLegs(cities: City[]): Leg[] {
   return [...cities]
@@ -64,31 +56,67 @@ export function tripCityNames(cities: City[]): string[] {
   return uniq;
 }
 
-/** Trip start date ('YYYY-MM-DD'): earliest leg arrival, else the stored fallback. */
+/**
+ * Leg times, sorted. They are floating local wall-clock strings
+ * ('YYYY-MM-DDTHH:mm' in each city's own time), which sort chronologically as
+ * text — so derived dates come out the same on every device and time zone.
+ */
+function legTimes(cities: City[], only?: 'departure'): string[] {
+  return cities
+    .flatMap((c) => (only ? [c.departure] : [c.arrival, c.departure]))
+    .filter((v): v is string => !!v && ms(v) != null)
+    .sort();
+}
+
+/** Trip start date ('YYYY-MM-DD'): earliest leg time, else the stored fallback. */
 export function tripStartIso(trip: Trip, cities: City[]): string {
-  const arrivals = tripLegs(cities)
-    .map((l) => l.arrivalMs)
-    .filter((x): x is number => x != null);
-  if (arrivals.length) return isoDate(Math.min(...arrivals));
-  return trip.startDate || '';
+  return legTimes(cities)[0]?.slice(0, 10) ?? (trip.startDate || '');
 }
 
-/** Trip end date ('YYYY-MM-DD'): latest leg departure, else the stored fallback. */
+/** Trip end date ('YYYY-MM-DD'): latest leg time, else the stored fallback. */
 export function tripEndIso(trip: Trip, cities: City[]): string {
-  const departures = tripLegs(cities)
-    .map((l) => l.departureMs)
-    .filter((x): x is number => x != null);
-  if (departures.length) return isoDate(Math.max(...departures));
-  return trip.endDate || trip.startDate || '';
+  return legTimes(cities).at(-1)?.slice(0, 10) ?? (trip.endDate || trip.startDate || '');
 }
 
-/** Countdown target (ms): the last leg departure, else the stored return flight. */
-export function tripDepartureMs(trip: Trip, cities: City[]): number | null {
-  const departures = tripLegs(cities)
-    .map((l) => l.departureMs)
-    .filter((x): x is number => x != null);
-  if (departures.length) return Math.max(...departures);
-  return ms(trip.returnFlightAt) ?? null;
+/** Countdown target: the last leg departure (local wall-clock), else the stored one. */
+export function tripDepartureLocal(trip: Trip, cities: City[]): string {
+  return legTimes(cities, 'departure').at(-1) ?? trip.returnFlightAt;
+}
+
+/**
+ * The stored trip fields that mirror the legs, as a patch of only what changed.
+ * Legacy/imported trips whose legs carry no dates keep their stored dates —
+ * unless `lastDateRemoved`, i.e. this edit cleared the last leg date, in which
+ * case the now-stale dates and countdown are cleared too.
+ */
+export function derivedTripFields(
+  trip: Trip,
+  cities: City[],
+  lastDateRemoved = false,
+): Partial<Trip> {
+  const times = legTimes(cities);
+  const departure = legTimes(cities, 'departure').at(-1);
+  const next: Partial<Trip> = {};
+  if (times.length) {
+    next.startDate = times[0].slice(0, 10);
+    next.endDate = times.at(-1)!.slice(0, 10);
+  } else if (lastDateRemoved) {
+    next.startDate = '';
+    next.endDate = '';
+  }
+  if (departure) next.returnFlightAt = departure;
+  else if (lastDateRemoved) next.returnFlightAt = '';
+  if (cities.some((c) => c.arrival || c.departure || (c.sleep && c.sleep !== 'none'))) {
+    next.accommodation = cities.some((c) => c.sleep === 'hotel');
+  }
+  return Object.fromEntries(
+    Object.entries(next).filter(([k, v]) => trip[k as keyof Trip] !== v),
+  ) as Partial<Trip>;
+}
+
+/** Whether any leg carries an arrival or departure time. */
+export function hasLegDates(cities: City[]): boolean {
+  return legTimes(cities).length > 0;
 }
 
 /** Inclusive day span of the trip (1 for a same-day trip; 0 if no dates at all). */

@@ -1,35 +1,160 @@
-import { db } from './db';
+import type { Transaction } from 'dexie';
+import { db, type Trip } from './db';
+import { newId } from './ids';
 import { settingsStore } from './settings.svelte';
+import { buildDataBackup, toRecords, type Backup } from './export';
+import { validateBackup } from './backup-validation';
 import {
-  buildDataBackup,
-  importBackup,
-  importNote,
-  type Backup,
-  type ImportResult,
-} from './export';
+  CONFLICT,
+  SYNC_TABLES,
+  TOMBSTONE,
+  countDifferences,
+  mergeRecords,
+  same,
+  type FieldConflict,
+  type SyncRecords,
+  type SyncTable,
+} from './sync';
+import { derivedTripFields, tripDisplayName } from './trip-shape';
 
 /**
- * Opportunistic NAS backup — the Hess design, built.
+ * NAS sync — backup and device-to-device continuity through a NAS you host.
  *
- * Whenever the receiver is reachable (home wifi, or anywhere if the NAS has a
- * public hostname), the app pushes:
- *  - a small data snapshot (everything except photo blobs) after any change,
- *    debounced so bursts of edits coalesce into one push;
- *  - each photo exactly once (tracked per photo via `backedUp`), which also
- *    records upload success; this is not a reversible photo-offload system.
+ * Each sync (debounced after any change, on reconnect, on app open, or on
+ * demand):
+ *  1. uploads photos the NAS doesn't have yet — before any snapshot that
+ *     references them, so a snapshot never points at a missing file;
+ *  2. reads the NAS's newest snapshot and downloads photos this device lacks;
+ *  3. three-way merges it with this device's data against the last snapshot
+ *     both agreed on (see sync.ts), in one transaction: edits from both
+ *     devices combine; the same field edited on both keeps the newer value and
+ *     records a reviewable conflict, so nothing is overwritten silently;
+ *  4. pushes the merged snapshot only if the NAS copy lacks something.
+ * Snapshots carry their lineage, so the NAS copy is always a superset of what
+ * every device has synced: a fresh or reset device can't replace it. An idle
+ * sync writes nothing and pushes nothing (the receiver keeps 60 snapshots).
  *
- * Failures are silent and expected — no wifi, NAS asleep, internet cut-out.
- * Nothing is lost; it simply tries again on the next change, reconnect, or
- * app open. The receiver is a ~60-line PHP file (see docs/nas-backup-setup.md)
- * that only ever writes into its own backup folder.
+ * Failures are expected (no wifi, NAS asleep): nothing is pushed or changed,
+ * and it retries on the next trigger. The receiver is a small PHP file (see
+ * docs/nas-backup-setup.md) that only ever writes into its own folder.
  */
 
-const LAST_DATA_KEY = 'nasLastDataAt';
+const LAST_PUSH_KEY = 'nasLastDataAt'; // ms of the last successful push (name kept from v1)
+const BASE_KEY = 'local:syncBase'; // the last snapshot this device agreed with the NAS
+const SYNCED_AT_KEY = 'local:lastSyncAt';
+const DEVICE_KEY = 'local:device';
+const HISTORY_CAP = 200;
 const DEBOUNCE_MS = 15_000;
+
+/** A field edited differently on two devices, kept as a synced kv row. */
+export interface ConflictRecord {
+  table: SyncTable;
+  recordId: string;
+  tripId: string | null;
+  label: string;
+  fields: Record<string, { kept: unknown; other: unknown }>;
+  keptDevice: string;
+  otherDevice: string;
+  at: number;
+}
+
+export interface SyncOutcome {
+  ok: boolean;
+  message: string;
+}
+
+interface Device {
+  id: string;
+  name: string;
+}
+
+function deviceName(): string {
+  const ua = navigator.userAgent;
+  if (/iPhone/.test(ua)) return 'iPhone';
+  if (/iPad/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)) return 'iPad';
+  if (/Macintosh/.test(ua)) return 'Mac';
+  if (/Android/.test(ua)) return 'Android';
+  if (/Windows/.test(ua)) return 'Windows PC';
+  return 'Browser';
+}
+
+async function thisDevice(): Promise<Device> {
+  const row = await db.kv.get(DEVICE_KEY);
+  if (row?.value) return row.value as Device;
+  const device = { id: newId(), name: deviceName() };
+  await db.kv.put({ key: DEVICE_KEY, value: device });
+  return device;
+}
+
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+/** Write only the records that differ, so an idle sync makes no writes. */
+async function applyMerge(local: SyncRecords, merged: SyncRecords): Promise<number> {
+  let changes = 0;
+  for (const table of SYNC_TABLES) {
+    const key = table === 'kv' ? 'key' : 'id';
+    const rows = (r: SyncRecords) => r[table] as unknown as Record<string, string>[];
+    const before = new Map(rows(local).map((r) => [r[key], r]));
+    const after = new Set(rows(merged).map((r) => r[key]));
+    const puts = rows(merged).filter((r) => !same(before.get(r[key]), r));
+    const dels = rows(local)
+      .map((r) => r[key])
+      .filter((k) => !after.has(k));
+    const t = db.table(table);
+    if (puts.length) await t.bulkPut(puts);
+    if (dels.length) await t.bulkDelete(dels);
+    changes += puts.length + dels.length;
+  }
+  // Photos only ever leave through tombstones (see sync.ts).
+  const keep = new Set(merged.photosMeta.map((p) => p.id));
+  const gone = local.photosMeta.map((p) => p.id).filter((id) => !keep.has(id));
+  if (gone.length) await db.photos.bulkDelete(gone);
+  return changes + gone.length;
+}
+
+/** Re-derive trip dates from the merged legs (deterministic on every device). */
+async function fixDerivedDates(): Promise<void> {
+  const [trips, cities] = await Promise.all([db.trips.toArray(), db.cities.toArray()]);
+  for (const trip of trips) {
+    const patch = derivedTripFields(
+      trip,
+      cities.filter((c) => c.tripId === trip.id),
+    );
+    if (Object.keys(patch).length) await db.trips.update(trip.id, patch);
+  }
+}
+
+function conflictLabel(c: FieldConflict, m: SyncRecords): { tripId: string | null; label: string } {
+  const row = (m[c.table] as unknown as Record<string, unknown>[]).find(
+    (r) => (r.id ?? r.key) === c.recordId,
+  );
+  const tripId = c.table === 'trips' ? c.recordId : ((row?.tripId as string) ?? null);
+  const trip = m.trips.find((t) => t.id === tripId) as Trip | undefined;
+  const name = trip
+    ? tripDisplayName(
+        trip,
+        m.cities.filter((x) => x.tripId === trip.id),
+      )
+    : 'A trip';
+  const what =
+    c.table === 'stops'
+      ? `stop “${row?.name}”`
+      : c.table === 'cities'
+        ? `leg “${row?.name}”`
+        : c.table === 'expenses'
+          ? `expense “${row?.description || row?.subcategory}”`
+          : c.table === 'kv'
+            ? 'sync data'
+            : '';
+  return { tripId, label: what ? `${name}: ${what}` : name };
+}
 
 class NasBackup {
   running = $state(false);
+  /** Last successful push of a snapshot. */
   lastDataAt = $state<number | null>(null);
+  /** Last sync that completed (pushed or already up to date). */
+  lastSyncAt = $state<number | null>(null);
   lastError = $state('');
   photosTotal = $state(0);
   photosBacked = $state(0);
@@ -46,38 +171,29 @@ class NasBackup {
     if (this.initialised || typeof window === 'undefined') return;
     this.initialised = true;
 
-    void db.kv.get(LAST_DATA_KEY).then((row) => {
-      if (row && typeof row.value === 'number') this.lastDataAt = row.value;
+    void db.kv.bulkGet([LAST_PUSH_KEY, SYNCED_AT_KEY]).then(([push, synced]) => {
+      if (typeof push?.value === 'number') this.lastDataAt = push.value;
+      if (typeof synced?.value === 'number') this.lastSyncAt = synced.value;
     });
     void this.refreshCounts();
 
     window.addEventListener('online', () => this.schedule(2_000));
 
-    // Any write to user data schedules a push — no call-site sprinkling.
+    // Any write to user data schedules a sync — no call-site sprinkling.
     const bump = () => this.schedule();
     for (const table of [db.trips, db.cities, db.stops, db.expenses]) {
       table.hook('creating', bump);
       table.hook('deleting', bump);
       table.hook('updating', bump);
     }
-    db.photos.hook('creating', (_key, _obj, transaction) => {
+    const photoChanged = (_key: unknown, _obj: unknown, transaction: Transaction) => {
       transaction.on('complete', () => {
         void this.refreshCounts();
         this.schedule();
       });
-    });
-    db.photos.hook('deleting', (_key, _obj, transaction) => {
-      transaction.on('complete', () => {
-        void this.refreshCounts();
-        this.schedule();
-      });
-    });
-    db.photos.hook('updating', (mods) => {
-      // Marking a photo as backed up must not re-trigger a push loop.
-      const keys = Object.keys(mods as object);
-      if (keys.length === 1 && keys[0] === 'backedUp') return;
-      this.schedule();
-    });
+    };
+    db.photos.hook('creating', photoChanged);
+    db.photos.hook('deleting', photoChanged);
 
     // Catch anything that changed while the app was closed.
     this.schedule(4_000);
@@ -87,7 +203,7 @@ class NasBackup {
   schedule(delay = DEBOUNCE_MS): void {
     if (!this.configured) return;
     if (this.timer) clearTimeout(this.timer);
-    this.timer = setTimeout(() => void this.run(), delay);
+    this.timer = setTimeout(() => void this.sync(), delay);
   }
 
   async refreshCounts(): Promise<void> {
@@ -102,143 +218,206 @@ class NasBackup {
     return `${base}?kind=${kind}&token=${encodeURIComponent(nasToken.trim())}${extra}`;
   }
 
-  /**
-   * Merge the NAS's newest snapshot in (add-only), then fetch the photos it
-   * references that this device doesn't hold. Null when the NAS has no
-   * snapshot yet. `failed` counts photos that exist on the NAS but couldn't be
-   * fetched; `missing` ones were never uploaded.
-   */
-  private async pullLatest(): Promise<{
-    r: ImportResult;
-    fetched: number;
-    missing: number;
-    failed: number;
-  } | null> {
-    const res = await fetch(this.endpoint('latest'));
-    if (res.status === 404) return null;
-    if (!res.ok) throw new Error(`latest: HTTP ${res.status}`);
-    const data = (await res.json()) as Backup;
-    const r = await importBackup(data);
+  private async post(kind: string, extra: string, body: BodyInit): Promise<void> {
+    const res = await fetch(this.endpoint(kind, extra), {
+      method: 'POST',
+      ...(typeof body === 'string'
+        ? { headers: { 'Content-Type': 'text/plain;charset=utf-8' } }
+        : {}),
+      body,
+    });
+    const json = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+    if (!res.ok || !json?.ok)
+      throw new Error(`${kind} upload: ${json?.error ?? `HTTP ${res.status}`}`);
+  }
 
+  /** Upload each photo the NAS doesn't have yet, one at a time (resumable). */
+  private async uploadPhotos(): Promise<number> {
+    const ids = await db.photos.filter((p) => !p.backedUp).primaryKeys();
+    for (const id of ids) {
+      const p = await db.photos.get(id);
+      if (!p || p.backedUp) continue;
+      const ext = p.blob.type.includes('png')
+        ? 'png'
+        : p.blob.type.includes('webp')
+          ? 'webp'
+          : 'jpg';
+      await this.post('photo', `&id=${p.id}&ext=${ext}`, p.blob);
+      await db.photos.update(p.id, { backedUp: true });
+    }
+    return ids.length;
+  }
+
+  /**
+   * Download the NAS photos this device lacks (and hasn't deleted), saving each
+   * as it arrives so memory stays flat and an interrupted sync resumes. Photos
+   * are immutable and union-only, so adding them ahead of the merge is safe.
+   */
+  private async downloadPhotos(remote: Backup): Promise<{ fetched: number; unavailable: number }> {
+    const have = new Set(await db.photos.toCollection().primaryKeys());
+    const dead = new Set(
+      [
+        ...((await db.kv.where('key').startsWith(TOMBSTONE).primaryKeys()) as string[]),
+        ...remote.settings.map((r) => r.key).filter((k) => k.startsWith(TOMBSTONE)),
+      ].map((k) => k.slice(TOMBSTONE.length)),
+    );
     let fetched = 0;
-    let missing = 0;
-    let failed = 0;
-    for (const meta of data.photosMeta ?? []) {
-      if (await db.photos.get(meta.id)) continue;
-      const pr = await fetch(this.endpoint('photo', `&id=${meta.id}`));
-      if (!pr.ok) {
-        if (pr.status === 404) missing += 1;
-        else failed += 1;
+    let unavailable = 0;
+    for (const meta of remote.photosMeta ?? []) {
+      if (have.has(meta.id) || dead.has(meta.id)) continue;
+      const res = await fetch(this.endpoint('photo', `&id=${meta.id}`));
+      if (res.status === 404) {
+        unavailable += 1; // never uploaded by its device yet; it will arrive later
         continue;
       }
-      const blob = await pr.blob();
-      await db.transaction('rw', db.photos, async () => {
+      if (!res.ok) throw new Error(`photo download: HTTP ${res.status}`);
+      const blob = await res.blob();
+      await db.transaction('rw', db.photos, db.kv, async () => {
         if (await db.photos.get(meta.id)) return;
+        if (await db.kv.get(`${TOMBSTONE}${meta.id}`)) return;
         await db.photos.add({ ...meta, blob, backedUp: true });
         fetched += 1;
       });
     }
-    return { r, fetched, missing, failed };
+    return { fetched, unavailable };
   }
 
   /**
-   * Pull the newest snapshot from the NAS and merge it in, with its photos.
-   * This is how a fresh install (or second device) picks up everything: the
-   * NAS is the hub — every device pushes to it and can restore from it.
+   * The base for a device's first sync after updating from the add-only
+   * version: if the NAS's newest (lineage-less) snapshot is this device's own
+   * last push, it is exactly what both sides agreed on.
    */
-  async restore(): Promise<{ ok: boolean; message: string }> {
-    if (this.running) return { ok: false, message: 'A backup or restore is already running.' };
+  private async legacyBase(remote: Backup | null): Promise<Backup | null> {
+    if (!remote || remote.sync) return null;
+    const last = (await db.kv.get(LAST_PUSH_KEY))?.value;
+    const at = Date.parse(remote.exportedAt);
+    return typeof last === 'number' && Math.abs(at - last) < 60_000 ? remote : null;
+  }
+
+  /** Sync now. Never throws; the outcome says what happened. */
+  async sync(): Promise<SyncOutcome> {
     if (!this.configured) return { ok: false, message: 'Set the receiver URL and token first.' };
     if (typeof navigator !== 'undefined' && !navigator.onLine)
-      return { ok: false, message: 'Offline — try again when connected.' };
+      return { ok: false, message: 'Offline — syncs automatically when connected.' };
+    const busy = { ok: false, message: 'A sync is already running.' };
+    // One sync at a time, across tabs too (a Mac may have several open).
+    if (typeof navigator !== 'undefined' && navigator.locks)
+      return navigator.locks.request('systema-nas-sync', { ifAvailable: true }, (lock) =>
+        lock ? this.syncOnce() : busy,
+      );
+    return this.syncOnce();
+  }
+
+  private async syncOnce(): Promise<SyncOutcome> {
+    if (this.running) return { ok: false, message: 'A sync is already running.' };
     this.running = true;
     this.lastError = '';
-
     try {
-      const pulled = await this.pullLatest();
-      if (!pulled) return { ok: false, message: 'The NAS has no snapshots yet.' };
-      const { r, fetched, missing, failed } = pulled;
+      const device = await thisDevice();
+      const uploaded = await this.uploadPhotos();
 
+      const res = await fetch(this.endpoint('latest'));
+      let remote: Backup | null = null;
+      if (res.status !== 404) {
+        if (!res.ok) throw new Error(`reading the NAS copy: HTTP ${res.status}`);
+        remote = (await res.json()) as Backup;
+        validateBackup(remote);
+      }
+      const photos = remote ? await this.downloadPhotos(remote) : { fetched: 0, unavailable: 0 };
+
+      const otherDevice = remote?.sync?.deviceName ?? 'another device';
+      const { changes, conflicts } = await db.transaction(
+        'rw',
+        [db.trips, db.cities, db.stops, db.expenses, db.photos, db.kv, db.fxRates],
+        async () => {
+          const local = toRecords(await buildDataBackup());
+          const base =
+            ((await db.kv.get(BASE_KEY))?.value as Backup | undefined) ??
+            (await this.legacyBase(remote));
+          const descends =
+            !!base &&
+            !!remote &&
+            (base === remote ||
+              (!!base.sync &&
+                !!remote.sync &&
+                (remote.sync.id === base.sync.id || remote.sync.history.includes(base.sync.id))));
+          const result = mergeRecords(
+            base ? toRecords(base) : null,
+            local,
+            remote ? toRecords(remote) : null,
+            descends,
+          );
+          const changes = await applyMerge(local, result.merged);
+          const now = Date.now();
+          await db.kv.bulkPut(
+            result.conflicts.map((c) => ({
+              key: `${CONFLICT}${newId()}`,
+              value: {
+                table: c.table,
+                recordId: c.recordId,
+                ...conflictLabel(c, result.merged),
+                fields: c.fields,
+                keptDevice: c.keptLocal ? device.name : otherDevice,
+                otherDevice: c.keptLocal ? otherDevice : device.name,
+                at: now,
+              } satisfies ConflictRecord,
+            })),
+          );
+          await fixDerivedDates();
+          if (remote) await db.kv.put({ key: BASE_KEY, value: remote });
+          return { changes, conflicts: result.conflicts.length };
+        },
+      );
+
+      // Push only when the NAS copy lacks something this device has.
+      const snapshot = await buildDataBackup();
+      const records = toRecords(snapshot);
+      const ahead = remote
+        ? countDifferences(records, toRecords(remote)) > 0
+        : records.trips.length + records.kv.length > 0;
+      if (ahead) {
+        snapshot.sync = {
+          id: newId(),
+          device: device.id,
+          deviceName: device.name,
+          at: Date.now(),
+          history: remote?.sync ? [...remote.sync.history, remote.sync.id].slice(-HISTORY_CAP) : [],
+        };
+        await this.post('data', '', JSON.stringify(snapshot));
+        this.lastDataAt = Date.now();
+        await db.kv.bulkPut([
+          { key: BASE_KEY, value: snapshot },
+          { key: LAST_PUSH_KEY, value: this.lastDataAt },
+        ]);
+      }
+      this.lastSyncAt = Date.now();
+      await db.kv.put({ key: SYNCED_AT_KEY, value: this.lastSyncAt });
       await this.refreshCounts();
-      const photoNote = fetched ? `, ${fetched} photo${fetched > 1 ? 's' : ''}` : '';
-      const lost = missing + failed;
-      return {
-        ok: true,
-        message: `Restored ${r.trips} trips, ${r.stops} stops, ${r.expenses} expenses${photoNote}.${importNote(r)}${lost ? ` ${lost} photo(s) could not be restored; keep your original backup.` : ''}`,
-      };
+
+      const parts = [
+        changes && `${plural(changes, 'change')} from the NAS`,
+        photos.fetched && `${plural(photos.fetched, 'photo')} downloaded`,
+        uploaded && `${plural(uploaded, 'photo')} uploaded`,
+        ahead && 'your changes sent',
+        conflicts && `${plural(conflicts, 'edit')} made on two devices to review`,
+        photos.unavailable &&
+          `${plural(photos.unavailable, 'photo')} not on the NAS yet (still on the device that took them)`,
+      ].filter(Boolean);
+      return { ok: true, message: parts.length ? `Synced: ${parts.join(', ')}.` : 'Up to date.' };
     } catch (err) {
-      this.lastError = err instanceof Error ? err.message : String(err);
-      return { ok: false, message: this.lastError };
+      const msg = err instanceof Error ? err.message : String(err);
+      this.lastError = msg;
+      return { ok: false, message: `Not synced (${msg}). Nothing on the NAS was replaced.` };
     } finally {
       this.running = false;
     }
   }
 
-  /** Push a data snapshot, then any photos not yet on the NAS. */
-  async run(): Promise<void> {
-    if (this.running || !this.configured) return;
-    if (typeof navigator !== 'undefined' && !navigator.onLine) return;
-    this.running = true;
-    this.lastError = '';
-
-    try {
-      const { nasUrl, nasToken } = settingsStore.current;
-      const base = nasUrl.trim().replace(/[?#].*$/, '');
-      const endpoint = (kind: string, extra = '') =>
-        `${base}?kind=${kind}&token=${encodeURIComponent(nasToken.trim())}${extra}`;
-
-      // 0) A device that has never pushed (fresh install, reset, evicted
-      // storage) merges the NAS copy first. Otherwise its partial snapshot
-      // becomes "latest" and pruning eventually deletes the real one. Only
-      // before the first push: merging later would resurrect local deletions.
-      if (!(await db.kv.get(LAST_DATA_KEY))) {
-        try {
-          const pulled = await this.pullLatest();
-          if (pulled?.failed) throw new Error(`${pulled.failed} photo(s) could not be fetched`);
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          throw new Error(`Couldn't merge the NAS copy first, so nothing was backed up (${msg})`, {
-            cause: err,
-          });
-        }
-      }
-
-      // 1) Data snapshot (small — no photo blobs).
-      const snapshot = await buildDataBackup();
-      const res = await fetch(endpoint('data'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify(snapshot),
-      });
-      const body = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
-      if (!res.ok || !body?.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
-      this.lastDataAt = Date.now();
-      await db.kv.put({ key: LAST_DATA_KEY, value: this.lastDataAt });
-
-      // 2) Photos, one file each, exactly once.
-      const photos = await db.photos.toArray();
-      for (const p of photos) {
-        if (p.backedUp) continue;
-        const ext = p.blob.type.includes('png')
-          ? 'png'
-          : p.blob.type.includes('webp')
-            ? 'webp'
-            : 'jpg';
-        const r = await fetch(endpoint('photo', `&id=${p.id}&ext=${ext}`), {
-          method: 'POST',
-          body: p.blob,
-        });
-        const b = (await r.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
-        if (!r.ok || !b?.ok) throw new Error(b?.error ?? `photo: HTTP ${r.status}`);
-        await db.photos.update(p.id, { backedUp: true });
-      }
-      await this.refreshCounts();
-    } catch (err) {
-      // Expected when away from the NAS — quiet retry on the next trigger.
-      this.lastError = err instanceof Error ? err.message : String(err);
-    } finally {
-      this.running = false;
-    }
+  /** Records on this device the NAS hasn't got yet (null: never synced). */
+  async unsyncedChanges(): Promise<number | null> {
+    const base = (await db.kv.get(BASE_KEY))?.value as Backup | undefined;
+    if (!base) return null;
+    return countDifferences(toRecords(await buildDataBackup()), toRecords(base));
   }
 }
 

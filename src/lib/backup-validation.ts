@@ -128,21 +128,26 @@ export function validateBackup(value: unknown): asserts value is Backup {
     if (row.cityId && cities.has(row.cityId) && cities.get(row.cityId) !== row.tripId)
       fail(`${row.id} links to a city in another trip`);
   }
+  // Links may dangle (a stop deleted on one device while the other added a
+  // photo to it): harmless, and refusing the whole file would block a restore.
+  // A link into a *different* trip is corruption.
   for (const p of [...data.photos.map((p: any) => p.meta), ...(data.photosMeta ?? [])]) {
     if (
-      (p.stopId && stops.get(p.stopId) !== p.tripId) ||
-      (p.expenseId && expenses.get(p.expenseId) !== p.tripId)
+      (p.stopId && stops.has(p.stopId) && stops.get(p.stopId) !== p.tripId) ||
+      (p.expenseId && expenses.has(p.expenseId) && expenses.get(p.expenseId) !== p.tripId)
     )
-      fail(`photo ${p.id} links to a stop or expense outside its trip`);
+      fail(`photo ${p.id} links to a stop or expense in another trip`);
   }
-  const tripIds = new Set(data.trips.map((r: any) => r.id));
-  for (const row of [
-    ...data.cities,
-    ...data.stops,
-    ...data.expenses,
-    ...data.photos.map((p: any) => p.meta),
-    ...(data.photosMeta ?? []),
-  ]) {
-    if (!tripIds.has(row.tripId)) fail(`${row.id} belongs to no trip in the backup`);
-  }
+  const sync = data.sync;
+  if (
+    sync !== undefined &&
+    !(
+      object(sync) &&
+      strings(sync, 'id device deviceName') &&
+      numbers(sync, 'at') &&
+      Array.isArray(sync.history) &&
+      sync.history.every((h: unknown) => typeof h === 'string')
+    )
+  )
+    fail('sync lineage');
 }

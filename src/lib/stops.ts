@@ -1,6 +1,7 @@
 import { db, type ChecklistItem, type City, type Stop } from './db';
 import { newId } from './ids';
 import { extractSections, type Section } from './headings';
+import { deletePhotosWhere } from './photos';
 
 /** Stop + checklist mutations over Dexie. */
 
@@ -31,8 +32,8 @@ export async function updateStop(id: string, patch: Partial<Stop>): Promise<void
 }
 
 export async function deleteStop(id: string): Promise<void> {
-  await db.transaction('rw', db.stops, db.photos, async () => {
-    await db.photos.where('stopId').equals(id).delete();
+  await db.transaction('rw', db.stops, db.photos, db.kv, async () => {
+    await deletePhotosWhere('stopId', id);
     await db.stops.delete(id);
   });
 }
