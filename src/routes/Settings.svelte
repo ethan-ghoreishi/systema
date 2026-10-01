@@ -171,7 +171,7 @@
       {#if nasBackup.configured}
         <div class="status-row">
           <span class="status-key">Last NAS sync</span>
-          <span class="status-val">{when(nasBackup.lastSyncAt)}</span>
+          <span class="status-val">{when(nasBackup.lastSyncAt ?? nasBackup.lastDataAt)}</span>
         </div>
         <div class="status-row">
           <span class="status-key">Changes not on the NAS yet</span>

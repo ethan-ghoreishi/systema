@@ -34,7 +34,12 @@
   // Nudge only when action is needed: never backed up, or not for a week.
   const backupNotice = $derived.by(() => {
     if (!trips.length || !nasBackup.healthLoaded) return '';
-    const last = Math.max(nasBackup.lastSyncAt ?? 0, nasBackup.lastFileBackupAt ?? 0);
+    // lastDataAt: devices upgraded from the push-only version have only this.
+    const last = Math.max(
+      nasBackup.lastSyncAt ?? 0,
+      nasBackup.lastDataAt ?? 0,
+      nasBackup.lastFileBackupAt ?? 0,
+    );
     if (!last) return 'Not backed up yet — set up a backup';
     if (Date.now() - last > 7 * 86_400_000)
       return `Last backup ${new Date(last).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} — back up now`;
