@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import TopBar from '../components/TopBar.svelte';
+  import ConflictList from '../components/ConflictList.svelte';
   import { settingsStore } from '../lib/settings.svelte';
   import { connectivity } from '../lib/connectivity.svelte';
   import { nasBackup } from '../lib/nas.svelte';
@@ -117,6 +118,8 @@
   <TopBar title="Settings" back="#/" />
 
   <div class="screen-body">
+    <ConflictList />
+
     <div class="card">
       <h2 class="section-title">NAS backup vault</h2>
       <p class="hint">

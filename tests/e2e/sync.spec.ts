@@ -5,11 +5,6 @@ import { FakeNas, device, sync } from './nas-fake';
 // Two "devices" (separate browser contexts, separate IndexedDB) syncing
 // through one fake NAS. Synthetic data only.
 
-const blobsWork = (browserName: string) =>
-  !(browserName === 'webkit' && process.platform === 'darwin');
-const BLOB_SKIP =
-  'This macOS Playwright WebKit rejects IndexedDB Blob writes; covered in Chromium.';
-
 /** Evaluate against the app modules exposed by `device()` as window.m. */
 function app<T, A = undefined>(page: Page, fn: (m: any, arg: A) => Promise<T> | T, arg?: A) {
   return page.evaluate(
@@ -346,4 +341,38 @@ test('first sync against an unrelated old snapshot unions and records real diffe
   expect(s.trips[0].planText).toBe('Original plan'); // newer kept
   expect(s.conflicts[0].fields.planText.other).toBe('Older plan from another device');
   expect(s.stops).toHaveLength(2);
+});
+
+test('a conflict is reviewed in Settings and the chosen version syncs back', async ({
+  makeContext,
+}) => {
+  const nas = new FakeNas();
+  const phone = await device(makeContext, nas);
+  const mac = await device(makeContext, nas);
+  const { trip } = await seedTrip(phone);
+  await sync(phone);
+  await sync(mac);
+  await app(mac, (m, id) => m.updateTrip(id, { planText: 'Mac plan' }), trip);
+  await app(phone, (m, id) => m.updateTrip(id, { planText: 'Phone plan' }), trip);
+  await sync(mac);
+  await sync(phone);
+  await sync(mac);
+
+  await expect(mac.getByText('1 edit made on two devices — review')).toBeVisible();
+  await mac.getByText('1 edit made on two devices — review').click();
+  await mac
+    .getByText(/version$/, { exact: false })
+    .first()
+    .click(); // expand the other version
+  await expect(mac.getByText('Mac plan', { exact: true })).toBeVisible();
+  await mac.getByRole('button', { name: /^Use .* version$/ }).click();
+  await expect(mac.getByText('Edits made on two devices')).toBeHidden();
+
+  await sync(mac);
+  await sync(phone);
+  for (const page of [phone, mac]) {
+    const s = await state(page);
+    expect(s.trips[0].planText).toBe('Mac plan');
+    expect(s.conflicts).toEqual([]);
+  }
 });

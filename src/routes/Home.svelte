@@ -7,10 +7,12 @@
   import TopBar from '../components/TopBar.svelte';
   import Icon from '../components/Icon.svelte';
   import TripCover from '../components/TripCover.svelte';
+  import { conflictsQuery } from '../lib/conflicts';
 
   const tripsQ = liveQuery(() => db.trips.orderBy('order').reverse().toArray());
   const citiesQ = liveQuery(() => db.cities.toArray());
   const expensesQ = liveQuery(() => db.expenses.toArray());
+  const conflictsQ = liveQuery(conflictsQuery);
   const trips = $derived($tripsQ ?? []);
   const allCities = $derived($citiesQ ?? []);
   const allExpenses = $derived($expensesQ ?? []);
@@ -69,6 +71,12 @@
     <a class="btn btn--primary new-trip" href="#/new">
       <Icon name="plus" size={20} /> New trip
     </a>
+
+    {#if $conflictsQ?.length}
+      <a class="hint hint--warn home-notice" href="#/settings">
+        {$conflictsQ.length} edit{$conflictsQ.length > 1 ? 's' : ''} made on two devices — review
+      </a>
+    {/if}
 
     <a class="btn btn--ghost new-trip" href="#/insights">
       <Icon name="expenses" size={20} /> Insights — every trip, every pound
