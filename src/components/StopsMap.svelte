@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, untrack } from 'svelte';
   import L from 'leaflet';
   import 'leaflet/dist/leaflet.css';
   import type { City, Stop } from '../lib/db';
@@ -39,7 +39,7 @@
   let map: L.Map | null = null;
   let layer: L.LayerGroup | null = null;
   let placingId = $state<string | null>(null);
-  let exploring = $state(!readonly);
+  let exploring = $state(untrack(() => !readonly));
   let fittedFor = '';
 
   // The cities that have stops, in leg order, plus "Other" for unassigned ones.

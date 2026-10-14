@@ -11,6 +11,7 @@
   import TripCover from '../components/TripCover.svelte';
   import { conflictsQuery } from '../lib/conflicts';
   import { nasBackup } from '../lib/nas.svelte';
+  import { clockLabel, nextDeparture, tripDepartures } from '../lib/readiness';
 
   const tripsQ = liveQuery(() => db.trips.orderBy('order').reverse().toArray());
   const citiesQ = liveQuery(() => db.cities.toArray());
@@ -49,6 +50,20 @@
       return `Last backup ${new Date(last).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} — back up now`;
     return '';
   });
+
+  // A calm line on a trip whose next departure is within a day and a half.
+  let now = $state(Date.now());
+  $effect(() => {
+    const t = setInterval(() => (now = Date.now()), 60_000);
+    return () => clearInterval(t);
+  });
+  function leaveLine(trip: Trip): string {
+    const d = nextDeparture(tripDepartures(trip, citiesFor(trip)), now);
+    if (!d || d.leaveBy - now > 36 * 3_600_000) return '';
+    return d.leaveBy <= now
+      ? `Time to leave for ${d.hub}`
+      : `Leave for ${d.hub} by ${clockLabel(d.leaveBy, d.tz, now)}`;
+  }
 
   // Past trips (marked Done) live in their own journal section below.
   const current = $derived(trips.filter((t) => t.status !== 'done'));
@@ -120,6 +135,7 @@
             <a class="card trip-card" href={`#/trip/${trip.id}/plan`}>
               <span class="trip-card-name">{tripDisplayName(trip, citiesFor(trip))}</span>
               <span class="trip-card-meta">{currentMeta(trip)}</span>
+              {#if leaveLine(trip)}<span class="trip-card-leave">{leaveLine(trip)}</span>{/if}
             </a>
           {/each}
         </div>

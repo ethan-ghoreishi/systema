@@ -99,7 +99,7 @@
   let cityId = $state<string | null>(init.cityId);
   let shared = $state(init.shared);
   let destination = $state(init.destination);
-  let destinationTouched = $state(!!expense);
+  let destinationTouched = $state(untrack(() => !!expense));
   let overrideGBP = $state('');
   let saving = $state(false);
   let saveError = $state('');

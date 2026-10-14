@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { liveQuery } from 'dexie';
   import { db, type Moment, type Stop, type StopGuide, type Trip } from '../../lib/db';
   import {
@@ -27,7 +28,7 @@
   let { trip }: { trip: Trip } = $props();
 
   // 'list' | 'map', kept per trip — the map redraws live as stops change.
-  const viewKey = `stops:${trip.id}:view`;
+  const viewKey = untrack(() => `stops:${trip.id}:view`);
   let stopView = $state<'list' | 'map'>(recall(viewKey, 'list'));
   $effect(() => remember(viewKey, stopView));
 

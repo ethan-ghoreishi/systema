@@ -253,8 +253,13 @@
       </div>
 
       {#if trip.preset === 'two-city' || stopover}
-        <div class="card">
-          <h2 class="section-title">Two-City Stopover</h2>
+        <!-- Open until the legs follow a scenario; then one line, a tap to change. -->
+        <details class="card stopover-card" open={!stopover?.scenario}>
+          <summary class="section-title"
+            >Two-City Stopover{stopover?.scenario
+              ? ` · scenario ${stopover.scenario}`
+              : ''}</summary
+          >
           <p class="hint">
             Two cities in two days on one protected ticket: land by ~11:00, move on that evening
             (after ~18:00) or next morning (before ~10:00), home after ~18:00, one hotel night.
@@ -313,7 +318,7 @@
             Puts the two cities in order, the hotel night where it falls, and marks the hop as part
             of the {scenario <= 2 ? 'outbound' : 'return'} ticket. Times you've entered stay.
           </p>
-        </div>
+        </details>
       {/if}
 
       <div class="card">
@@ -428,8 +433,10 @@
                     zonePickerFor = null;
                     void patchCity(c.id, { tz: v });
                   } else
-                    legErrors[c.id] =
-                      `“${v}” isn't a time zone this phone knows. Pick one from the list.`;
+                    legErrors[c.id] = {
+                      message: `“${v}” isn't a time zone this phone knows. Pick one from the list.`,
+                      seq: ++saveSeq,
+                    };
                 }}
               />
             {/if}
