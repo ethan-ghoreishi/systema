@@ -1,6 +1,10 @@
 import type { Backup } from './export';
 
-/** Reject malformed data before any write. Optional legacy fields stay optional. */
+/**
+ * Reject malformed data before any write. Optional legacy fields stay optional,
+ * and every field added since is optional too: the previous version's
+ * validator (tests/unit/fixtures) must keep accepting what this one writes.
+ */
 export function validateBackup(value: unknown): asserts value is Backup {
   // Name the offending row, so a failed restore can be diagnosed and repaired.
   const fail = (where: string) => {
@@ -14,6 +18,18 @@ export function validateBackup(value: unknown): asserts value is Backup {
     keys.split(' ').every((k) => typeof r[k] === 'number' && Number.isFinite(r[k]));
   const optional = (r: Record<string, any>, keys: string, type: string) =>
     keys.split(' ').every((k) => r[k] === undefined || typeof r[k] === type);
+  const optionalNumbers = (r: Record<string, any>, keys: string) =>
+    keys
+      .split(' ')
+      .every((k) => r[k] === undefined || (typeof r[k] === 'number' && Number.isFinite(r[k])));
+  const coord = (v: unknown, max: number) =>
+    v === undefined || (typeof v === 'number' && Number.isFinite(v) && Math.abs(v) <= max);
+  const departPlan = (v: unknown) =>
+    v === undefined ||
+    (object(v) &&
+      optional(v, 'mode hub terminal number ref notes from transport at tz', 'string') &&
+      optionalNumbers(v, 'journeyMin bufferMin contingencyMin prepareMin') &&
+      (v.throughTicket === undefined || ['outbound', 'return'].includes(v.throughTicket)));
   if (!object(value) || value.app !== 'systema' || value.version !== 1)
     fail('not a version 1 systema backup');
   const data = value as Record<string, any>;
@@ -43,7 +59,8 @@ export function validateBackup(value: unknown): asserts value is Backup {
       typeof r.accommodation === 'boolean' &&
       ['same-day', 'airport-sleep', 'weekend', 'custom'].includes(r.type) &&
       ['planning', 'active', 'done'].includes(r.status) &&
-      optional(r, 'nameManual journalText coverPhotoId', 'string') &&
+      optional(r, 'nameManual journalText coverPhotoId preset', 'string') &&
+      departPlan(r.outbound) &&
       (r.coverMode === undefined || ['auto', 'map', 'route-card', 'photo'].includes(r.coverMode)) &&
       (r.promptPrefs === undefined ||
         (object(r.promptPrefs) &&
@@ -62,8 +79,14 @@ export function validateBackup(value: unknown): asserts value is Backup {
     (r) =>
       strings(r, 'tripId name currency') &&
       numbers(r, 'order') &&
-      optional(r, 'arrival departure', 'string') &&
-      (r.sleep === undefined || ['none', 'airport', 'hotel'].includes(r.sleep)),
+      optional(r, 'arrival departure tz', 'string') &&
+      (r.sleep === undefined || ['none', 'airport', 'hotel'].includes(r.sleep)) &&
+      departPlan(r.exit) &&
+      (r.base === undefined ||
+        (object(r.base) &&
+          optional(r.base, 'name address checkIn checkOut', 'string') &&
+          coord(r.base.lat, 90) &&
+          coord(r.base.lng, 180))),
   );
   rows(
     'stops',
@@ -80,7 +103,14 @@ export function validateBackup(value: unknown): asserts value is Backup {
       Array.isArray(r.checklist) &&
       r.checklist.every(
         (c: unknown) => object(c) && strings(c, 'id text') && typeof c.done === 'boolean',
-      ),
+      ) &&
+      optionalNumbers(r, 'visitedAt') &&
+      (r.guide === undefined ||
+        (object(r.guide) &&
+          optional(r.guide, 'anchor minimum stretch exit', 'string') &&
+          (r.guide.lookFor === undefined ||
+            (Array.isArray(r.guide.lookFor) &&
+              r.guide.lookFor.every((v: unknown) => typeof v === 'string'))))),
   );
   rows(
     'expenses',
@@ -93,10 +123,21 @@ export function validateBackup(value: unknown): asserts value is Backup {
       numbers(r, 'amountGBP amountLocal order createdAt') &&
       (r.cityId === null || typeof r.cityId === 'string') &&
       typeof r.skeleton === 'boolean' &&
-      optional(r, 'fxPending', 'boolean') &&
+      optional(r, 'fxPending gbpManual shared', 'boolean') &&
+      optional(r, 'fxDate', 'string') &&
       (r.fxRate === null ||
         (typeof r.fxRate === 'number' && Number.isFinite(r.fxRate) && r.fxRate > 0)),
   );
+  if (data.moments !== undefined)
+    rows(
+      'moments',
+      'id',
+      (r) =>
+        strings(r, 'tripId title note') &&
+        numbers(r, 'at createdAt') &&
+        (r.cityId === null || typeof r.cityId === 'string') &&
+        (r.stopId === null || typeof r.stopId === 'string'),
+    );
   rows('fxRates', 'code', (r) => numbers(r, 'rate fetchedAt') && r.rate > 0 && strings(r, 'date'));
   rows('settings', 'key', (r) => 'value' in r);
   const photoMeta = (r: Record<string, any>) =>
@@ -104,7 +145,10 @@ export function validateBackup(value: unknown): asserts value is Backup {
     numbers(r, 'createdAt') &&
     ['stop', 'receipt', 'cover'].includes(r.kind) &&
     (r.stopId === null || typeof r.stopId === 'string') &&
-    (r.expenseId === null || typeof r.expenseId === 'string');
+    (r.expenseId === null || typeof r.expenseId === 'string') &&
+    (r.momentId === undefined || r.momentId === null || typeof r.momentId === 'string') &&
+    optionalNumbers(r, 'takenAt bytes') &&
+    optional(r, 'sha256', 'string');
   if (!Array.isArray(data.photos)) fail('photos missing');
   const photoIds = new Set<string>();
   for (const [i, p] of data.photos.entries()) {
@@ -124,9 +168,14 @@ export function validateBackup(value: unknown): asserts value is Backup {
   const cities = new Map(data.cities.map((r: any) => [r.id, r.tripId]));
   const stops = new Map(data.stops.map((r: any) => [r.id, r.tripId]));
   const expenses = new Map(data.expenses.map((r: any) => [r.id, r.tripId]));
-  for (const row of [...data.stops, ...data.expenses]) {
+  const moments = new Map((data.moments ?? []).map((r: any) => [r.id, r.tripId]));
+  for (const row of [...data.stops, ...data.expenses, ...(data.moments ?? [])]) {
     if (row.cityId && cities.has(row.cityId) && cities.get(row.cityId) !== row.tripId)
       fail(`${row.id} links to a city in another trip`);
+  }
+  for (const row of data.moments ?? []) {
+    if (row.stopId && stops.has(row.stopId) && stops.get(row.stopId) !== row.tripId)
+      fail(`moment ${row.id} links to a stop in another trip`);
   }
   // Links may dangle (a stop deleted on one device while the other added a
   // photo to it): harmless, and refusing the whole file would block a restore.
@@ -134,9 +183,10 @@ export function validateBackup(value: unknown): asserts value is Backup {
   for (const p of [...data.photos.map((p: any) => p.meta), ...(data.photosMeta ?? [])]) {
     if (
       (p.stopId && stops.has(p.stopId) && stops.get(p.stopId) !== p.tripId) ||
-      (p.expenseId && expenses.has(p.expenseId) && expenses.get(p.expenseId) !== p.tripId)
+      (p.expenseId && expenses.has(p.expenseId) && expenses.get(p.expenseId) !== p.tripId) ||
+      (p.momentId && moments.has(p.momentId) && moments.get(p.momentId) !== p.tripId)
     )
-      fail(`photo ${p.id} links to a stop or expense in another trip`);
+      fail(`photo ${p.id} links to a stop, expense or moment in another trip`);
   }
   const sync = data.sync;
   if (

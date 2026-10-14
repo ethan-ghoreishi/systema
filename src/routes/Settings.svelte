@@ -106,9 +106,9 @@
   // Raw state: the backup must reach IndexedDB as plain data, not a proxy.
   let pending = $state.raw<{ backup: Backup; files: Map<string, Blob> } | null>(null);
   const describe = (r: ImportResult, preview: boolean) =>
-    r.trips + r.stops + r.expenses + r.photos === 0
+    r.trips + r.stops + r.expenses + r.moments + r.photos === 0
       ? `Everything in this backup is already on this device.${importNote(r)}`
-      : `${preview ? 'This backup would add' : 'Added'} ${r.trips} trip(s), ${r.stops} stop(s), ${r.expenses} expense(s), ${r.photos} photo(s).${importNote(r)}`;
+      : `${preview ? 'This backup would add' : 'Added'} ${r.trips} trip(s), ${r.stops} stop(s), ${r.expenses} expense(s), ${r.moments} moment(s), ${r.photos} photo(s).${importNote(r)}`;
 
   function inspect(file: Blob): Promise<void> {
     pending = null;
@@ -118,7 +118,8 @@
         (d, t) => (status = `Checking the backup… ${d}/${t}`),
       );
       const preview = await importBackup(read.backup, read.files, { dryRun: true });
-      if (preview.trips + preview.stops + preview.expenses + preview.photos) pending = read;
+      if (preview.trips + preview.stops + preview.expenses + preview.moments + preview.photos)
+        pending = read;
       return `Backup checked: intact. ${describe(preview, true)}`;
     });
   }

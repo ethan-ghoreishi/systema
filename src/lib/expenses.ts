@@ -1,5 +1,5 @@
 import { db, type Expense, type Trip } from './db';
-import { presetByType } from './presets';
+import { presetFor } from './presets';
 import { newId } from './ids';
 import { getRateForDate } from './fx';
 import { deletePhotosWhere } from './photos';
@@ -56,7 +56,7 @@ export async function seedSkeleton(trip: Trip): Promise<number> {
   const existing = await db.expenses.where('tripId').equals(trip.id).count();
   if (existing > 0) return 0;
 
-  const preset = presetByType(trip.type);
+  const preset = presetFor(trip);
   if (preset.skeleton.length === 0) return 0;
 
   const now = Date.now();

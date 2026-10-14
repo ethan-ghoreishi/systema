@@ -8,7 +8,7 @@
     looksAnomalous,
     seedSkeleton,
   } from '../../lib/expenses';
-  import { presetByType } from '../../lib/presets';
+  import { presetFor } from '../../lib/presets';
   import { formatGBP, formatAmount } from '../../lib/money';
   import ExpenseCapture from '../ExpenseCapture.svelte';
   import Icon from '../Icon.svelte';
@@ -25,7 +25,7 @@
   const total = $derived(tripTotalGBP(expenses));
   const summary = $derived(categorySummary(expenses));
   const unpricedCount = $derived(real.filter((e) => e.fxPending).length);
-  const presetSkeletonCount = $derived(presetByType(trip.type).skeleton.length);
+  const presetSkeletonCount = $derived(presetFor(trip).skeleton.length);
 
   // `cities` is otherwise only read inside the capture modal, which would delay
   // its liveQuery subscription until first open. Read it eagerly so currencies
@@ -81,7 +81,7 @@
 
   {#if expenses.length === 0 && presetSkeletonCount > 0}
     <button class="btn btn--ghost" onclick={() => seedSkeleton(trip)}>
-      Add the {presetSkeletonCount} skeleton rows for a {presetByType(trip.type).label} trip
+      Add the {presetSkeletonCount} skeleton rows for a {presetFor(trip).label} trip
     </button>
   {/if}
 

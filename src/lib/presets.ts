@@ -1,4 +1,4 @@
-import type { TripType } from './db';
+import type { Trip, TripType } from './db';
 
 /**
  * Trip starting points. Plain data, not a configurable engine — a preset just
@@ -14,6 +14,9 @@ export interface SkeletonRow {
 }
 
 export interface TripPreset {
+  /** Unique key; equals `type` for the original presets. */
+  key: string;
+  /** Stored on the trip: one of the original values, so older versions still sync. */
   type: TripType;
   label: string;
   blurb: string;
@@ -55,6 +58,7 @@ const travelSpine: SkeletonRow[] = [
 
 export const tripPresets: TripPreset[] = [
   {
+    key: 'same-day',
     type: 'same-day',
     label: 'Day trip',
     blurb: 'Out and back the same day, no hotel. Seeds the flight and transfer rows.',
@@ -62,6 +66,7 @@ export const tripPresets: TripPreset[] = [
     skeleton: travelSpine,
   },
   {
+    key: 'airport-sleep',
     type: 'airport-sleep',
     label: 'Airport sleep',
     blurb: 'Land late, doze at the airport, no hotel. Also seeds a bag-storage row.',
@@ -76,6 +81,7 @@ export const tripPresets: TripPreset[] = [
     ],
   },
   {
+    key: 'weekend',
     type: 'weekend',
     label: 'City break',
     blurb: 'One or more hotel nights. Also seeds a hotel row.',
@@ -86,6 +92,56 @@ export const tripPresets: TripPreset[] = [
     ],
   },
   {
+    key: 'two-city',
+    type: 'weekend',
+    label: 'Two-City Stopover',
+    blurb:
+      'Two cities in two days on one protected ticket: land by ~11:00, move on that evening or next morning, home after ~18:00, one hotel night.',
+    accommodation: true,
+    skeleton: [
+      { category: 'Transportation', subcategory: 'Flight', description: 'Outbound flight' },
+      { category: 'Transportation', subcategory: 'Flight', description: 'Inbound flight' },
+      {
+        category: 'Transportation',
+        subcategory: 'Airport Transfer (UK)',
+        description: 'Airport transfer (UK) — outbound',
+      },
+      {
+        category: 'Transportation',
+        subcategory: 'Airport Transfer (UK)',
+        description: 'Airport transfer (UK) — return',
+      },
+      {
+        category: 'Transportation',
+        subcategory: 'Airport Transfer (Abroad)',
+        description: 'Airport transfer — first city, arrival',
+      },
+      {
+        category: 'Transportation',
+        subcategory: 'Airport Transfer (Abroad)',
+        description: 'Airport transfer — first city, to the hop',
+      },
+      {
+        category: 'Transportation',
+        subcategory: 'Airport Transfer (Abroad)',
+        description: 'Airport transfer — second city, arrival',
+      },
+      {
+        category: 'Transportation',
+        subcategory: 'Airport Transfer (Abroad)',
+        description: 'Airport transfer — second city, departure',
+      },
+      { category: 'Accommodation', subcategory: 'Hotel', description: 'Hotel (one night)' },
+      {
+        category: 'Personal & Financial Expenses',
+        subcategory: 'Other Personal Items',
+        description: 'eSIM',
+      },
+      { category: 'Food', subcategory: 'Snacks', description: 'Airport water' },
+    ],
+  },
+  {
+    key: 'custom',
     type: 'custom',
     label: 'Custom',
     blurb: 'Start blank and add your own expense rows.',
@@ -94,6 +150,11 @@ export const tripPresets: TripPreset[] = [
   },
 ];
 
-export function presetByType(type: TripType): TripPreset {
-  return tripPresets.find((p) => p.type === type) ?? tripPresets[tripPresets.length - 1];
+export function presetByKey(key: string): TripPreset {
+  return tripPresets.find((p) => p.key === key) ?? tripPresets[tripPresets.length - 1];
+}
+
+/** The starting point a trip was created from. */
+export function presetFor(trip: Pick<Trip, 'type' | 'preset'>): TripPreset {
+  return presetByKey(trip.preset ?? trip.type);
 }

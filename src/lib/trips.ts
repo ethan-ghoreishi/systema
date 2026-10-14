@@ -1,9 +1,15 @@
-import { db, type City, type Trip, type TripType } from './db';
-import { presetByType } from './presets';
+import { db, type City, type Trip } from './db';
+import { presetByKey } from './presets';
 import { newId } from './ids';
 import { seedSkeleton } from './expenses';
 import { deletePhotosWhere } from './photos';
-import { derivedTripFields, hasLegDates } from './trip-shape';
+import {
+  derivedTripFields,
+  hasLegDates,
+  legOrderProblem,
+  scenarioPattern,
+  type StopoverScenario,
+} from './trip-shape';
 
 /**
  * Trip + City mutations. Kept as plain async functions over Dexie so the UI
@@ -12,9 +18,9 @@ import { derivedTripFields, hasLegDates } from './trip-shape';
 
 export const DEFAULT_PARTY_SIZE = 2;
 
-/** Create a trip from a preset and return its id. */
-export async function createTrip(type: TripType): Promise<string> {
-  const preset = presetByType(type);
+/** Create a trip from a preset (by key: 'same-day', 'two-city', …) and return its id. */
+export async function createTrip(key: string): Promise<string> {
+  const preset = presetByKey(key);
   const now = Date.now();
   const order = await db.trips.count();
   const id = newId();
@@ -22,7 +28,8 @@ export async function createTrip(type: TripType): Promise<string> {
   const trip: Trip = {
     id,
     name: '', // display name derives from the legs (see tripDisplayName)
-    type,
+    type: preset.type,
+    ...(preset.key !== preset.type ? { preset: preset.key } : {}),
     startDate: '',
     endDate: '',
     partySize: DEFAULT_PARTY_SIZE,
@@ -49,9 +56,10 @@ export async function updateTrip(id: string, patch: Partial<Trip>): Promise<void
 export async function deleteTrip(id: string): Promise<void> {
   await db.transaction(
     'rw',
-    [db.trips, db.cities, db.stops, db.expenses, db.photos, db.kv],
+    [db.trips, db.cities, db.stops, db.expenses, db.photos, db.kv, db.moments],
     async () => {
       await db.cities.where('tripId').equals(id).delete();
+      await db.moments.where('tripId').equals(id).delete();
       await db.stops.where('tripId').equals(id).delete();
       await db.expenses.where('tripId').equals(id).delete();
       await deletePhotosWhere('tripId', id);
@@ -60,10 +68,15 @@ export async function deleteTrip(id: string): Promise<void> {
   );
 }
 
-export async function addCity(tripId: string, name: string, currency: string): Promise<string> {
+export async function addCity(
+  tripId: string,
+  name: string,
+  currency: string,
+  extra: Partial<City> = {},
+): Promise<string> {
   const order = await db.cities.where('tripId').equals(tripId).count();
   const id = newId();
-  const city: City = { id, tripId, name, currency, order, sleep: 'none' };
+  const city: City = { id, tripId, name, currency, order, sleep: 'none', ...extra };
   await db.cities.add(city);
   await recomputeTripDerived(tripId);
   return id;
@@ -73,11 +86,66 @@ async function legsHaveDates(tripId: string): Promise<boolean> {
   return hasLegDates(await db.cities.where('tripId').equals(tripId).toArray());
 }
 
+/** A save refused because the result wouldn't make sense; `message` says how to repair it. */
+export class LegError extends Error {}
+
+/**
+ * Update a leg. A departure before its own arrival is never saved — checked
+ * here, against the stored row, so no screen (or sync-free script) can store
+ * one. Cross-leg chronology is reported, not refused (see legIssues): the
+ * traveller may be halfway through moving several legs.
+ */
 export async function updateCity(id: string, patch: Partial<City>): Promise<void> {
   const city = await db.cities.get(id);
+  if (city) {
+    const problem = legOrderProblem({ ...city, ...patch });
+    if (problem) throw new LegError(problem);
+  }
   const hadDates = city ? await legsHaveDates(city.tripId) : false;
   await db.cities.update(id, patch);
   if (city) await recomputeTripDerived(city.tripId, hadDates);
+}
+
+/**
+ * Lay out a two-city stopover: the stopover and destination cities as two
+ * legs in the scenario's order, the hotel night where it falls, and the hop
+ * marked as part of the outbound or return ticket. Existing legs with the same
+ * names are reused (keeping their times); nothing else is touched.
+ */
+export async function applyStopoverScenario(
+  tripId: string,
+  scenario: StopoverScenario,
+  stopover: { name: string; currency: string },
+  destination: { name: string; currency: string },
+): Promise<void> {
+  const pattern = scenarioPattern(scenario);
+  const [first, second] =
+    pattern.order === 'stopover-first' ? [stopover, destination] : [destination, stopover];
+  await db.transaction('rw', db.cities, db.trips, async () => {
+    const legs = await db.cities.where('tripId').equals(tripId).sortBy('order');
+    const find = (name: string) =>
+      legs.find((c) => c.name.trim().toLowerCase() === name.trim().toLowerCase());
+    const rows = [first, second].map((spec, i) => {
+      const existing = find(spec.name);
+      const sleep = (pattern.nightIn === 'first') === (i === 0) ? 'hotel' : 'none';
+      const exit =
+        i === 0
+          ? { ...existing?.exit, throughTicket: pattern.ticket }
+          : existing?.exit && { ...existing.exit, throughTicket: undefined };
+      return {
+        ...(existing ?? { id: newId(), tripId, currency: spec.currency, name: spec.name.trim() }),
+        order: i,
+        sleep,
+        ...(exit ? { exit } : {}),
+      } as City;
+    });
+    const keep = new Set(rows.map((r) => r.id));
+    const others = legs.filter((c) => !keep.has(c.id));
+    await db.cities.bulkPut(rows);
+    await Promise.all(others.map((c, i) => db.cities.update(c.id, { order: 2 + i })));
+    await db.trips.update(tripId, { preset: 'two-city' });
+  });
+  await recomputeTripDerived(tripId);
 }
 
 export async function deleteCity(id: string): Promise<void> {

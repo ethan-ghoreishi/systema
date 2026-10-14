@@ -2,7 +2,16 @@ import type { Table } from 'dexie';
 import { validateBackup } from './backup-validation';
 import { photoExt } from './photos';
 import { isZip, unzip, verifyZip, zip } from './zip';
-import { db, type City, type Expense, type FxRate, type Photo, type Stop, type Trip } from './db';
+import {
+  db,
+  type City,
+  type Expense,
+  type FxRate,
+  type Moment,
+  type Photo,
+  type Stop,
+  type Trip,
+} from './db';
 import { formatDateRange } from './format';
 import { formatSheetDate } from './sheet';
 import { realExpenses, tripTotalGBP, categorySummary } from './expenses';
@@ -183,6 +192,8 @@ export interface Backup {
   cities: City[];
   stops: Stop[];
   expenses: Expense[];
+  /** Off-plan moments (absent in backups from older versions). */
+  moments?: Moment[];
   fxRates: FxRate[];
   /** Synced key/value rows (edit conflicts, photo tombstones). Never device settings. */
   settings: { key: string; value: unknown }[];
@@ -211,6 +222,7 @@ export function toRecords(b: Backup): SyncRecords {
     cities: b.cities,
     stops: b.stops,
     expenses: b.expenses,
+    moments: b.moments,
     kv: b.settings.filter((r) => !isLocalKey(r.key)),
     photosMeta: b.photosMeta ?? b.photos.map((p) => p.meta),
   };
@@ -242,7 +254,7 @@ export async function buildZipBackup(
 ): Promise<Blob> {
   const { data, photos } = await db.transaction(
     'r',
-    [db.trips, db.cities, db.stops, db.expenses, db.fxRates, db.kv, db.photos],
+    [db.trips, db.cities, db.stops, db.expenses, db.moments, db.fxRates, db.kv, db.photos],
     async () => ({ data: await buildDataBackup(), photos: await db.photos.toArray() }),
   );
   return zip(
@@ -301,20 +313,22 @@ export async function readBackupFile(
  * enough to send after every change. Photos travel separately, one file each.
  */
 export async function buildDataBackup(): Promise<Backup> {
-  const [trips, cities, stops, expenses, fxRates, settings, photoRows] = await db.transaction(
-    'r',
-    [db.trips, db.cities, db.stops, db.expenses, db.fxRates, db.kv, db.photos],
-    () =>
-      Promise.all([
-        db.trips.toArray(),
-        db.cities.toArray(),
-        db.stops.toArray(),
-        db.expenses.toArray(),
-        db.fxRates.toArray(),
-        db.kv.toArray(),
-        db.photos.toArray(),
-      ]),
-  );
+  const [trips, cities, stops, expenses, moments, fxRates, settings, photoRows] =
+    await db.transaction(
+      'r',
+      [db.trips, db.cities, db.stops, db.expenses, db.moments, db.fxRates, db.kv, db.photos],
+      () =>
+        Promise.all([
+          db.trips.toArray(),
+          db.cities.toArray(),
+          db.stops.toArray(),
+          db.expenses.toArray(),
+          db.moments.toArray(),
+          db.fxRates.toArray(),
+          db.kv.toArray(),
+          db.photos.toArray(),
+        ]),
+    );
 
   return {
     app: 'systema',
@@ -324,6 +338,7 @@ export async function buildDataBackup(): Promise<Backup> {
     cities,
     stops,
     expenses,
+    moments,
     fxRates,
     settings: settings.filter((r) => !isLocalKey(r.key)),
     photos: [],
@@ -335,6 +350,7 @@ export interface ImportResult {
   trips: number;
   stops: number;
   expenses: number;
+  moments: number;
   photos: number;
   /** Records already on this device whose content differs from the backup (kept as they are). */
   differing: number;
@@ -383,13 +399,14 @@ export async function importBackup(
     trips: 0,
     stops: 0,
     expenses: 0,
+    moments: 0,
     photos: 0,
     differing: 0,
     missingPhotos: files.size ? metas.filter((m) => !files.has(m.id)).length : 0,
   };
   await db.transaction(
     dryRun ? 'r' : 'rw',
-    [db.trips, db.cities, db.stops, db.expenses, db.fxRates, db.kv, db.photos],
+    [db.trips, db.cities, db.stops, db.expenses, db.moments, db.fxRates, db.kv, db.photos],
     async () => {
       async function addMissing<T extends object>(
         table: Table<T, string>,
@@ -421,6 +438,7 @@ export async function importBackup(
       await addMissing(db.cities, data.cities, (r) => r.id);
       result.stops = (await addMissing(db.stops, data.stops, (r) => r.id)).length;
       result.expenses = (await addMissing(db.expenses, data.expenses, (r) => r.id)).length;
+      result.moments = (await addMissing(db.moments, data.moments ?? [], (r) => r.id)).length;
       // Rates and photo files are this device's own cache/state; not user edits.
       await addMissing(db.fxRates, data.fxRates, (r) => r.code, { compare: false });
       // Device settings and sync state never come from a backup.
