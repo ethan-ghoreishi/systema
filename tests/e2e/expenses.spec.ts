@@ -89,3 +89,51 @@ test('amount + one tap, a duplicate warning, a trip-wide flight, and the same CS
   expect(lines.some((l) => l.includes(',Bologna/Barcelona,Transportation,Flight,'))).toBe(true);
   expect(lines.at(-1)).toBe(',,,,,,,,,,110.6');
 });
+
+test('a £ typed by hand is never re-priced, even when the date or amount changes', async ({
+  page,
+}) => {
+  await page.route('https://api.frankfurter.dev/**', (r) =>
+    r.fulfill({ json: { date: '2026-10-16', rates: { GBP: 0.85 } } }),
+  );
+  await page.goto('/');
+  const id = await page.evaluate(async () => {
+    const { createTrip, addCity } = await import(/* @vite-ignore */ '/src/lib/trips.ts');
+    const { db } = await import(/* @vite-ignore */ '/src/lib/db.ts');
+    const id = await createTrip('custom');
+    await addCity(id, 'Yerevan', 'AMD');
+    // As an older version (or the sheet import) stored it: no rate, no flag.
+    await db.expenses.add({
+      id: 'manual',
+      tripId: id,
+      cityId: null,
+      date: '2026-10-16',
+      destination: 'Yerevan',
+      category: 'Experiences',
+      subcategory: 'Museum',
+      description: 'Matenadaran',
+      paymentMethod: 'Cash Payment',
+      amountGBP: 4.2,
+      amountLocal: 2000,
+      notes: '',
+      currency: 'AMD',
+      fxRate: null,
+      skeleton: false,
+      order: 0,
+      createdAt: 1,
+    });
+    return id;
+  });
+  await page.goto(`/#/trip/${id}/expenses`);
+  await page.getByText('Matenadaran').click();
+  const sheet = page.locator('dialog.modal[open]');
+  await expect(sheet.getByText('The £ was entered by hand and is kept')).toBeVisible();
+  await sheet.getByLabel('Date').fill('2026-10-17');
+  await sheet.getByRole('button', { name: 'Save' }).click();
+  await expect(sheet).toHaveCount(0);
+  const e = await page.evaluate(async () => {
+    const { db } = await import(/* @vite-ignore */ '/src/lib/db.ts');
+    return db.expenses.get('manual');
+  });
+  expect(e).toMatchObject({ date: '2026-10-17', amountGBP: 4.2, gbpManual: true, fxRate: null });
+});

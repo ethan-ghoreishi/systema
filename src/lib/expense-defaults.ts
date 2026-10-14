@@ -181,3 +181,17 @@ export function findDuplicate(
           e.description.trim().toLowerCase() === candidate.description.trim().toLowerCase())),
   );
 }
+
+/**
+ * The £ was typed by hand: never re-priced from a rate. Older rows have no
+ * flag — a non-GBP row with a £ amount but no rate behind it (a hand entry,
+ * or a sheet import) reads as manual.
+ */
+export function isManualGBP(
+  e: Pick<Expense, 'gbpManual' | 'currency' | 'fxRate' | 'fxPending' | 'amountGBP' | 'skeleton'>,
+): boolean {
+  if (e.skeleton) return false;
+  return (
+    e.gbpManual ?? (e.currency !== 'GBP' && e.fxRate == null && !e.fxPending && e.amountGBP > 0)
+  );
+}

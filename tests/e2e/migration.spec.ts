@@ -154,3 +154,48 @@ test('a version-3 database opens under this version with every record intact', a
   });
   await expect(page.locator('.trip-card', { hasText: 'Lisbon' })).toBeVisible();
 });
+
+test('rolling back stays safe: the previous build still opens and writes the upgraded database', async ({
+  page,
+}) => {
+  await page.goto('/');
+  const r = await page.evaluate(async () => {
+    const { db, SystemaDB } = await import(/* @vite-ignore */ '/src/lib/db.ts');
+    await db.open();
+    await db.trips.put({
+      id: 'keep',
+      name: '',
+      type: 'custom',
+      startDate: '',
+      endDate: '',
+      partySize: 2,
+      returnFlightAt: '',
+      accommodation: false,
+      status: 'planning',
+      planText: 'v4 plan',
+      order: 0,
+      createdAt: 0,
+      updatedAt: 0,
+    });
+    db.close();
+    // The previous release's schema (Dexie version 3), opening a v4 database.
+    const Dexie = Object.getPrototypeOf(SystemaDB);
+    const old = new Dexie('systema');
+    old.version(3).stores({
+      kv: 'key',
+      trips: 'id, order, status, updatedAt',
+      cities: 'id, tripId, order',
+      stops: 'id, tripId, cityId, order',
+      expenses: 'id, tripId, cityId, order',
+      photos: 'id, tripId, stopId, expenseId, kind',
+      fxRates: 'code',
+    });
+    await old.open();
+    const before = (await old.table('trips').get('keep')).planText;
+    await old.table('trips').update('keep', { planText: 'edited after rollback' });
+    const after = (await old.table('trips').get('keep')).planText;
+    old.close();
+    return { before, after };
+  });
+  expect(r).toEqual({ before: 'v4 plan', after: 'edited after rollback' });
+});

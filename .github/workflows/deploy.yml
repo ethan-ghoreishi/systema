@@ -45,7 +45,7 @@ jobs:
       - name: NAS receiver e2e (real PHP)
         run: |
           mkdir -p "$RUNNER_TEMP/nas"
-          php -d post_max_size=2M -d upload_max_filesize=2M -S 127.0.0.1:8099 -t "$RUNNER_TEMP/nas" > "$RUNNER_TEMP/php.log" 2>&1 &
+          php -d display_errors=1 -d post_max_size=2M -d upload_max_filesize=2M -S 127.0.0.1:8099 -t "$RUNNER_TEMP/nas" > "$RUNNER_TEMP/php.log" 2>&1 &
           SYSTEMA_PHP_URL=http://127.0.0.1:8099 SYSTEMA_PHP_ROOT="$RUNNER_TEMP/nas" \
             npx playwright test tests/e2e/php-receiver.spec.ts
       # Two real builds with the service worker on: no reload mid-entry.

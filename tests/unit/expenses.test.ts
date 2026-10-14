@@ -1,6 +1,7 @@
 import {
   expenseCityId,
   findDuplicate,
+  isManualGBP,
   isShared,
   lastPaymentMethod,
   likelySubcategory,
@@ -165,5 +166,22 @@ describe('quick capture defaults', () => {
     expect(dup?.id).toBe('x');
     expect(findDuplicate({ ...base, amountLocal: 6 }, [base])).toBeUndefined();
     expect(findDuplicate(base, [base], 'x')).toBeUndefined();
+  });
+});
+
+describe('isManualGBP', () => {
+  const row = {
+    currency: 'AMD',
+    fxRate: null,
+    fxPending: false,
+    amountGBP: 4.2,
+    skeleton: false,
+  };
+  it('reads an older non-GBP row with a £ but no rate as typed by hand', () => {
+    expect(isManualGBP(row)).toBe(true);
+    expect(isManualGBP({ ...row, fxRate: 0.0021 })).toBe(false); // priced from a rate
+    expect(isManualGBP({ ...row, fxPending: true, amountGBP: 0 })).toBe(false);
+    expect(isManualGBP({ ...row, currency: 'GBP' })).toBe(false);
+    expect(isManualGBP({ ...row, gbpManual: false })).toBe(false); // the flag wins
   });
 });

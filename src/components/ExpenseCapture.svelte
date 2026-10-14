@@ -13,6 +13,7 @@
   import {
     TEMPLATES,
     findDuplicate,
+    isManualGBP,
     isShared,
     lastPaymentMethod,
     likelySubcategory,
@@ -100,7 +101,10 @@
   let shared = $state(init.shared);
   let destination = $state(init.destination);
   let destinationTouched = $state(untrack(() => !!expense));
-  let overrideGBP = $state('');
+  // A £ typed by hand stays in the override field, so editing the date or the
+  // amount can never swap it for a rate.
+  const manualGBP = untrack(() => !!expense && isManualGBP(expense));
+  let overrideGBP = $state(untrack(() => (manualGBP ? String(expense!.amountGBP) : '')));
   let saving = $state(false);
   let saveError = $state('');
   let receiptFiles = $state<File[]>([]);
@@ -481,7 +485,9 @@
               bind:value={overrideGBP}
             />
           </div>
-          {#if rate != null && overrideNum == null && !keepRecorded}
+          {#if manualGBP}
+            <p class="hint">The £ was entered by hand and is kept; change it here if needed.</p>
+          {:else if rate != null && overrideNum == null && !keepRecorded}
             <p class="hint">
               ECB rate{rateDate ? ` for ${rateDate}` : ''}: 1 {currency} = £{rate}. Type a £ amount
               to use your own; it's never re-priced.
