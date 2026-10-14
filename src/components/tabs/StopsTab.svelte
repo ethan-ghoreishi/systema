@@ -385,7 +385,7 @@
     {/if}
 
     {#if stopView === 'map' && stops.length > 0}
-      <StopsMap {stops} onOpen={openStop} />
+      <StopsMap {stops} {cities} onOpen={openStop} memoryKey={`stops:${trip.id}:map-city`} />
     {:else}
       {#if extractable.length > 0}
         <button class="btn btn--ghost" onclick={extractNow}>

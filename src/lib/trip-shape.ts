@@ -455,3 +455,42 @@ export function legBaseName(trip: Trip, cities: City[], c: City): string {
   const hotels = cities.filter((x) => x.sleep === 'hotel');
   return hotels.length === 1 && hotels[0].id === c.id ? (trip.promptPrefs?.hotel ?? '').trim() : '';
 }
+
+/** True when the trip visits two or more different cities. */
+export function isMultiCity(cities: City[]): boolean {
+  return new Set(tripCityNames(cities).map((n) => n.toLowerCase())).size > 1;
+}
+
+/**
+ * The trip's rhythm, leg by leg: 'Bologna, day → Barcelona, 1 night' — the
+ * multi-city cover's caption, and the shape of the trip at a glance.
+ */
+export function journeyRhythm(cities: City[]): { name: string; part: string }[] {
+  return tripLegs(cities)
+    .filter((l) => l.name)
+    .map((l) => {
+      if (l.sleep === 'hotel') {
+        const n = l.arrival && l.departure ? Math.max(1, dayDiff(l.arrival, l.departure)) : 1;
+        return { name: l.name, part: `${n} night${n > 1 ? 's' : ''}` };
+      }
+      if (l.sleep === 'airport') return { name: l.name, part: 'airport night' };
+      const h =
+        l.arrivalMs != null && l.departureMs != null
+          ? Math.round((l.departureMs - l.arrivalMs) / 3_600_000)
+          : 0;
+      return { name: l.name, part: h && h < 5 ? `${h}h stop` : 'day' };
+    });
+}
+
+/** '16–17 Oct', '30 Oct – 2 Nov', or '' — from the legs' local dates. */
+export function shortDateSpan(trip: Trip, cities: City[]): string {
+  const s = tripStartIso(trip, cities);
+  if (!s) return '';
+  const e = tripEndIso(trip, cities) || s;
+  const a = wallLabel(s, { weekday: false });
+  const b = wallLabel(e, { weekday: false });
+  if (a === b) return a;
+  const [ad, am] = a.split(' ');
+  const [bd, bm] = b.split(' ');
+  return am === bm ? `${ad}–${bd} ${bm}` : `${a} – ${b}`;
+}

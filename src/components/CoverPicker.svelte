@@ -4,6 +4,7 @@
   import { newId } from '../lib/ids';
   import { updateTrip } from '../lib/trips';
   import TripCover from './TripCover.svelte';
+  import { isMultiCity } from '../lib/trip-shape';
 
   /** Choose how a trip's cover is drawn, and pin/upload a photo for it. */
   let { trip }: { trip: Trip } = $props();
@@ -17,12 +18,14 @@
   );
   const photos = $derived($photosQ ?? []);
 
-  const modes: { v: CoverMode; label: string }[] = [
+  const citiesQ = liveQuery(() => db.cities.where('tripId').equals(trip.id).toArray());
+  const multi = $derived(isMultiCity($citiesQ ?? []));
+  const modes = $derived<{ v: CoverMode; label: string }[]>([
     { v: 'auto', label: 'Auto' },
-    { v: 'map', label: 'Route map' },
-    { v: 'route-card', label: 'Route card' },
     { v: 'photo', label: 'Photo' },
-  ];
+    { v: 'route-card', label: multi ? 'Journey card' : 'Route card' },
+    { v: 'map', label: multi ? 'Route overview' : 'Route map' },
+  ]);
   const mode = $derived(trip.coverMode ?? 'auto');
 
   // Thumbnails for the photo picker.

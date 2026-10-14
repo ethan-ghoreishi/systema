@@ -15,6 +15,9 @@ import {
   legOrderProblem,
   legIssues,
   activeLegId,
+  journeyRhythm,
+  shortDateSpan,
+  isMultiCity,
 } from '../../src/lib/trip-shape';
 
 function trip(over: Partial<Trip> = {}): Trip {
@@ -372,5 +375,33 @@ describe('chronology', () => {
     expect(activeLegId([a, b], Date.parse('2026-06-01T18:00Z'))).toBe('b');
     expect(activeLegId([a, b], Date.parse('2026-05-01T12:00Z'))).toBe('a');
     expect(activeLegId([a, b], Date.parse('2026-07-01T12:00Z'))).toBe('b');
+  });
+});
+
+describe('journey card', () => {
+  it('reads the rhythm and dates of a multi-city trip', () => {
+    const cs = [
+      city({
+        name: 'Bologna',
+        order: 0,
+        arrival: '2026-10-16T09:00',
+        departure: '2026-10-16T19:00',
+        sleep: 'none',
+      }),
+      city({
+        name: 'Barcelona',
+        order: 1,
+        arrival: '2026-10-16T21:00',
+        departure: '2026-10-17T21:00',
+        sleep: 'hotel',
+      }),
+    ];
+    expect(journeyRhythm(cs)).toEqual([
+      { name: 'Bologna', part: 'day' },
+      { name: 'Barcelona', part: '1 night' },
+    ]);
+    expect(shortDateSpan(trip(), cs)).toBe('16–17 Oct');
+    expect(isMultiCity(cs)).toBe(true);
+    expect(isMultiCity([cs[0], { ...cs[0], id: 'x' }])).toBe(false);
   });
 });
