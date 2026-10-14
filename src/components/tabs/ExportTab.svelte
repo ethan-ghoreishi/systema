@@ -1,10 +1,17 @@
 <script lang="ts">
   import { liveQuery } from 'dexie';
   import { db, type Trip } from '../../lib/db';
-  import { buildTripPack, buildJournalingPrompt, buildMemoryPrompt } from '../../lib/export';
+  import {
+    buildTripPack,
+    buildJournalingPrompt,
+    buildMemoryPrompt,
+    photoManifest,
+  } from '../../lib/export';
+  import { photoExt } from '../../lib/photos';
+  import { zip } from '../../lib/zip';
   import { buildTripCsv, csvNote } from '../../lib/csv';
   import { tripDisplayName } from '../../lib/trip-shape';
-  import { downloadText } from '../../lib/download';
+  import { downloadBlob, downloadText } from '../../lib/download';
   import { copyText } from '../../lib/copy.svelte';
   import { updateTrip } from '../../lib/trips';
 
@@ -14,20 +21,27 @@
   const citiesQ = liveQuery(() => db.cities.where('tripId').equals(trip.id).sortBy('order'));
   const expensesQ = liveQuery(() => db.expenses.where('tripId').equals(trip.id).toArray());
   const photosQ = liveQuery(() => db.photos.where('tripId').equals(trip.id).toArray());
+  const momentsQ = liveQuery(() => db.moments.where('tripId').equals(trip.id).toArray());
+  const moments = $derived($momentsQ ?? []);
   const stops = $derived($stopsQ ?? []);
   const cities = $derived($citiesQ ?? []);
   const expenses = $derived($expensesQ ?? []);
   const allPhotos = $derived($photosQ ?? []);
 
-  const pack = $derived(
-    buildTripPack(
-      trip,
-      cities,
-      stops,
-      expenses,
-      allPhotos.map((p) => ({ stopId: p.stopId, createdAt: p.createdAt })),
-    ),
+  const packPhotos = $derived(
+    allPhotos.map((p) => ({
+      id: p.id,
+      stopId: p.stopId,
+      momentId: p.momentId,
+      kind: p.kind,
+      takenAt: p.takenAt,
+      createdAt: p.createdAt,
+    })),
   );
+  const pack = $derived(
+    buildTripPack({ trip, cities, stops, expenses, photos: packPhotos, moments }),
+  );
+  const manifest = $derived(photoManifest(packPhotos, stops, moments, cities));
   const prompt = $derived(buildJournalingPrompt(pack));
 
   let status = $state('');
@@ -89,6 +103,33 @@
     });
   }
 
+  /** The photos as files named in manifest order: 01-P-3f9a1c.jpg, … */
+  function manifestFiles(): File[] {
+    const byId = new Map(allPhotos.map((p) => [p.id, p]));
+    return manifest.map((e) => {
+      const p = byId.get(e.id)!;
+      const n = String(e.n).padStart(2, '0');
+      return new File([p.blob], `${n}-${e.ref}.${photoExt(p.blob)}`, { type: p.blob.type });
+    });
+  }
+
+  function sharePhotos() {
+    // Built synchronously so the share keeps the tap's permission.
+    const files = manifestFiles();
+    const nav = navigator as Navigator & { canShare?: (d: { files?: File[] }) => boolean };
+    if (nav.canShare?.({ files })) {
+      void nav.share({ files }).then(
+        () => (status = 'Shared — attach them to Claude in this order (they are numbered).'),
+        () => {},
+      );
+      return;
+    }
+    void zip(files.map((f) => ({ name: f.name, data: f }))).then((blob) => {
+      downloadBlob(`${slug()}-photos-for-claude.zip`, blob);
+      status = 'Photos saved as a .zip, numbered in the order the prompt lists them.';
+    });
+  }
+
   function downloadCsv() {
     downloadText(`${slug()}-expenses.csv`, buildTripCsv(expenses), 'text/csv');
     status = `CSV downloaded — sheet column format, subtotal row included.${csvNote(expenses)}`;
@@ -99,8 +140,8 @@
   <div class="card">
     <h2 class="section-title">Journal this trip</h2>
     <p class="hint">
-      Copy the prompt (it already includes the trip pack: plan, ticked stops, notes, photo counts
-      and expense summary) and paste it into Claude to write your journal.
+      Copy the prompt (it already includes the trip pack: plan, ticked stops, the visit order with
+      your off-plan moments, the photo list and the expense summary) and paste it into Claude.
     </p>
     <button class="btn btn--primary" onclick={copyPrompt}>Copy journaling prompt</button>
     {#if trip.status === 'done' && !(trip.journalText ?? '').trim()}
@@ -118,9 +159,23 @@
       <summary>Preview trip pack</summary>
       <pre class="pack-preview">{pack}</pre>
     </details>
+    {#if manifest.length}
+      <details class="pack-details">
+        <summary>Photo list for Claude ({manifest.length}, in the order to attach)</summary>
+        <ol class="manifest">
+          {#each manifest as e (e.id)}
+            <li><code>{e.ref}</code> {[e.city, e.place].filter(Boolean).join(', ')}, {e.when}</li>
+          {/each}
+        </ol>
+      </details>
+      <button class="btn btn--ghost" onclick={sharePhotos}>
+        Share the photos for Claude ({manifest.length}, in order)
+      </button>
+    {/if}
     <p class="hint">
-      Photos are listed by stop and time, not embedded — an embedded pack would be too large to
-      paste into a chat. Attach the photos themselves in Claude if you want them considered.
+      The prompt lists every photo with a reference (P-xxxxxx), where and when it was taken. Attach
+      the photos themselves in Claude in the same order; Claude marks where each belongs, and the
+      journal shows the real photographs there.
     </p>
   </div>
 

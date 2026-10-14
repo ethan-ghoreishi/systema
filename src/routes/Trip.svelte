@@ -7,6 +7,7 @@
   import StopsTab from '../components/tabs/StopsTab.svelte';
   import ExpensesTab from '../components/tabs/ExpensesTab.svelte';
   import ExportTab from '../components/tabs/ExportTab.svelte';
+  import MomentCapture from '../components/MomentCapture.svelte';
   import { tripDisplayName } from '../lib/trip-shape';
   import { router, outsideTrip } from '../lib/router.svelte';
   import { scrollMemory } from '../lib/ui-memory';
@@ -24,8 +25,10 @@
   // null = not found, undefined = still loading.
   const tripQ = liveQuery(async () => (await db.trips.get(id)) ?? null);
   const citiesQ = liveQuery(() => db.cities.where('tripId').equals(id).sortBy('order'));
+  const stopsQ = liveQuery(() => db.stops.where('tripId').equals(id).sortBy('order'));
   const trip = $derived($tripQ);
   const cities = $derived($citiesQ ?? []);
+  let capturing = $state(false);
 
   const tabs = [
     { key: 'plan', label: 'Plan', icon: 'plan' },
@@ -58,6 +61,9 @@
       backLabel={stopOpen ? 'Stops' : undefined}
     >
       {#snippet actions()}
+        <button class="icon-btn" aria-label="What happened?" onclick={() => (capturing = true)}
+          ><Icon name="spark" /></button
+        >
         <a class="icon-btn" href={`#/trip/${id}/edit`} aria-label="Edit trip"
           ><Icon name="edit" /></a
         >
@@ -91,4 +97,7 @@
       {/each}
     </nav>
   </div>
+  {#if capturing}
+    <MomentCapture {trip} {cities} stops={$stopsQ ?? []} onClose={() => (capturing = false)} />
+  {/if}
 {/if}

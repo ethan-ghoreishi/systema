@@ -26,18 +26,25 @@ export function convertToGBP(localAmount: number, rate: number): number {
 /**
  * Rate for a specific past date ('YYYY-MM-DD') — used to auto-price expenses
  * that were saved offline without a rate, at the rate of the day they were
- * spent. One-shot repair, only called when online; not cached.
+ * spent (and the ECB date that rate is for). One-shot repair, only called
+ * when online; not cached.
  */
-export async function getRateForDate(code: string, date: string): Promise<number | null> {
+export async function getRateForDate(
+  code: string,
+  date: string,
+): Promise<{ rate: number; date: string } | null> {
   const c = code.trim().toUpperCase();
-  if (!c || c === 'GBP') return 1;
   const d = /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : todayIso();
+  if (!c || c === 'GBP') return { rate: 1, date: d };
   try {
     const res = await fetch(`${FRANKFURTER}/${d}?from=${encodeURIComponent(c)}&to=GBP`);
     if (!res.ok) return null;
-    const data = (await res.json()) as { rates?: Record<string, number> };
+    const data = (await res.json()) as { date?: string; rates?: Record<string, number> };
     const rate = data.rates?.GBP;
-    return typeof rate === 'number' && Number.isFinite(rate) && rate > 0 ? rate : null;
+    // The ECB publishes on working days: a weekend expense gets Friday's rate.
+    return typeof rate === 'number' && Number.isFinite(rate) && rate > 0
+      ? { rate, date: data.date ?? d }
+      : null;
   } catch {
     return null;
   }
@@ -56,8 +63,8 @@ export async function getRate(code: string, requestedDate = todayIso()): Promise
 
   const today = todayIso();
   if (requestedDate && requestedDate !== today) {
-    const rate = await getRateForDate(c, requestedDate);
-    return rate == null ? null : { rate, date: requestedDate, cached: false, stale: false };
+    const r = await getRateForDate(c, requestedDate);
+    return r == null ? null : { rate: r.rate, date: r.date, cached: false, stale: false };
   }
   const cached = await db.fxRates.get(c);
   if (cached && cached.date === today) {

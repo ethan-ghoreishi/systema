@@ -1,6 +1,6 @@
 <script lang="ts">
   import { liveQuery } from 'dexie';
-  import { db, type Stop, type StopGuide, type Trip } from '../../lib/db';
+  import { db, type Moment, type Stop, type StopGuide, type Trip } from '../../lib/db';
   import {
     addStop,
     updateStop,
@@ -14,7 +14,11 @@
     importStopsFromPlan,
     newStopCandidates,
   } from '../../lib/stops';
-  import { addPhoto, deletePhoto, downloadPhoto } from '../../lib/photos';
+  import { addPhotos, deletePhoto, downloadPhoto, photoTime } from '../../lib/photos';
+  import { instantToWall } from '../../lib/tz';
+  import { nasBackup } from '../../lib/nas.svelte';
+  import PhotoPicker from '../PhotoPicker.svelte';
+  import MomentCapture from '../MomentCapture.svelte';
   import { router, navigate } from '../../lib/router.svelte';
   import { recall, remember } from '../../lib/ui-memory';
   import Icon from '../Icon.svelte';
@@ -38,6 +42,9 @@
   const stopsQ = liveQuery(() => db.stops.where('tripId').equals(trip.id).sortBy('order'));
   const citiesQ = liveQuery(() => db.cities.where('tripId').equals(trip.id).sortBy('order'));
   const photosQ = liveQuery(() => db.photos.where('tripId').equals(trip.id).toArray());
+  const momentsQ = liveQuery(() => db.moments.where('tripId').equals(trip.id).sortBy('at'));
+  const moments = $derived($momentsQ ?? []);
+  let editingMoment = $state<Moment | null>(null);
   const stops = $derived($stopsQ ?? []);
   const cities = $derived($citiesQ ?? []);
   const allPhotos = $derived($photosQ ?? []);
@@ -46,24 +53,56 @@
   const multiCity = $derived(cities.length >= 2);
   const cityNameById = $derived(new Map(cities.map((c) => [c.id, c.name])));
 
-  type StopRow = { kind: 'header'; label: string } | { kind: 'stop'; stop: Stop; index: number };
+  type StopRow =
+    | { kind: 'header'; label: string }
+    | { kind: 'stop'; stop: Stop; index: number }
+    | { kind: 'moment'; moment: Moment };
+  /** Planned stops grouped by city, each city's off-plan moments after its stops. */
   const stopRows = $derived.by<StopRow[]>(() => {
-    if (!multiCity) return stops.map((stop, index) => ({ kind: 'stop', stop, index }));
+    const momentsFor = (key: string | null) =>
+      moments
+        .filter(
+          (m) => (m.cityId ?? null) === key || (key === null && !cityNameById.has(m.cityId ?? '')),
+        )
+        .map((moment) => ({ kind: 'moment' as const, moment }));
+    if (!multiCity) {
+      const rows: StopRow[] = stops.map((stop, index) => ({ kind: 'stop', stop, index }));
+      if (moments.length)
+        rows.push(
+          { kind: 'header', label: 'Off the plan' },
+          ...moments.map((moment) => ({ kind: 'moment' as const, moment })),
+        );
+      return rows;
+    }
     const rows: StopRow[] = [];
     let lastKey: string | null | undefined = undefined;
+    const closeGroup = () => {
+      if (lastKey !== undefined) rows.push(...momentsFor(lastKey));
+    };
     stops.forEach((stop, index) => {
-      const key = stop.cityId ?? null;
+      const key = stop.cityId && cityNameById.has(stop.cityId) ? stop.cityId : null;
       if (key !== lastKey) {
-        rows.push({
-          kind: 'header',
-          label: (stop.cityId && cityNameById.get(stop.cityId)) || 'Other',
-        });
+        closeGroup();
+        rows.push({ kind: 'header', label: (key && cityNameById.get(key)) || 'Other' });
         lastKey = key;
       }
       rows.push({ kind: 'stop', stop, index });
     });
+    closeGroup();
+    // Cities with moments but no stops yet.
+    const shownKeys = new Set(
+      stops.map((s) => (s.cityId && cityNameById.has(s.cityId) ? s.cityId : null)),
+    );
+    for (const c of cities)
+      if (!shownKeys.has(c.id) && moments.some((m) => m.cityId === c.id))
+        rows.push({ kind: 'header', label: c.name }, ...momentsFor(c.id));
     return rows;
   });
+
+  function momentTime(m: Moment): string {
+    const tz = cities.find((c) => c.id === m.cityId)?.tz;
+    return instantToWall(m.at, tz).slice(11, 16);
+  }
 
   // Detail selection via the route: #/trip/:id/stops/:stopId
   const selectedId = $derived(router.path.split('/').filter(Boolean)[3] ?? null);
@@ -87,7 +126,9 @@
     return m;
   });
 
-  const photos = $derived(allPhotos.filter((p) => p.stopId === selectedId));
+  const photos = $derived(
+    allPhotos.filter((p) => p.stopId === selectedId).sort((a, b) => photoTime(a) - photoTime(b)),
+  );
   let photoUrls = $state<Record<string, string>>({});
   $effect(() => {
     const map: Record<string, string> = {};
@@ -177,14 +218,18 @@
   }
 
   // ---- detail: photos + checklist ----
-  async function onPhoto(e: Event) {
-    const input = e.currentTarget as HTMLInputElement;
-    const file = input.files?.[0];
-    if (file && selected) {
-      await addPhoto(file, { tripId: trip.id, stopId: selected.id, kind: 'stop' });
-      flashSaved();
-    }
-    input.value = '';
+  async function onPhotos(files: File[]) {
+    if (!selected) return;
+    const tz = cities.find((c) => c.id === selected.cityId)?.tz;
+    await addPhotos(files, { tripId: trip.id, stopId: selected.id, kind: 'stop', tz });
+    flashSaved();
+  }
+
+  /** On the NAS, waiting, or failed — so the backup state of each photo is plain. */
+  function backupBadge(id: string): string {
+    if (!nasBackup.configured) return '';
+    if (nasBackup.failures[id]) return 'not backed up';
+    return '';
   }
 
   let newItemText = $state('');
@@ -321,7 +366,8 @@
         <div class="photo-grid">
           {#each photos as p (p.id)}
             <div class="photo-thumb">
-              <img src={photoUrls[p.id]} alt={selected.name} />
+              <img src={photoUrls[p.id]} alt={selected.name} loading="lazy" decoding="async" />
+              {#if backupBadge(p.id)}<span class="photo-badge">{backupBadge(p.id)}</span>{/if}
               <div class="photo-actions">
                 <button class="photo-act" aria-label="Save photo" onclick={() => downloadPhoto(p)}>
                   <Icon name="export" size={16} />
@@ -345,10 +391,7 @@
           {/each}
         </div>
       {/if}
-      <label class="btn btn--ghost receipt-btn">
-        <Icon name="camera" size={20} /> Add photo
-        <input type="file" accept="image/*" capture="environment" hidden onchange={onPhoto} />
-      </label>
+      <PhotoPicker onFiles={onPhotos} />
       <p class="hint">
         Stored on this device (and your NAS, if set up). Deleting a photo also removes it from this
         trip's journal and future backups.
@@ -408,9 +451,21 @@
 
       {#if stops.length}
         <div class="stop-list">
-          {#each stopRows as row (row.kind === 'stop' ? row.stop.id : `h-${row.label}`)}
+          {#each stopRows as row, ri (row.kind === 'stop' ? row.stop.id : row.kind === 'moment' ? `m-${row.moment.id}` : `h-${ri}-${row.label}`)}
             {#if row.kind === 'header'}
               <span class="stop-city-head section-title">{row.label}</span>
+            {:else if row.kind === 'moment'}
+              {@const m = row.moment}
+              {@const n = allPhotos.filter((p) => p.momentId === m.id).length}
+              <div class="stop-row moment-row">
+                <span class="check-box check-box--none" aria-hidden="true"></span>
+                <button class="stop-open" onclick={() => (editingMoment = m)}>
+                  <span class="stop-name">{m.title}</span>
+                  <span class="stop-meta"
+                    >off-plan · {momentTime(m)}{n ? ` · ${n} photo${n > 1 ? 's' : ''}` : ''}</span
+                  >
+                </button>
+              </div>
             {:else}
               {@const s = row.stop}
               {@const i = row.index}
@@ -469,4 +524,14 @@
       {/if}
     {/if}
   </div>
+{/if}
+
+{#if editingMoment}
+  <MomentCapture
+    {trip}
+    {cities}
+    {stops}
+    moment={editingMoment}
+    onClose={() => (editingMoment = null)}
+  />
 {/if}

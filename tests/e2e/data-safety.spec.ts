@@ -228,7 +228,7 @@ test('receipt write failure rolls back the expense edit and keeps the draft visi
   });
   await page.getByText('Original expense', { exact: true }).click();
   await page.getByLabel('Description', { exact: true }).fill('Unsaved edit');
-  await page.locator('dialog input[type="file"]').setInputFiles({
+  await page.locator('dialog input[type="file"]:not([capture])').setInputFiles({
     name: 'synthetic.png',
     mimeType: 'image/png',
     buffer: Buffer.from('synthetic image'),

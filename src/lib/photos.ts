@@ -44,23 +44,25 @@ export async function captureTime(file: Blob, tz?: string): Promise<number | und
 }
 
 /**
- * Store picked or captured images, in the order they were taken. Each is
- * copied to its own bytes (never a reference into the picked file), with its
- * size and SHA-256 recorded so its NAS copy can be verified, and its original
- * capture time where the file carries one.
+ * Picked or captured images as photo records, in the order they were taken —
+ * without writing them, so a caller can add them inside its own transaction
+ * (preparing involves reads and hashing, which can't run inside one). Each
+ * is copied to its own bytes (never a reference into the picked file), with
+ * its size and SHA-256 recorded so its NAS copy can be verified, and its
+ * original capture time where the file carries one.
  */
-export async function addPhotos(files: Blob[], target: PhotoTarget): Promise<string[]> {
+export async function preparePhotos(files: Blob[], target: PhotoTarget): Promise<Photo[]> {
   const timed = await Promise.all(
     files.map(async (file, i) => ({ file, i, takenAt: await captureTime(file, target.tz) })),
   );
   timed.sort((a, b) => (a.takenAt ?? Infinity) - (b.takenAt ?? Infinity) || a.i - b.i);
-  const ids: string[] = [];
   const now = Date.now();
+  const out: Photo[] = [];
   for (const [n, { file, takenAt }] of timed.entries()) {
     const buf = await file.arrayBuffer();
-    const id = newId();
-    await db.photos.add({
-      id,
+    const sha256 = await sha256Hex(buf);
+    out.push({
+      id: newId(),
       tripId: target.tripId,
       stopId: target.stopId ?? null,
       expenseId: target.expenseId ?? null,
@@ -68,14 +70,20 @@ export async function addPhotos(files: Blob[], target: PhotoTarget): Promise<str
       kind: target.kind,
       blob: new Blob([buf], { type: file.type }),
       bytes: buf.byteLength,
-      ...(await sha256Hex(buf).then((h) => (h ? { sha256: h } : {}))),
+      ...(sha256 ? { sha256 } : {}),
       ...(takenAt != null ? { takenAt } : {}),
       // Distinct, ordered stamps keep a batch in capture order everywhere.
       createdAt: now + n,
     });
-    ids.push(id);
   }
-  return ids;
+  return out;
+}
+
+/** Store picked or captured images (see preparePhotos). */
+export async function addPhotos(files: Blob[], target: PhotoTarget): Promise<string[]> {
+  const rows = await preparePhotos(files, target);
+  await db.photos.bulkAdd(rows);
+  return rows.map((r) => r.id);
 }
 
 export async function addPhoto(file: Blob, target: PhotoTarget): Promise<string> {
@@ -101,7 +109,7 @@ export function photoTime(p: Pick<Photo, 'takenAt' | 'createdAt'>): number {
  * copy). Call inside a transaction that includes db.photos and db.kv.
  */
 export async function deletePhotosWhere(
-  index: 'id' | 'tripId' | 'stopId' | 'expenseId',
+  index: 'id' | 'tripId' | 'stopId' | 'expenseId' | 'momentId',
   value: string,
 ): Promise<void> {
   const ids = (await db.photos.where(index).equals(value).primaryKeys()) as string[];

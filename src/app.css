@@ -2248,3 +2248,81 @@ textarea.field {
   padding: 4px;
   align-items: center;
 }
+
+/* ---------- Photos and moments ---------- */
+
+.photo-picker {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s2);
+}
+
+.photo-picker .btn {
+  padding-inline: 8px;
+  font-size: 14px;
+}
+
+.moment-when {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+
+.moment-row .stop-name::before {
+  content: '✦ ';
+  color: var(--accent);
+}
+
+.photo-badge {
+  position: absolute;
+  left: 4px;
+  bottom: 4px;
+  padding: 1px 6px;
+  border-radius: var(--r-pill);
+  font-size: 10px;
+  font-weight: 700;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+}
+
+.check-box--none {
+  border-color: transparent;
+  background: none;
+}
+
+.manifest {
+  margin: var(--s2) 0 0;
+  padding-left: 1.6em;
+  font-size: 13px;
+  color: var(--ink-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* ---------- Quick expense capture ---------- */
+
+.quick-picks {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  scrollbar-width: none;
+}
+
+.quick-picks .chip {
+  flex: 0 0 auto;
+}
+
+.more-details > summary {
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  padding: 8px 0;
+}
+
+.more-details[open] {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}

@@ -318,7 +318,7 @@ export class SystemaDB extends Dexie {
       cities: 'id, tripId, order',
       stops: 'id, tripId, cityId, order',
       expenses: 'id, tripId, cityId, order',
-      photos: 'id, tripId, stopId, expenseId, kind',
+      photos: 'id, tripId, stopId, expenseId, kind, momentId',
       fxRates: 'code',
       moments: 'id, tripId, cityId, stopId',
     });

@@ -22,7 +22,7 @@ export function downloadBlob(filename: string, blob: Blob): void {
  * any await.
  */
 export async function shareOrDownload(file: File): Promise<'shared' | 'downloaded' | 'cancelled'> {
-  const nav = navigator as Navigator & { canShare?: (d: ShareData) => boolean };
+  const nav = navigator as Navigator & { canShare?: (d: { files?: File[] }) => boolean };
   if (nav.canShare?.({ files: [file] })) {
     try {
       await nav.share({ files: [file] });

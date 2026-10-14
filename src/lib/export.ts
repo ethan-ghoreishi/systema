@@ -1,6 +1,8 @@
 import type { Table } from 'dexie';
 import { validateBackup } from './backup-validation';
-import { photoExt } from './photos';
+import { photoExt, photoRef, photoTime } from './photos';
+import { visitTimeline } from './moments';
+import { instantToWall, wallLabel } from './tz';
 import { isZip, unzip, verifyZip, zip } from './zip';
 import {
   db,
@@ -27,31 +29,84 @@ import { TOMBSTONE, isLocalKey, same, type SyncRecords } from './sync';
 
 /** Minimal photo info the pack needs (no blobs). */
 export interface PackPhoto {
+  id: string;
   stopId: string | null;
+  momentId?: string | null;
+  kind: Photo['kind'];
+  takenAt?: number;
   createdAt: number;
 }
 
-function photoStamp(ms: number): string {
-  const d = new Date(ms);
-  const date = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
-  const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-  return `${date}, ${time}`;
+export interface ManifestEntry {
+  n: number;
+  id: string;
+  ref: string;
+  city: string;
+  place: string;
+  when: string;
+}
+
+/** 'Fri 16 Oct, 14:32' in the zone of the city it happened in. */
+function localStamp(t: number, tz?: string): string {
+  return wallLabel(instantToWall(t, tz));
+}
+
+/**
+ * The photographs to attach to Claude, numbered in the order they were
+ * taken, each with its stable reference (P-xxxxxx), city and place. Receipts
+ * stay out.
+ */
+export function photoManifest(
+  photos: PackPhoto[],
+  stops: Stop[],
+  moments: Moment[],
+  cities: City[],
+): ManifestEntry[] {
+  const stopById = new Map(stops.map((s) => [s.id, s]));
+  const momentById = new Map(moments.map((m) => [m.id, m]));
+  const cityById = new Map(cities.map((c) => [c.id, c]));
+  return photos
+    .filter((p) => p.kind !== 'receipt')
+    .sort((a, b) => photoTime(a) - photoTime(b) || a.id.localeCompare(b.id))
+    .map((p, i) => {
+      const m = p.momentId ? momentById.get(p.momentId) : undefined;
+      const s = p.stopId ? stopById.get(p.stopId) : undefined;
+      const city = cityById.get((m?.cityId ?? s?.cityId) || '');
+      return {
+        n: i + 1,
+        id: p.id,
+        ref: photoRef(p.id),
+        city: city?.name ?? '',
+        place: m?.title ?? s?.name ?? (p.kind === 'cover' ? 'Trip' : 'Unassigned'),
+        when: localStamp(photoTime(p), city?.tz),
+      };
+    });
+}
+
+export interface PackInput {
+  trip: Trip;
+  cities: City[];
+  stops: Stop[];
+  expenses: Expense[];
+  photos: PackPhoto[];
+  moments?: Moment[];
 }
 
 /**
  * Build the trip pack Markdown. Pure given the trip's data.
  *
- * Photos are listed (stop + time), not embedded: base64 images would bloat the
- * file far past what can be pasted into a chat, and pasted Markdown can't carry
- * viewable images anyway. Attach the photos themselves in Claude if wanted.
+ * Photos are listed in a numbered manifest (reference, place, time), not
+ * embedded: base64 images would bloat the file far past what can be pasted
+ * into a chat. The photos themselves are attached in Claude in the same order.
  */
-export function buildTripPack(
-  trip: Trip,
-  cities: City[],
-  stops: Stop[],
-  expenses: Expense[],
-  photos: PackPhoto[],
-): string {
+export function buildTripPack({
+  trip,
+  cities,
+  stops,
+  expenses,
+  photos,
+  moments = [],
+}: PackInput): string {
   const lines: string[] = [];
   lines.push(`# Trip pack: ${tripDisplayName(trip, cities)}`, '');
   lines.push(`**Shape:** ${tripShape(trip, cities).label}  `);
@@ -62,27 +117,68 @@ export function buildTripPack(
     lines.push('## Plan', '', trip.planText.trim(), '');
   }
 
+  const cityById = new Map(cities.map((c) => [c.id, c]));
   const orderedStops = [...stops].sort((a, b) => a.order - b.order);
-  const stopPhotos = photos.filter((p) => p.stopId != null);
+  const manifest = photoManifest(photos, stops, moments, cities);
+  const refsFor = (pred: (p: PackPhoto) => boolean) =>
+    manifest.filter((e) => pred(photos.find((p) => p.id === e.id)!)).map((e) => e.ref);
+
   if (orderedStops.length) {
     lines.push('## Stops', '');
     for (const s of orderedStops) {
       lines.push(`### ${s.name}${s.visited ? ' (visited)' : ''}`);
+      if (s.guide?.anchor) lines.push(`Anchor: ${s.guide.anchor}`);
       for (const item of s.checklist) lines.push(`- [${item.done ? 'x' : ' '}] ${item.text}`);
       if (s.notes.trim()) lines.push('', s.notes.trim());
-      const pc = stopPhotos.filter((p) => p.stopId === s.id).length;
-      if (pc) lines.push('', `_${pc} photo${pc > 1 ? 's' : ''}_`);
+      const refs = refsFor((p) => p.stopId === s.id && !p.momentId);
+      if (refs.length)
+        lines.push('', `_${refs.length} photo${refs.length > 1 ? 's' : ''}: ${refs.join(', ')}_`);
       lines.push('');
     }
   }
 
-  if (stopPhotos.length) {
-    const nameById = new Map(stops.map((s) => [s.id, s.name]));
-    lines.push('## Photos', '');
-    for (const p of [...stopPhotos].sort((a, b) => a.createdAt - b.createdAt)) {
-      lines.push(
-        `- ${nameById.get(p.stopId as string) ?? 'Unassigned'}: ${photoStamp(p.createdAt)}`,
-      );
+  const timeline = visitTimeline(stops, moments, cities);
+  if (timeline.length) {
+    lines.push('## Visit order', '');
+    timeline.forEach((it, i) => {
+      if (it.kind === 'stop') {
+        const c = cityById.get(it.stop.cityId ?? '');
+        const when = it.at != null ? `${localStamp(it.at, c?.tz)}, ` : '';
+        lines.push(`${i + 1}. ${when}${it.stop.name}${c ? ` (${c.name})` : ''}`);
+      } else {
+        const c = cityById.get(it.moment.cityId ?? '');
+        lines.push(
+          `${i + 1}. ${localStamp(it.at, c?.tz)}, off-plan: ${it.moment.title}${c ? ` (${c.name})` : ''}`,
+        );
+      }
+    });
+    lines.push('');
+  }
+
+  if (moments.length) {
+    const stopName = new Map(stops.map((s) => [s.id, s.name]));
+    lines.push('## Unplanned / serendipitous moments (in visit order)', '');
+    for (const it of timeline) {
+      if (it.kind !== 'moment') continue;
+      const m = it.moment;
+      const c = cityById.get(m.cityId ?? '');
+      const refs = refsFor((p) => p.momentId === m.id);
+      const bits = [
+        `- ${localStamp(m.at, c?.tz)}${c ? `, ${c.name}` : ''}: **${m.title}**`,
+        m.note ? `. ${m.note}` : '',
+        m.stopId && stopName.get(m.stopId) ? ` (at ${stopName.get(m.stopId)})` : '',
+        refs.length ? ` [photos: ${refs.join(', ')}]` : '',
+      ];
+      lines.push(bits.join(''));
+    }
+    lines.push('');
+  }
+
+  if (manifest.length) {
+    lines.push('## Photos (attached in this order)', '');
+    for (const e of manifest) {
+      const where = [e.city, e.place].filter(Boolean).join(', ');
+      lines.push(`${e.n}. [photo: ${e.ref}] ${where}, ${e.when}`);
     }
     lines.push('');
   }
@@ -101,19 +197,23 @@ export function buildTripPack(
 }
 
 // The journaling prompt from the brief's appendix. Plain UK English, no em-dashes.
-// The [photo: ...] placeholder contract matches src/lib/journal.ts, which swaps
-// the placeholders for the real stored photographs when the journal is rendered.
+// The [photo: P-xxxxxx] placeholder contract matches src/lib/journal.ts, which
+// swaps the placeholders for the real stored photographs when the journal is
+// rendered — by stable reference, so duplicates and off-plan places are safe.
 export const JOURNAL_PROMPT =
   'You are helping me write a post-trip journal in my City Systems Playbook style. ' +
-  'Using the trip pack below (plan, ticked stops, notes, photos list, expense summary), ' +
+  'Using the trip pack below (plan, ticked stops, visit order, unplanned moments, photos list, expense summary), ' +
   'write a debrief that states my city thesis, tests it against what I actually saw, gives a ' +
   'short reading of each main stop, draws the London and Esfahan contrasts, and ends with a ' +
   'brief counterfactual on what I would do differently. Plain UK English, no em-dashes. ' +
-  'The Photos section of the pack lists the photographs I took, by stop and time. Where one ' +
-  'would naturally illustrate the narrative, insert a placeholder on its own line in exactly ' +
-  'this form: [photo: <stop name>] - use only stop names from the Photos list, at most as many ' +
-  'placeholders per stop as it has photos, placed where they best support the text. My app ' +
-  'replaces them with the real photographs. Trip pack:';
+  'The unplanned moments are things that happened off the plan, in the order they happened: weave them ' +
+  'naturally into the story where they happened, with the same care as the planned stops, rather than ' +
+  'listing them separately. ' +
+  'I have attached my photographs in the order of the Photos section, which gives each one a reference ' +
+  'such as P-3f9a1c, with where and when it was taken. Where a photograph would naturally illustrate ' +
+  'the narrative, insert a placeholder on its own line exactly as listed, for example [photo: P-3f9a1c]. ' +
+  'Use each reference at most once and only references from the list. My app replaces them with the ' +
+  'real photographs. Trip pack:';
 
 export function buildJournalingPrompt(pack: string): string {
   return `${JOURNAL_PROMPT}\n\n${pack}`;

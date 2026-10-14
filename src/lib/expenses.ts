@@ -11,6 +11,9 @@ import { deletePhotosWhere } from './photos';
 
 export interface ExpenseInput {
   cityId: string | null;
+  shared?: boolean;
+  fxDate?: string;
+  gbpManual?: boolean;
   destination: string;
   date: string;
   category: string;
@@ -144,8 +147,9 @@ export async function resolvePendingFx(tripId?: string): Promise<number> {
 
   let resolved = 0;
   for (const e of pending) {
-    const rate = await getRateForDate(e.currency, e.date);
-    if (rate == null) continue;
+    const found = await getRateForDate(e.currency, e.date);
+    if (found == null) continue;
+    const rate = found.rate;
     await db.transaction('rw', db.expenses, async () => {
       const current = await db.expenses.get(e.id);
       if (
@@ -153,12 +157,14 @@ export async function resolvePendingFx(tripId?: string): Promise<number> {
         current.skeleton ||
         current.currency !== e.currency ||
         current.date !== e.date ||
-        current.amountLocal !== e.amountLocal
+        current.amountLocal !== e.amountLocal ||
+        current.gbpManual
       )
         return;
       await db.expenses.update(e.id, {
         amountGBP: round2(current.amountLocal * rate),
         fxRate: rate,
+        fxDate: found.date,
         fxPending: false,
         notes: withFxNote(current.notes, current.currency, rate),
       });
