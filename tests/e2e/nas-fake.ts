@@ -27,6 +27,11 @@ export class FakeNas {
   version: 1 | 2 = 2;
   /** No answer at all (NAS asleep, away from home). */
   unreachable = false;
+  /**
+   * Bodies above this get the connection cut mid-upload — what a proxy limit
+   * (or PHP printing a warning before its headers) looks like to a browser.
+   */
+  cutOffAbove = Infinity;
   latestOverride: { status: number; body: string } | null = null;
 
   handle = async (route: Route) => {
@@ -88,6 +93,7 @@ export class FakeNas {
     }
 
     let body = req.postDataBuffer() ?? Buffer.alloc(0);
+    if (body.length > this.cutOffAbove) return route.abort('connectionreset');
     if (body.length > this.maxBody) {
       if (this.version === 2) return json(413, { ok: false, error: 'larger than post_max_size' });
       body = Buffer.alloc(0); // PHP drops it before the script runs

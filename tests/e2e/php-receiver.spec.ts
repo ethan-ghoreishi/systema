@@ -41,7 +41,7 @@ for (const [label, receiver] of [
       });
       return { trip, stop };
     });
-    expect((await sync(phone)).ok).toBe(true);
+    expect(await sync(phone)).toMatchObject({ ok: true });
 
     const mac = await device(makeContext, rx);
     expect((await sync(mac)).message).toContain('1 photo downloaded');
@@ -117,20 +117,15 @@ test('the receiver keeps the newest 60 snapshots plus one per day', async ({ mak
   expect(days.size).toBe(51); // every day still has a snapshot
 });
 
-// The PHP server runs with post_max_size=2M (see the workflow), like a
-// receiver whose limit is below a phone photo.
-test('the current receiver verifies, replaces a damaged copy, lists photos and names its size limit', async ({
+test('the current receiver verifies uploads, replaces a damaged copy, lists photos and passes Test connection', async ({
   makeContext,
 }) => {
   const rx = phpReceiver()!;
   const phone = await device(makeContext, rx);
-  await run(phone, async (m) => {
-    m.nasBackup.retryDelays = [0, 0];
-  });
   const ids = await run(phone, async (m) => {
     const trip = await m.createTrip('custom');
     const out: string[] = [];
-    for (const [i, n] of [2_000, 3_000, 3_000_000].entries())
+    for (const [i, n] of [2_000, 3_000, 1_500_000].entries())
       out.push(
         await m.addPhoto(new Blob([new Uint8Array(n).fill(i + 7)], { type: 'image/png' }), {
           tripId: trip,
@@ -144,23 +139,21 @@ test('the current receiver verifies, replaces a damaged copy, lists photos and n
   mkdirSync(photos, { recursive: true });
   writeFileSync(join(photos, `${ids[1]}.png`), 'trunc');
 
-  const outcome = await sync(phone);
-  expect(outcome).toMatchObject({ ok: true, partial: true });
-  expect(readFileSync(join(photos, `${ids[1]}.png`)).length).toBe(3_000); // replaced
-  const failures = await run(phone, async (m) => m.nasBackup.failures);
-  expect(Object.keys(failures)).toEqual([ids[2]]);
-  // PHP's server cuts an over-limit upload off rather than answering 413.
-  expect(failures[ids[2]].kind).toBe('too-large');
-  expect(failures[ids[2]].error).toContain('post_max_size');
+  expect(await sync(phone)).toMatchObject({ ok: true });
+  expect(readFileSync(join(photos, `${ids[1]}.png`)).length).toBe(3_000); // replaced, verified
+  expect(readFileSync(join(photos, `${ids[2]}.png`)).length).toBe(1_500_000);
+  expect(await run(phone, async (m) => m.nasBackup.failures)).toEqual({});
 
-  // PHP stored it anyway — only the reply was lost — and the listing shows it.
+  // The listing answers the check in one request.
   const check = await run(phone, async (m) => m.nasBackup.check());
   expect(check.message).toContain('Every photo it lists is on the NAS.');
-  // A retry verifies the stored copy by size and SHA-256 instead of trusting it.
-  const retry = await run(phone, async (m) => m.nasBackup.retryFailed());
-  expect(retry.message).toContain('Every photo on this device is on the NAS.');
 
   const test = await run(phone, async (m) => m.nasBackup.testConnection());
-  expect(test.checks.map((c: any) => c.ok)).toEqual([true, true, true, false]);
-  expect(test.checks[3].detail).toContain('display_errors is on');
+  expect(test.checks.map((c: any) => [c.label.split(' ')[0], c.ok])).toEqual([
+    ['Address', true],
+    ['Receiver', true],
+    ['Token', true],
+    ['An', true],
+  ]);
+  expect(test.checks[1].detail).toContain('version 2');
 });

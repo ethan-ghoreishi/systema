@@ -170,3 +170,24 @@ test('Test connection tells a wrong token, a size limit, CORS and no connection 
   expect(off.ok).toBe(false);
   expect(off.detail).toMatch(/No connection|blocked the reply/);
 });
+
+test('an upload cut off mid-way while smaller ones get through is named as a size limit', async ({
+  makeContext,
+}) => {
+  const nas = new FakeNas();
+  nas.cutOffAbove = 50_000;
+  const phone = await device(makeContext, nas);
+  const { ids } = await tripWithPhotos(phone, [80_000, 1_000, 2_000]);
+  const outcome = await sync(phone);
+  expect(outcome).toMatchObject({ ok: true, partial: true });
+  expect(nas.photos.size).toBe(2);
+  const failures = await app(phone, (m) => m.nasBackup.failures);
+  expect(Object.keys(failures)).toEqual([ids[0]]);
+  expect(failures[ids[0]].kind).toBe('too-large');
+  expect(failures[ids[0]].error).toContain('cut off while sending it');
+
+  // Test connection's real-size probe shows the same limit.
+  const probe = (await app(phone, (m) => m.nasBackup.testConnection())).checks.at(-1);
+  expect(probe.ok).toBe(false);
+  expect(probe.detail).toMatch(/size limit/);
+});
