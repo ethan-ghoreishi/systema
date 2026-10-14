@@ -1,8 +1,9 @@
 <script lang="ts">
   import TopBar from '../components/TopBar.svelte';
+  import { scrollMemory } from '../lib/ui-memory';
   import { tripPresets } from '../lib/presets';
   import { createTrip } from '../lib/trips';
-  import { navigate } from '../lib/router.svelte';
+  import { navigate, router } from '../lib/router.svelte';
 
   let creating = $state(false);
 
@@ -10,15 +11,16 @@
     if (creating) return;
     creating = true;
     const id = await createTrip(key);
-    // Straight into edit to set name, dates, return time and cities.
-    navigate(`/trip/${id}/edit`);
+    // Straight into edit to set the legs. Replaces this chooser in history, so
+    // Back from the new trip never lands on it again.
+    navigate(`/trip/${id}/edit`, { replace: true });
   }
 </script>
 
 <div class="screen-frame">
-  <TopBar title="New trip" back="#/" />
+  <TopBar title="New trip" onBack={() => router.back('/')} />
 
-  <div class="screen-body">
+  <div class="screen-body" use:scrollMemory={router.path}>
     <p class="hint">
       Pick a starting point — it just seeds the usual expense rows. You'll add cities and times
       next, and the app works out the trip's shape, dates and name from those.

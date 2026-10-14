@@ -1,13 +1,4 @@
-/** Browser helpers for copying to the clipboard and downloading text files. */
-
-export async function copyText(text: string): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    return false;
-  }
-}
+/** Browser helpers for downloading and sharing files. (Copying: copy.svelte.ts.) */
 
 export function downloadText(filename: string, text: string, mime = 'text/plain'): void {
   downloadBlob(filename, new Blob([text], { type: `${mime};charset=utf-8` }));
@@ -23,4 +14,23 @@ export function downloadBlob(filename: string, blob: Blob): void {
   a.remove();
   // Generous: a large backup may still be streaming to disk.
   setTimeout(() => URL.revokeObjectURL(url), 120_000);
+}
+
+/**
+ * Share a file through the system share sheet where the platform can (iOS:
+ * Calendar, Files, the Claude app…), else download it. Call from a tap, before
+ * any await.
+ */
+export async function shareOrDownload(file: File): Promise<'shared' | 'downloaded' | 'cancelled'> {
+  const nav = navigator as Navigator & { canShare?: (d: ShareData) => boolean };
+  if (nav.canShare?.({ files: [file] })) {
+    try {
+      await nav.share({ files: [file] });
+      return 'shared';
+    } catch (err) {
+      if ((err as Error).name === 'AbortError') return 'cancelled';
+    }
+  }
+  downloadBlob(file.name, file);
+  return 'downloaded';
 }

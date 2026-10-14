@@ -10,6 +10,11 @@ import {
   tripEndIso,
   tripCityNames,
   derivedTripFields,
+  stopoverShape,
+  stopoverNotes,
+  legOrderProblem,
+  legIssues,
+  activeLegId,
 } from '../../src/lib/trip-shape';
 
 function trip(over: Partial<Trip> = {}): Trip {
@@ -261,5 +266,111 @@ describe('derivedTripFields — stored trip dates mirror the legs', () => {
     // 02:30 doesn't exist in London that night (clocks go forward); a parsed
     // Date would shift it. The stored target must stay as written.
     expect(derivedTripFields(trip(), legs).returnFlightAt).toBe('2026-03-29T02:30');
+  });
+});
+
+describe('two-city stopover (derived, never stored)', () => {
+  const legs = (firstSleep: 'hotel' | 'none', ticket?: 'outbound' | 'return') => [
+    city({
+      id: 'a',
+      name: 'Bologna',
+      order: 0,
+      sleep: firstSleep,
+      exit: ticket ? { throughTicket: ticket } : undefined,
+    }),
+    city({
+      id: 'b',
+      name: 'Barcelona',
+      order: 1,
+      sleep: firstSleep === 'hotel' ? 'none' : 'hotel',
+    }),
+  ];
+
+  it('names all four scenarios from the night and the hop ticket', () => {
+    expect(stopoverShape(trip(), legs('none', 'outbound'))?.scenario).toBe(1);
+    expect(stopoverShape(trip(), legs('hotel', 'outbound'))?.scenario).toBe(2);
+    expect(stopoverShape(trip(), legs('none', 'return'))?.scenario).toBe(3);
+    expect(stopoverShape(trip(), legs('hotel', 'return'))?.scenario).toBe(4);
+    expect(tripShape(trip(), legs('none', 'outbound')).label).toBe(
+      'two-city stopover 1 · out via Bologna, night in Barcelona',
+    );
+    expect(tripShape(trip(), legs('none', 'return')).label).toBe(
+      'two-city stopover 3 · back via Barcelona, night in Barcelona',
+    );
+  });
+
+  it('a plain two-city break on separate tickets is not a stopover', () => {
+    expect(stopoverShape(trip(), legs('none'))).toBeUndefined();
+    expect(tripShape(trip(), legs('none')).key).toBe('multi-city-break');
+    expect(tripShape(trip({ preset: 'two-city' }), legs('none')).label).toBe(
+      'two-city stopover · Bologna → Barcelona, night in Barcelona',
+    );
+  });
+
+  it('notes, without blocking, a hop that drifts from the pattern', () => {
+    const cs = legs('none', 'outbound');
+    cs[0].arrival = '2026-10-16T12:30';
+    cs[0].departure = '2026-10-16T16:00';
+    const notes = stopoverNotes(trip(), cs).map((n) => n.message);
+    expect(notes[0]).toMatch(/Landing in Bologna at 12:30/);
+    expect(notes[1]).toMatch(/Leaving Bologna at 16:00/);
+  });
+});
+
+describe('chronology', () => {
+  it('flags a departure before its arrival, with repair guidance', () => {
+    const c = city({ name: 'Rome', arrival: '2026-10-16T09:00', departure: '2026-10-15T21:00' });
+    expect(legOrderProblem(c)).toMatch(/Rome: departure \(Thu 15 Oct, 21:00\) is before arrival/);
+    expect(legIssues(trip(), [c])[0].kind).toBe('order');
+  });
+
+  it('compares across legs on real instants (a westward hop is fine)', () => {
+    // Leave Athens 07:00 (04:00Z), land Lisbon 08:45 (07:45Z): later on the clock and in time.
+    // Leave Athens 07:00, land Lisbon 06:50 local (05:50Z): earlier on the clock, still after.
+    const athens = city({
+      id: 'ath',
+      name: 'Athens',
+      order: 0,
+      arrival: '2026-06-01T09:00',
+      departure: '2026-06-02T07:00',
+      tz: 'Europe/Athens',
+    });
+    const lisbon = city({
+      id: 'lis',
+      name: 'Lisbon',
+      order: 1,
+      arrival: '2026-06-02T06:50',
+      departure: '2026-06-02T21:00',
+      tz: 'Europe/Lisbon',
+    });
+    expect(legIssues(trip(), [athens, lisbon])).toEqual([]);
+    lisbon.arrival = '2026-06-02T05:30'; // 04:30Z: half an hour after leaving Athens — fine
+    expect(legIssues(trip(), [athens, lisbon])).toEqual([]);
+    lisbon.arrival = '2026-06-02T04:00'; // 03:00Z: before leaving Athens
+    expect(legIssues(trip(), [athens, lisbon])[0]).toMatchObject({
+      cityId: 'lis',
+      kind: 'overlap',
+    });
+  });
+
+  it('finds the leg you are in', () => {
+    const a = city({
+      id: 'a',
+      order: 0,
+      arrival: '2026-06-01T09:00',
+      departure: '2026-06-01T19:00',
+      tz: 'Europe/Rome',
+    });
+    const b = city({
+      id: 'b',
+      order: 1,
+      arrival: '2026-06-01T21:00',
+      departure: '2026-06-02T19:00',
+      tz: 'Europe/Rome',
+    });
+    expect(activeLegId([a, b], Date.parse('2026-06-01T12:00Z'))).toBe('a');
+    expect(activeLegId([a, b], Date.parse('2026-06-01T18:00Z'))).toBe('b');
+    expect(activeLegId([a, b], Date.parse('2026-05-01T12:00Z'))).toBe('a');
+    expect(activeLegId([a, b], Date.parse('2026-07-01T12:00Z'))).toBe('b');
   });
 });

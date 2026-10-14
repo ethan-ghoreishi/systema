@@ -340,9 +340,9 @@ export interface LegIssue {
  * Departure before arrival within one leg: the reason a save is refused, as
  * the guidance to show. Undefined when the times are fine (or incomplete).
  */
-export function legOrderProblem(c: Pick<City, 'name' | 'arrival' | 'departure' | 'tz'>):
-  | string
-  | undefined {
+export function legOrderProblem(
+  c: Pick<City, 'name' | 'arrival' | 'departure' | 'tz'>,
+): string | undefined {
   const arr = wallToInstant(c.arrival, c.tz);
   const dep = wallToInstant(c.departure, c.tz);
   if (arr == null || dep == null || dep >= arr) return undefined;

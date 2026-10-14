@@ -16,13 +16,24 @@
   } from '../../lib/stops';
   import { addPhoto, deletePhoto, downloadPhoto } from '../../lib/photos';
   import { router, navigate } from '../../lib/router.svelte';
+  import { recall, remember } from '../../lib/ui-memory';
   import Icon from '../Icon.svelte';
   import StopsMap from '../StopsMap.svelte';
 
   let { trip }: { trip: Trip } = $props();
 
-  // 'list' | 'map' — the map redraws live as stops change in the field.
-  let stopView = $state<'list' | 'map'>('list');
+  // 'list' | 'map', kept per trip — the map redraws live as stops change.
+  const viewKey = `stops:${trip.id}:view`;
+  let stopView = $state<'list' | 'map'>(recall(viewKey, 'list'));
+  $effect(() => remember(viewKey, stopView));
+
+  // The stop just opened gets focus back when the list returns.
+  let returnFocus = $state<string | null>(null);
+  function focusReturn(node: HTMLElement, on: boolean) {
+    if (!on) return;
+    node.focus({ preventScroll: true });
+    returnFocus = null;
+  }
 
   const stopsQ = liveQuery(() => db.stops.where('tripId').equals(trip.id).sortBy('order'));
   const citiesQ = liveQuery(() => db.cities.where('tripId').equals(trip.id).sortBy('order'));
@@ -108,10 +119,12 @@
     if (n > 0) flashSaved();
   }
   function openStop(s: Stop) {
+    returnFocus = s.id;
     navigate(`/trip/${trip.id}/stops/${s.id}`);
   }
   function backToList() {
-    navigate(`/trip/${trip.id}/stops`);
+    const list = `/trip/${trip.id}/stops`;
+    router.back(list, (p) => p === list);
   }
 
   // Persist input immediately, bound to the currently selected stop.
@@ -177,9 +190,6 @@
   <!-- Detail -->
   <div class="stop-detail">
     <div class="detail-bar">
-      <button class="btn btn--ghost btn--sm back-link" onclick={backToList}>
-        <Icon name="back" size={18} /> Stops
-      </button>
       <span class="autosave" class:autosave--on={savedAt}>
         {savedAt ? 'Saved ✓' : 'Saves automatically'}
       </span>
@@ -352,7 +362,11 @@
                 >
                   {#if s.visited}<Icon name="check" size={16} />{/if}
                 </button>
-                <button class="stop-open" onclick={() => openStop(s)}>
+                <button
+                  class="stop-open"
+                  onclick={() => openStop(s)}
+                  use:focusReturn={returnFocus === s.id}
+                >
                   <span class="stop-name">{s.name}</span>
                   <span class="stop-meta">
                     {#if s.notes.trim()}notes{/if}

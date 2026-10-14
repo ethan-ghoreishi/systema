@@ -10,6 +10,9 @@
   import Insights from './routes/Insights.svelte';
   import NotFound from './routes/NotFound.svelte';
   import UpdateToast from './components/UpdateToast.svelte';
+  import CopySheet from './components/CopySheet.svelte';
+  import { db } from './lib/db';
+  import { initViewport } from './lib/viewport';
   import { router } from './lib/router.svelte';
   import { settingsStore } from './lib/settings.svelte';
   import { initFxAutoResolve, resolvePendingFx } from './lib/expenses';
@@ -39,7 +42,17 @@
     return { name: 'notfound' };
   });
 
+  // A newer version opened the database in another tab or window: this one can
+  // no longer write, so say so instead of failing saves silently.
+  let staleTab = $state(false);
+  db.on('versionchange', () => {
+    db.close();
+    staleTab = true;
+    return false;
+  });
+
   onMount(() => {
+    initViewport();
     void settingsStore.load().then(() => nasBackup.init());
     initFxAutoResolve();
     // On every open, price any expenses captured offline without a rate.
@@ -50,6 +63,13 @@
 </script>
 
 <UpdateToast />
+<CopySheet />
+{#if staleTab}
+  <div class="toast" role="alert">
+    <span class="toast-text">systema was updated in another window. Reload to keep saving.</span>
+    <button class="btn btn--primary btn--sm" onclick={() => location.reload()}>Reload</button>
+  </div>
+{/if}
 
 <AppShell>
   {#if view.name === 'home'}

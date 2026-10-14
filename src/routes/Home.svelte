@@ -5,6 +5,8 @@
   import { realExpenses, tripTotalGBP } from '../lib/expenses';
   import { formatGBP } from '../lib/money';
   import TopBar from '../components/TopBar.svelte';
+  import { scrollMemory } from '../lib/ui-memory';
+  import { router } from '../lib/router.svelte';
   import Icon from '../components/Icon.svelte';
   import TripCover from '../components/TripCover.svelte';
   import { conflictsQuery } from '../lib/conflicts';
@@ -83,7 +85,7 @@
     {/snippet}
   </TopBar>
 
-  <div class="screen-body">
+  <div class="screen-body" use:scrollMemory={router.path}>
     <a class="btn btn--primary new-trip" href="#/new">
       <Icon name="plus" size={20} /> New trip
     </a>

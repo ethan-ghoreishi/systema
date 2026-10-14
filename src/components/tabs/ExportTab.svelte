@@ -4,7 +4,8 @@
   import { buildTripPack, buildJournalingPrompt, buildMemoryPrompt } from '../../lib/export';
   import { buildTripCsv, csvNote } from '../../lib/csv';
   import { tripDisplayName } from '../../lib/trip-shape';
-  import { copyText, downloadText } from '../../lib/download';
+  import { downloadText } from '../../lib/download';
+  import { copyText } from '../../lib/copy.svelte';
   import { updateTrip } from '../../lib/trips';
 
   let { trip }: { trip: Trip } = $props();
@@ -68,11 +69,10 @@
     );
   }
 
-  async function copyPrompt() {
-    const ok = await copyText(prompt);
-    status = ok
-      ? 'Journaling prompt copied — paste it into Claude.'
-      : 'Copy failed — use download instead.';
+  function copyPrompt() {
+    void copyText(prompt, 'Journaling prompt').then((ok) => {
+      if (ok) status = 'Journaling prompt copied — paste it into Claude.';
+    });
   }
 
   function downloadPack() {
@@ -80,11 +80,13 @@
     status = 'Trip pack downloaded.';
   }
 
-  async function copyMemoryPrompt() {
-    const ok = await copyText(buildMemoryPrompt(trip, cities, stops, expenses));
-    status = ok
-      ? 'Reconstruction prompt copied — Claude interviews you first, then writes the journal. Paste the result back below.'
-      : 'Copy failed.';
+  function copyMemoryPrompt() {
+    const text = buildMemoryPrompt(trip, cities, stops, expenses);
+    void copyText(text, 'Reconstruction prompt').then((ok) => {
+      if (ok)
+        status =
+          'Reconstruction prompt copied — Claude interviews you first, then writes the journal. Paste the result back below.';
+    });
   }
 
   function downloadCsv() {

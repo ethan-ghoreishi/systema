@@ -2,6 +2,8 @@
   import { liveQuery } from 'dexie';
   import { db, type PromptPrefs } from '../lib/db';
   import TopBar from '../components/TopBar.svelte';
+  import { router, inTrip } from '../lib/router.svelte';
+  import { scrollMemory } from '../lib/ui-memory';
   import { updateTrip } from '../lib/trips';
   import {
     buildResearchPrompt,
@@ -11,7 +13,8 @@
     interestOptions,
   } from '../lib/prompt';
   import { tripDisplayName, tripMetaLabel } from '../lib/trip-shape';
-  import { copyText, downloadText } from '../lib/download';
+  import { downloadText } from '../lib/download';
+  import { copyText } from '../lib/copy.svelte';
 
   let { id }: { id: string } = $props();
 
@@ -43,14 +46,19 @@
       : [...prefs.interests, tag];
   }
 
-  async function copyNow() {
+  function copyNow() {
     if (!prefs) return;
-    // Persist the answers with the trip so they're remembered next time.
-    await updateTrip(id, { promptPrefs: $state.snapshot(prefs) });
-    const ok = await copyText(promptText);
-    status = ok
-      ? 'Prompt copied — paste it into Claude (or any LLM), then paste the plan it returns into the Plan tab.'
-      : 'Copy failed — use download instead.';
+    // Copy first, inside the tap: iOS refuses the clipboard after an await.
+    const copied = copyText(promptText, 'Research prompt');
+    // Then remember the answers with the trip, without holding up the copy.
+    void updateTrip(id, { promptPrefs: $state.snapshot(prefs) }).catch(() => {
+      status = 'Prompt copied, but your answers could not be saved for next time.';
+    });
+    void copied.then((ok) => {
+      if (ok)
+        status =
+          'Prompt copied — paste it into Claude (or any LLM), then paste the plan it returns into the Plan tab.';
+    });
   }
 
   function downloadNow() {
@@ -61,9 +69,9 @@
 
 {#if trip && prefs}
   <div class="screen-frame">
-    <TopBar title="Research prompt" back={`#/trip/${id}/plan`} />
+    <TopBar title="Research prompt" onBack={() => router.back(`/trip/${id}/plan`, inTrip(id))} />
 
-    <div class="screen-body">
+    <div class="screen-body" use:scrollMemory={router.path}>
       <p class="hint">
         Copy a ready-to-run prompt. It bakes in your standing profile (walking-first, coeliac-safe
         vegetarian grocery-first, London and Esfahan comparisons), the itinerary from your legs, and

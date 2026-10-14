@@ -2,6 +2,8 @@
   import { liveQuery } from 'dexie';
   import { db } from '../lib/db';
   import TopBar from '../components/TopBar.svelte';
+  import { scrollMemory } from '../lib/ui-memory';
+  import { router } from '../lib/router.svelte';
   import { buildOverview, buildCityInsights } from '../lib/insights';
   import { buildAllTripsCsv, csvNote } from '../lib/csv';
   import { formatGBP } from '../lib/money';
@@ -58,9 +60,9 @@
 </script>
 
 <div class="screen-frame">
-  <TopBar title="Insights" back="#/" />
+  <TopBar title="Insights" onBack={() => router.back('/')} />
 
-  <div class="screen-body">
+  <div class="screen-body" use:scrollMemory={router.path}>
     <div class="stat-grid">
       <div class="card stat">
         <span class="stat-value">{overview.tripCount}</span>

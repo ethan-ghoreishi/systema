@@ -7,7 +7,8 @@
   import { addCity, deleteCity, deleteTrip, moveCity, updateCity, updateTrip } from '../lib/trips';
   import { commonCurrencies } from '../lib/currencies';
   import { tripDisplayName, tripMetaLabel, tripHotelNights, tripDays } from '../lib/trip-shape';
-  import { navigate } from '../lib/router.svelte';
+  import { router, inTrip, outsideTrip } from '../lib/router.svelte';
+  import { scrollMemory } from '../lib/ui-memory';
 
   let { id }: { id: string } = $props();
 
@@ -51,6 +52,11 @@
     flashSaved();
   }
 
+  /** Back to the trip screen you came from (its Plan after creating a trip). */
+  function done() {
+    router.back(`/trip/${id}/plan`, inTrip(id));
+  }
+
   async function removeTrip() {
     if (
       confirm(
@@ -62,16 +68,16 @@
       )
     ) {
       await deleteTrip(id);
-      navigate('/');
+      router.back('/', outsideTrip(id));
     }
   }
 </script>
 
 {#if trip}
   <div class="screen-frame">
-    <TopBar title="Edit trip" back={`#/trip/${id}/plan`} />
+    <TopBar title="Edit trip" onBack={done} />
 
-    <div class="screen-body">
+    <div class="screen-body" use:scrollMemory={router.path}>
       <div class="detail-bar">
         <span class="autosave" class:autosave--on={savedAt}>
           {savedAt ? 'Saved ✓' : 'Changes save automatically'}
@@ -261,7 +267,7 @@
       </div>
 
       <div class="save-bar">
-        <a class="btn btn--primary grow" href={`#/trip/${id}/plan`}>Done</a>
+        <button class="btn btn--primary grow" onclick={done}>Done</button>
         <button class="btn btn--danger" onclick={removeTrip}>Delete trip</button>
       </div>
     </div>

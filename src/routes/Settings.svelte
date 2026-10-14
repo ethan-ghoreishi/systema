@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import TopBar from '../components/TopBar.svelte';
+  import { scrollMemory } from '../lib/ui-memory';
+  import { router } from '../lib/router.svelte';
   import ConflictList from '../components/ConflictList.svelte';
   import { settingsStore } from '../lib/settings.svelte';
   import { db } from '../lib/db';
@@ -108,7 +110,7 @@
   const describe = (r: ImportResult, preview: boolean) =>
     r.trips + r.stops + r.expenses + r.moments + r.photos === 0
       ? `Everything in this backup is already on this device.${importNote(r)}`
-      : `${preview ? 'This backup would add' : 'Added'} ${r.trips} trip(s), ${r.stops} stop(s), ${r.expenses} expense(s), ${r.moments} moment(s), ${r.photos} photo(s).${importNote(r)}`;
+      : `${preview ? 'This backup would add' : 'Added'} ${r.trips} trip(s), ${r.stops} stop(s), ${r.expenses} expense(s), ${r.moments ? `${r.moments} moment(s), ` : ''}${r.photos} photo(s).${importNote(r)}`;
 
   function inspect(file: Blob): Promise<void> {
     pending = null;
@@ -162,9 +164,9 @@
 </script>
 
 <div class="screen-frame">
-  <TopBar title="Settings" back="#/" />
+  <TopBar title="Settings" onBack={() => router.back('/')} />
 
-  <div class="screen-body">
+  <div class="screen-body" use:scrollMemory={router.path}>
     <ConflictList />
 
     <div class="card" id="backup">

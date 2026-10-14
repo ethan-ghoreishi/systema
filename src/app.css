@@ -93,18 +93,43 @@
   box-sizing: border-box;
 }
 
+/*
+ * The document never scrolls: the app shell is fixed to the viewport and each
+ * screen scrolls inside its own pane. A scrolling document is what let the
+ * bars drift and resize and content slide behind them in the installed
+ * iPhone app (and `100vh` there can include the status bar).
+ */
 html,
 body {
   margin: 0;
   padding: 0;
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
 }
 
 body {
-  min-height: 100dvh;
   background: var(--paper);
   color: var(--ink);
-  overscroll-behavior-y: none;
   -webkit-tap-highlight-color: transparent;
+}
+
+/*
+ * No double-tap zoom: a quick second tap on a chip or a keypad key must not
+ * zoom the page. `manipulation` still allows panning and pinch zoom, so the
+ * page stays zoomable for reading (no maximum-scale in the viewport meta).
+ */
+html,
+button,
+a,
+input,
+select,
+textarea,
+label,
+summary,
+[role='button'],
+[role='tab'] {
+  touch-action: manipulation;
 }
 
 h1,
@@ -136,23 +161,26 @@ a {
 /* ---------- App frame ---------- */
 
 .app-shell {
+  /* Fixed to the viewport: exactly the visible area, whatever vh/dvh report. */
+  position: fixed;
+  inset: 0;
   max-width: var(--app-max);
-  margin: 0 auto;
-  /* vh fallback first: older iOS Safari has no dvh, which silently broke heights. */
-  height: 100vh;
-  height: 100dvh;
+  margin-inline: auto;
+  overflow: hidden;
   background: var(--paper);
   border-inline: 1px solid var(--hairline);
 }
 
 .screen-frame {
   display: grid;
-  grid-template-rows: auto 1fr;
+  /* minmax(0, …): the middle row may shrink below its content, so the pane scrolls. */
+  grid-template-rows: auto minmax(0, 1fr);
   height: 100%;
+  min-height: 0;
 }
 
 .screen-frame--tabbed {
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
 }
 
 .topbar {
@@ -202,15 +230,27 @@ a {
 }
 
 .screen-body {
+  min-height: 0;
   overflow-y: auto;
-  padding: var(--s4);
+  overscroll-behavior: contain;
+  /* Room for the last fields above the on-screen keyboard (see viewport.ts). */
+  padding: var(--s4) var(--s4) calc(var(--s4) + var(--kb, 0px));
   display: flex;
   flex-direction: column;
   gap: var(--s4);
 }
 
+.topbar-back--label {
+  width: auto;
+  padding-inline: 4px 10px;
+  gap: 2px;
+  color: var(--accent);
+  font-weight: 500;
+}
+
 .tabbar {
   display: flex;
+  min-height: 0;
   border-top: 1px solid var(--hairline);
   padding-bottom: env(safe-area-inset-bottom);
   background: var(--paper);
@@ -1130,6 +1170,10 @@ textarea.field {
   color: var(--ink);
 }
 
+.modal:not([open]) {
+  display: none; /* `display: flex` above would otherwise show a closed dialog */
+}
+
 .modal::backdrop {
   background: transparent; /* the sheet itself is opaque and full-screen */
 }
@@ -1871,4 +1915,13 @@ textarea.field {
 
 .cluster--wrap {
   flex-wrap: wrap;
+}
+
+.copy-sheet-text {
+  min-height: 40vh;
+  font-family: var(--mono);
+  font-size: 16px; /* no iOS focus zoom */
+  line-height: 1.4;
+  -webkit-user-select: text;
+  user-select: text;
 }
