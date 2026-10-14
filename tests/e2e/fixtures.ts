@@ -9,7 +9,11 @@ import { join } from 'node:path';
  * WebKit contexts get a throwaway persistent profile; photo paths then run on
  * the iPhone's engine too. Service workers stay off (tested separately).
  */
-export const test = base.extend<{ makeContext: () => Promise<BrowserContext> }>({
+type ContextExtras = { timezoneId?: string; locale?: string };
+
+export const test = base.extend<{
+  makeContext: (extra?: ContextExtras) => Promise<BrowserContext>;
+}>({
   makeContext: async ({ browser, browserName, playwright }, use, info) => {
     const { viewport, userAgent, deviceScaleFactor, isMobile, hasTouch, baseURL } =
       info.project.use;
@@ -23,14 +27,14 @@ export const test = base.extend<{ makeContext: () => Promise<BrowserContext> }>(
       serviceWorkers: 'block' as const,
     };
     const made: BrowserContext[] = [];
-    await use(async () => {
+    await use(async (extra = {}) => {
       const ctx =
         browserName === 'webkit'
           ? await playwright.webkit.launchPersistentContext(
               mkdtempSync(join(tmpdir(), 'systema-e2e-')),
-              options,
+              { ...options, ...extra },
             )
-          : await browser.newContext(options);
+          : await browser.newContext({ ...options, ...extra });
       made.push(ctx);
       return ctx;
     });

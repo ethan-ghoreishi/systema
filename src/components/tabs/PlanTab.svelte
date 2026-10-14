@@ -1,13 +1,18 @@
 <script lang="ts">
   import { untrack } from 'svelte';
-  import type { Trip } from '../../lib/db';
+  import { liveQuery } from 'dexie';
+  import { db, type Trip } from '../../lib/db';
   import { renderPlan } from '../../lib/markdown';
   import { splitPlanByCity } from '../../lib/headings';
-  import { computeCountdown } from '../../lib/countdown';
   import { updateTrip } from '../../lib/trips';
+  import { recall, remember } from '../../lib/ui-memory';
   import JournalView from '../JournalView.svelte';
+  import NextDeparture from '../NextDeparture.svelte';
 
   let { trip }: { trip: Trip } = $props();
+
+  const citiesQ = liveQuery(() => db.cities.where('tripId').equals(trip.id).sortBy('order'));
+  const cities = $derived($citiesQ ?? []);
 
   let editing = $state(false);
   let draft = $state('');
@@ -16,44 +21,30 @@
 
   // Past trips with a journal open on the journal — the trip's record of
   // itself — with the plan one tap away. Everything else opens on the plan.
+  const viewKey = untrack(() => `plan:${trip.id}:view`);
   let view = $state<'plan' | 'journal'>(
-    untrack(() => (trip.status === 'done' && (trip.journalText ?? '').trim() ? 'journal' : 'plan')),
+    recall(
+      viewKey,
+      untrack(() =>
+        trip.status === 'done' && (trip.journalText ?? '').trim() ? 'journal' : 'plan',
+      ),
+    ),
   );
+  $effect(() => remember(viewKey, view));
 
   // A multi-city plan (one `# City` block per city) can be filtered to one city
   // at a time — separate spaces, and a shorter contents list for long plans.
   const citySegments = $derived(splitPlanByCity(trip.planText));
   const multiCityPlan = $derived(citySegments.length > 1);
-  let cityFilter = $state<string | null>(null);
+  const filterKey = untrack(() => `plan:${trip.id}:city`);
+  let cityFilter = $state<string | null>(recall(filterKey, null));
+  $effect(() => remember(filterKey, cityFilter));
   const shownMarkdown = $derived(
     multiCityPlan && cityFilter
       ? (citySegments.find((s) => s.city === cityFilter)?.text ?? trip.planText)
       : trip.planText,
   );
   const rendered = $derived(shownMarkdown.trim() ? renderPlan(shownMarkdown) : null);
-
-  // Live departure countdown, ticking once a second while a return time is set.
-  let now = $state(Date.now());
-  $effect(() => {
-    if (!trip.returnFlightAt) return;
-    const timer = setInterval(() => (now = Date.now()), 1000);
-    return () => clearInterval(timer);
-  });
-  const target = $derived(trip.returnFlightAt ? new Date(trip.returnFlightAt).getTime() : null);
-  // Leg times are each city's local wall-clock time; show the target as written.
-  const departs = $derived.by(() => {
-    const m = trip.returnFlightAt.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/);
-    if (!m) return '';
-    const day = new Date(`${m[1]}T12:00:00`).toLocaleDateString('en-GB', {
-      weekday: 'short',
-      day: 'numeric',
-      month: 'short',
-    });
-    return `${day}, ${m[2]} local time`;
-  });
-  const countdown = $derived(
-    target && !Number.isNaN(target) ? computeCountdown(target, now) : null,
-  );
 
   let saveError = $state('');
   async function scheduleSave() {
@@ -94,12 +85,8 @@
 </script>
 
 <div class="plan">
-  {#if countdown && trip.status !== 'done'}
-    <div class="countdown" class:countdown--expired={countdown.expired}>
-      <span class="countdown-label">{countdown.expired ? 'Return flight' : 'Departure in'}</span>
-      <span class="countdown-value">{countdown.expired ? 'Departed' : countdown.text}</span>
-      {#if departs}<span class="countdown-label">{departs}</span>{/if}
-    </div>
+  {#if trip.status !== 'done'}
+    <NextDeparture {trip} {cities} />
   {/if}
 
   {#if editing}

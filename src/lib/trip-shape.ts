@@ -444,3 +444,14 @@ export function activeLegId(cities: City[], now = Date.now()): string | undefine
   const next = legs.find((l) => (l.arrivalMs ?? Infinity) > now);
   return (next ?? legs[legs.length - 1]).id;
 }
+
+/**
+ * A leg's hotel or base. Trips planned before legs had one kept a single
+ * hotel in the prompt answers: read it as the base of their one hotel leg
+ * (read, not moved — older devices still find it where it was).
+ */
+export function legBaseName(trip: Trip, cities: City[], c: City): string {
+  if (c.base?.name?.trim()) return c.base.name.trim();
+  const hotels = cities.filter((x) => x.sleep === 'hotel');
+  return hotels.length === 1 && hotels[0].id === c.id ? (trip.promptPrefs?.hotel ?? '').trim() : '';
+}
