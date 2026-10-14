@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { extractHeadings, extractSections, slugify, splitPlanByCity } from '../../src/lib/headings';
+import {
+  extractHeadings,
+  extractSections,
+  slugify,
+  splitPlanByCity,
+  replaceCityBlock,
+  cityBlock,
+} from '../../src/lib/headings';
 
 describe('splitPlanByCity', () => {
   it('splits a two-city plan on level-1 headings', () => {
@@ -72,5 +79,27 @@ describe('extractSections', () => {
     expect(sections).toHaveLength(1);
     expect(sections[0].body).toContain('# not a heading');
     expect(sections[0].body).toContain('tail');
+  });
+});
+
+describe('replaceCityBlock — paste one city at a time', () => {
+  const order = ['Bologna', 'Barcelona'];
+  it('adds a heading to a pasted plan and keeps itinerary order', () => {
+    let plan = replaceCityBlock('', 'Barcelona', '## Route\n\n### Sagrada Família', order);
+    expect(plan).toBe('# Barcelona\n\n## Route\n\n### Sagrada Família\n');
+    plan = replaceCityBlock(plan, 'Bologna', '# Bologna\n\n## Route\n\n### Archiginnasio', order);
+    expect(splitPlanByCity(plan).map((s) => s.city)).toEqual(['Bologna', 'Barcelona']);
+  });
+
+  it("replaces only that city's block, keeping an overview above", () => {
+    const plan = 'Trip overview\n\n# Bologna\n\nold\n\n# Barcelona\n\nkeep\n';
+    const next = replaceCityBlock(plan, 'Bologna', '# Bologna: the red city\n\nnew', order);
+    expect(next).toBe('Trip overview\n\n# Bologna: the red city\n\nnew\n\n# Barcelona\n\nkeep\n');
+    expect(cityBlock(next, 'Barcelona', order)).toBe('# Barcelona\n\nkeep\n');
+  });
+
+  it('names a mislabelled heading after the city', () => {
+    const next = replaceCityBlock('', 'Bologna', '# A day of porticoes\n\ntext', order);
+    expect(next.startsWith('# Bologna — A day of porticoes')).toBe(true);
   });
 });

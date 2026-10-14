@@ -1,6 +1,6 @@
 <script lang="ts">
   import { liveQuery } from 'dexie';
-  import { db, type Stop, type Trip } from '../../lib/db';
+  import { db, type Stop, type StopGuide, type Trip } from '../../lib/db';
   import {
     addStop,
     updateStop,
@@ -133,6 +133,7 @@
   let draftsFor = $state<string | null>(null);
   $effect(() => {
     if (selected && draftsFor !== selected.id) {
+      editingGuide = false;
       nameDraft = selected.name;
       notesDraft = selected.notes;
       draftsFor = selected.id;
@@ -156,6 +157,23 @@
     if (!selected) return;
     saveError = '';
     void updateStop(selected.id, { notes: notesDraft }).then(flashSaved).catch(failed);
+  }
+
+  // ---- detail: visit anchor ----
+  let editingGuide = $state(false);
+  const hasGuide = (g?: StopGuide) =>
+    !!g && Object.values(g).some((v) => (Array.isArray(v) ? v.length : v));
+  function saveGuide(key: keyof StopGuide, value: string) {
+    if (!selected) return;
+    const guide: StopGuide = { ...selected.guide };
+    if (key === 'lookFor')
+      guide.lookFor = value
+        .split(/\n|;/)
+        .map((v) => v.trim())
+        .filter(Boolean);
+    else guide[key] = value.trim() || undefined;
+    saveError = '';
+    void updateStop(selected.id, { guide }).then(flashSaved).catch(failed);
   }
 
   // ---- detail: photos + checklist ----
@@ -207,6 +225,49 @@
       <input type="checkbox" checked={selected.visited} onchange={() => toggleVisited(selected)} />
       <span>Visited</span>
     </label>
+
+    {#if hasGuide(selected.guide) || editingGuide}
+      <section class="card anchor" aria-label="Visit anchor">
+        <div class="anchor-head">
+          <span class="section-title">Visit anchor</span>
+          <button class="link-btn" onclick={() => (editingGuide = !editingGuide)}
+            >{editingGuide ? 'Done' : 'Edit'}</button
+          >
+        </div>
+        {#if editingGuide}
+          {#each [['anchor', 'Anchor — where to begin, and why'], ['minimum', 'Minimum visit — the 10–20 minute version'], ['lookFor', 'Look for — three cues, one per line'], ['stretch', 'Stretch — only if calm and ahead'], ['exit', 'Exit rule — what can be skipped']] as const as [key, label] (key)}
+            <label class="label" for={`guide-${key}`}>{label}</label>
+            <textarea
+              id={`guide-${key}`}
+              class="field"
+              rows="2"
+              value={key === 'lookFor'
+                ? (selected.guide?.lookFor ?? []).join('\n')
+                : (selected.guide?.[key] ?? '')}
+              onchange={(e) => saveGuide(key, (e.currentTarget as HTMLTextAreaElement).value)}
+            ></textarea>
+          {/each}
+        {:else}
+          {@const g = selected.guide!}
+          {#if g.anchor}<p><strong>Begin:</strong> {g.anchor}</p>{/if}
+          {#if g.minimum}<p><strong>Minimum visit:</strong> {g.minimum}</p>{/if}
+          {#if g.lookFor?.length}
+            <div>
+              <strong>Look for</strong>
+              <ul class="anchor-cues">
+                {#each g.lookFor as cue (cue)}<li>{cue}</li>{/each}
+              </ul>
+            </div>
+          {/if}
+          {#if g.stretch}<p class="hint"><strong>Stretch, if calm:</strong> {g.stretch}</p>{/if}
+          {#if g.exit}<p class="hint"><strong>Can skip:</strong> {g.exit}</p>{/if}
+        {/if}
+      </section>
+    {:else}
+      <button class="link-btn anchor-add" onclick={() => (editingGuide = true)}
+        >Add a visit anchor</button
+      >
+    {/if}
 
     <div>
       <label class="label" for="stop-notes">Notes</label>
@@ -369,6 +430,9 @@
                 >
                   <span class="stop-name">{s.name}</span>
                   <span class="stop-meta">
+                    {#if hasGuide(s.guide)}<span class="stop-anchor">anchor</span>
+                      {#if s.notes.trim() || checklistProgress(s).total || photoCounts[s.id]}·
+                      {/if}{/if}
                     {#if s.notes.trim()}notes{/if}
                     {#if p.total}{s.notes.trim() ? ' · ' : ''}{p.done}/{p.total} ticked{/if}
                     {#if photoCounts[s.id]}{s.notes.trim() || p.total ? ' · ' : ''}{photoCounts[

@@ -2088,3 +2088,65 @@ textarea.field {
 .check-line--bad .check-mark {
   color: var(--danger);
 }
+
+/* ---------- City-by-city research ---------- */
+
+.phase {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding: var(--s3) 0;
+  border-top: 1px solid var(--hairline);
+}
+
+.phase-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+}
+
+.phase-no {
+  font-weight: 700;
+  color: var(--ink-faint);
+}
+
+.phase--next .phase-no {
+  color: var(--accent);
+}
+
+.phase-name {
+  font-weight: 600;
+  flex: 1;
+}
+
+/* ---------- Visit anchor ---------- */
+
+.anchor {
+  gap: var(--s2);
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
+}
+
+.anchor p {
+  line-height: 1.45;
+}
+
+.anchor-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.anchor-cues {
+  margin: 4px 0 0;
+  padding-left: 1.2em;
+}
+
+.anchor-add {
+  align-self: flex-start;
+}
+
+.stop-anchor {
+  color: var(--accent);
+  font-weight: 600;
+}

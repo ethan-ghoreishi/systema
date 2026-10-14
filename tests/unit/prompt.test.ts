@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { buildResearchPrompt, defaultPromptPrefs } from '../../src/lib/prompt';
+import {
+  buildCityPrompt,
+  buildResearchPrompt,
+  defaultPromptPrefs,
+  humanWall,
+} from '../../src/lib/prompt';
 import type { City, Trip } from '../../src/lib/db';
 
 function trip(over: Partial<Trip> = {}): Trip {
@@ -129,5 +134,78 @@ describe('buildResearchPrompt — multi-city phasing', () => {
       oneCity,
     );
     expect(text).not.toContain('# <City name>');
+  });
+});
+
+describe('city-by-city research', () => {
+  const t = trip({ name: '', type: 'weekend', preset: 'two-city', planText: '' });
+  const legs: City[] = [
+    {
+      id: 'blq',
+      tripId: 't',
+      name: 'Bologna',
+      currency: 'EUR',
+      order: 0,
+      arrival: '2026-10-16T09:00',
+      departure: '2026-10-16T19:00',
+      sleep: 'none',
+      tz: 'Europe/Rome',
+      exit: { hub: 'BLQ', journeyMin: 25, transport: 'Marconi Express', throughTicket: 'outbound' },
+    },
+    {
+      id: 'bcn',
+      tripId: 't',
+      name: 'Barcelona',
+      currency: 'EUR',
+      order: 1,
+      arrival: '2026-10-16T21:00',
+      departure: '2026-10-17T21:00',
+      sleep: 'hotel',
+      tz: 'Europe/Madrid',
+      base: { name: 'Hotel Gòtic', address: 'Carrer de Jaume I' },
+      exit: { hub: 'BCN' },
+    },
+  ];
+  const p = { ...defaultPromptPrefs(t, legs), mode: 'plan' as const };
+
+  it("carries only that city's base, hours, arrival and departure", () => {
+    const text = buildCityPrompt(p, t, legs, 'blq');
+    expect(text).toContain('City: **Bologna**');
+    expect(text).toContain('Friday 16 October 2026, 9:00am to Friday 16 October 2026, 7:00pm');
+    expect(text).toContain('About 10h on the ground, no overnight.');
+    expect(text).toContain('Arriving from London.');
+    expect(text).toContain(
+      'Leaving for Barcelona from BLQ; getting there by Marconi Express (25 min).',
+    );
+    expect(text).toContain('leave for BLQ by 16:50 local time');
+    expect(text).toContain('This is the stopover city of a two-city trip');
+    expect(text).toContain('Your answer must start with the line `# Bologna`');
+    expect(text).not.toContain('Hotel Gòtic');
+    expect(text).toContain('researched separately — keep this plan to Bologna');
+  });
+
+  it('asks for visit anchors and never for city grouping inside a city', () => {
+    const text = buildCityPrompt(p, t, legs, 'bcn');
+    expect(text).toContain('Base: Hotel Gòtic, Carrer de Jaume I.');
+    expect(text).toContain('`Minimum visit:` the 10-20 minute version');
+    expect(text).toContain('`Exit rule:`');
+    expect(text).not.toMatch(/\*\*Barcelona\*\*`? or/);
+    expect(text).toContain('never a city name');
+  });
+
+  it("enriches the city's own pasted block in have-plan mode", () => {
+    const planned = {
+      ...t,
+      planText: '# Bologna\n\n## Route\n\n### Archiginnasio\n\n# Barcelona\n\nother',
+    };
+    const text = buildCityPrompt({ ...p, mode: 'have-plan' }, planned, legs, 'blq');
+    expect(text).toContain('## My existing plan for Bologna');
+    expect(text).toContain('### Archiginnasio');
+    expect(text).not.toContain('other');
+  });
+
+  it('prints wall-clock times as written, whatever the device zone', () => {
+    expect(humanWall('2026-10-25T02:30')).toBe('Sunday 25 October 2026, 2:30am');
+    expect(humanWall('2026-10-25T14:05')).toBe('Sunday 25 October 2026, 2:05pm');
   });
 });

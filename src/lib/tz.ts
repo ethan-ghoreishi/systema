@@ -93,19 +93,40 @@ export function instantToWall(t: number, tz?: string): string {
   return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}`;
 }
 
+const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const MONTHS = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+];
+
+/**
+ * The calendar parts of a wall-clock string, read as written (no zone maths,
+ * and no Intl wording, which differs between engines).
+ */
+export function wallParts(wall: string) {
+  const m = wall.match(WALL);
+  if (!m) return undefined;
+  const [y, mo, d, h, mi] = m.slice(1);
+  const dow = new Date(Date.UTC(+y, +mo - 1, +d)).getUTCDay();
+  return { y: +y, day: +d, weekday: DAYS[dow], month: MONTHS[+mo - 1], h, mi };
+}
+
 /** 'Fri 10 Oct, 14:05' from a wall-clock string, read as written (no zone maths). */
 export function wallLabel(wall: string, opts: { weekday?: boolean } = {}): string {
-  const m = wall.match(WALL);
-  if (!m) return wall;
-  const [y, mo, d, h, mi] = m.slice(1);
-  // Noon UTC: the calendar date can't shift whatever the device zone.
-  const day = new Date(Date.UTC(+y, +mo - 1, +d, 12)).toLocaleDateString('en-GB', {
-    timeZone: 'UTC',
-    ...(opts.weekday === false ? {} : { weekday: 'short' }),
-    day: 'numeric',
-    month: 'short',
-  });
-  return h ? `${day}, ${h}:${mi}` : day;
+  const p = wallParts(wall);
+  if (!p) return wall;
+  const day = `${opts.weekday === false ? '' : `${p.weekday.slice(0, 3)} `}${p.day} ${p.month.slice(0, 3)}`;
+  return p.h ? `${day}, ${p.h}:${p.mi}` : day;
 }
 
 /** 'HH:mm' of instant `t` in `tz`. */

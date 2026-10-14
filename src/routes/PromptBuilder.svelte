@@ -6,15 +6,20 @@
   import { scrollMemory } from '../lib/ui-memory';
   import { updateTrip } from '../lib/trips';
   import {
+    buildCityPrompt,
     buildResearchPrompt,
     defaultPromptPrefs,
     paceOptions,
     budgetOptions,
     interestOptions,
+    researchCities,
   } from '../lib/prompt';
   import { tripDisplayName, tripMetaLabel } from '../lib/trip-shape';
+  import { cityBlock, replaceCityBlock } from '../lib/headings';
+  import { importStopsFromPlan } from '../lib/stops';
   import { downloadText } from '../lib/download';
   import { copyText } from '../lib/copy.svelte';
+  import PastePlanDialog from '../components/PastePlanDialog.svelte';
 
   let { id }: { id: string } = $props();
 
@@ -37,7 +42,48 @@
 
   const promptText = $derived(prefs && trip ? buildResearchPrompt(prefs, trip, cities) : '');
 
+  // Multi-city: one prompt per city, researched and pasted in order.
+  const phaseCities = $derived(researchCities(cities));
+  const multi = $derived(phaseCities.length > 1);
+  const names = $derived(phaseCities.map((c) => c.name));
+  const stopsQ = liveQuery(() => db.stops.where('tripId').equals(id).toArray());
+  const stopsByCity = $derived.by(() => {
+    const m: Record<string, number> = {};
+    for (const s of $stopsQ ?? []) if (s.cityId) m[s.cityId] = (m[s.cityId] ?? 0) + 1;
+    return m;
+  });
+  const hasPlan = (name: string) => !!trip && !!cityBlock(trip.planText, name, names);
+  const nextCity = $derived(phaseCities.find((c) => !hasPlan(c.name))?.id);
+
   let status = $state('');
+  let pasting = $state<{ cityId: string | null } | null>(null);
+
+  function remember() {
+    if (!prefs) return;
+    void updateTrip(id, { promptPrefs: $state.snapshot(prefs) }).catch(() => {
+      status = 'Copied, but your answers could not be saved for next time.';
+    });
+  }
+
+  function copyCity(cityId: string, name: string) {
+    if (!prefs || !trip) return;
+    const copied = copyText(buildCityPrompt(prefs, trip, cities, cityId), `${name} prompt`);
+    remember();
+    void copied.then((ok) => {
+      if (ok)
+        status = `${name} prompt copied — paste it into Claude, then come back and paste ${name}'s plan.`;
+    });
+  }
+
+  async function savePasted(cityId: string | null, text: string) {
+    if (!trip) return;
+    const city = cities.find((c) => c.id === cityId);
+    const planText = city ? replaceCityBlock(trip.planText, city.name, text, names) : text;
+    await updateTrip(id, { planText });
+    const added = await importStopsFromPlan(id, planText, $stopsQ ?? [], cities);
+    const what = city ? `${city.name}'s plan` : 'The plan';
+    status = `${what} saved${added ? `, and ${added} stop${added > 1 ? 's' : ''} added to Stops` : ''}.`;
+  }
 
   function toggleInterest(tag: string) {
     if (!prefs) return;
@@ -51,13 +97,11 @@
     // Copy first, inside the tap: iOS refuses the clipboard after an await.
     const copied = copyText(promptText, 'Research prompt');
     // Then remember the answers with the trip, without holding up the copy.
-    void updateTrip(id, { promptPrefs: $state.snapshot(prefs) }).catch(() => {
-      status = 'Prompt copied, but your answers could not be saved for next time.';
-    });
+    remember();
     void copied.then((ok) => {
       if (ok)
         status =
-          'Prompt copied — paste it into Claude (or any LLM), then paste the plan it returns into the Plan tab.';
+          'Prompt copied — paste it into Claude (or any LLM), then paste the plan it returns here.';
     });
   }
 
@@ -204,14 +248,76 @@
         </div>
       </div>
 
-      <button class="btn btn--primary" onclick={copyNow}>Copy prompt</button>
-      <button class="btn btn--ghost" onclick={downloadNow}>Download prompt (.md)</button>
-      {#if status}<p class="hint hint--ok">{status}</p>{/if}
+      {#if multi}
+        <div class="card">
+          <h2 class="section-title">City by city</h2>
+          <p class="hint">
+            One city at a time: each prompt carries only that city's hours, base and transfers, and
+            each answer slots into the plan under its own heading.
+          </p>
+          {#each phaseCities as c, i (c.id)}
+            {@const done = hasPlan(c.name)}
+            <div class="phase" class:phase--next={c.id === nextCity}>
+              <div class="phase-head">
+                <span class="phase-no">{i + 1}</span>
+                <span class="phase-name">{c.name}</span>
+                <span class="hint"
+                  >{done
+                    ? `plan in${stopsByCity[c.id] ? ` · ${stopsByCity[c.id]} stops` : ''}`
+                    : 'not researched yet'}</span
+                >
+              </div>
+              <div class="cluster cluster--wrap">
+                <button
+                  class="btn btn--sm"
+                  class:btn--primary={c.id === nextCity}
+                  class:btn--ghost={c.id !== nextCity}
+                  onclick={() => copyCity(c.id, c.name)}>Research {c.name}</button
+                >
+                <button class="btn btn--ghost btn--sm" onclick={() => (pasting = { cityId: c.id })}
+                  >Paste {c.name} plan</button
+                >
+              </div>
+            </div>
+          {/each}
+          {#if status}<p class="hint hint--ok" role="status">{status}</p>{/if}
+        </div>
 
-      <details class="pack-details">
-        <summary>Preview prompt</summary>
-        <pre class="pack-preview">{promptText}</pre>
-      </details>
+        <details class="pack-details">
+          <summary>Or the whole trip in one prompt</summary>
+          <div class="cluster cluster--wrap">
+            <button class="btn btn--ghost" onclick={copyNow}>Copy whole-trip prompt</button>
+            <button class="btn btn--ghost" onclick={downloadNow}>Download (.md)</button>
+          </div>
+          <pre class="pack-preview">{promptText}</pre>
+        </details>
+      {:else}
+        <button class="btn btn--primary" onclick={copyNow}>Copy prompt</button>
+        <button class="btn btn--ghost" onclick={() => (pasting = { cityId: null })}
+          >Paste the plan Claude wrote</button
+        >
+        <button class="btn btn--ghost" onclick={downloadNow}>Download prompt (.md)</button>
+        {#if status}<p class="hint hint--ok" role="status">{status}</p>{/if}
+
+        <details class="pack-details">
+          <summary>Preview prompt</summary>
+          <pre class="pack-preview">{promptText}</pre>
+        </details>
+      {/if}
     </div>
   </div>
+
+  {#if pasting}
+    {@const city = cities.find((c) => c.id === pasting?.cityId)}
+    <PastePlanDialog
+      title={city ? `${city.name} plan` : 'Plan'}
+      hint={city
+        ? `Paste Claude's answer for ${city.name}. It replaces ${city.name}'s part of the plan; other cities stay as they are. New stops are added to Stops.`
+        : trip.planText.trim()
+          ? 'Paste the plan. It replaces the current plan (Edit plan on the Plan tab can undo it while editing). New stops are added to Stops.'
+          : 'Paste the plan. New stops are added to Stops.'}
+      onSave={(text) => savePasted(pasting!.cityId, text)}
+      onClose={() => (pasting = null)}
+    />
+  {/if}
 {/if}
