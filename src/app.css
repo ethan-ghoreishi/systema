@@ -2025,3 +2025,66 @@ textarea.field {
   font-size: 14px;
   line-height: 1.4;
 }
+
+/* ---------- Backup health ---------- */
+
+.backup-state {
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.backup-state--ok {
+  color: var(--ok);
+}
+
+.backup-state--warn {
+  color: var(--warn);
+}
+
+.backup-list summary {
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 4px 0;
+}
+
+.backup-list[open] {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+
+.backup-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--s2) 0;
+  border-top: 1px solid var(--hairline);
+}
+
+.backup-item-head {
+  font-size: 14px;
+  font-family: var(--mono);
+}
+
+.checks {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+
+.check-line {
+  display: flex;
+  gap: var(--s2);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.check-mark {
+  color: var(--ok);
+  font-weight: 700;
+}
+
+.check-line--bad .check-mark {
+  color: var(--danger);
+}

@@ -7,7 +7,11 @@
   import { settingsStore } from '../lib/settings.svelte';
   import { db } from '../lib/db';
   import { connectivity } from '../lib/connectivity.svelte';
-  import { nasBackup } from '../lib/nas.svelte';
+  import { nasBackup, type PhotoFailure } from '../lib/nas.svelte';
+  import { backoffMs } from '../lib/nas-diagnostics';
+  import { photoRef } from '../lib/photos';
+  import { tripDisplayName } from '../lib/trip-shape';
+  import { liveQuery } from 'dexie';
   import {
     buildZipBackup,
     importBackup,
@@ -89,6 +93,57 @@
   }
 
   const syncNow = () => run('Syncing…', async () => (await nasBackup.sync()).message);
+  const retryFailed = () =>
+    run('Uploading the failed photos…', async () => (await nasBackup.retryFailed()).message);
+  const testConnection = () =>
+    run('Testing the connection…', async () => {
+      const r = await nasBackup.testConnection();
+      return r.ok
+        ? 'Connection test passed.'
+        : 'Connection test found a problem — see the ✗ above.';
+    });
+
+  // The honest one-line state of the backup, never "normal" for a real fault.
+  const failedList = $derived(Object.entries(nasBackup.failures).map(([id, f]) => ({ id, ...f })));
+  const health = $derived.by((): { tone: 'ok' | 'warn' | 'calm'; text: string } => {
+    const a = nasBackup.lastAttempt;
+    const n = failedList.length;
+    if (nasBackup.running) return { tone: 'calm', text: 'Syncing…' };
+    if (!a) return { tone: 'calm', text: 'Not synced from this device yet.' };
+    if (!a.ok) {
+      const where = when(a.at);
+      if (a.kind === 'offline' || a.kind === 'unreachable')
+        return {
+          tone: 'calm',
+          text: `Couldn't reach the NAS (${where}). It retries by itself; if you're on the network it should be reachable from, Test connection.`,
+        };
+      return {
+        tone: 'warn',
+        text: `Last sync failed (${where}): ${nasBackup.lastError || a.message}`,
+      };
+    }
+    if (n || a.partial)
+      return {
+        tone: 'warn',
+        text: `Partly backed up: data saved ${when(nasBackup.lastSyncAt)}; ${n} photo${n === 1 ? '' : 's'} from this device not on the NAS.`,
+      };
+    return { tone: 'ok', text: `Backed up ${when(a.at)}.` };
+  });
+  const nextTry = (f: PhotoFailure) => {
+    const at = f.lastAt + backoffMs(f.attempts);
+    return at <= Date.now() ? 'on the next sync' : `after ${when(at)}`;
+  };
+  const tripsQ = liveQuery(() => db.trips.toArray());
+  const citiesQ = liveQuery(() => db.cities.toArray());
+  const tripName = (tripId: string) => {
+    const t = ($tripsQ ?? []).find((x) => x.id === tripId);
+    return t
+      ? tripDisplayName(
+          t,
+          ($citiesQ ?? []).filter((c) => c.tripId === tripId),
+        )
+      : 'a trip';
+  };
   const checkNas = () =>
     run(
       'Checking the NAS copy…',
@@ -138,11 +193,10 @@
       const metas = (backup.photosMeta ?? []).filter(
         (m) => restored.has(m.tripId) && !files.has(m.id),
       );
-      const fetched =
-        metas.length && nasBackup.configured && navigator.onLine
-          ? await nasBackup.restorePhotos(metas)
-          : 0;
-      return `${describe(r, false)}${fetched ? ` ${fetched} photo(s) fetched from the NAS.` : ''}`;
+      if (metas.length && !(nasBackup.configured && navigator.onLine))
+        return `${describe(r, false)} ${metas.length} photo(s) live only on the NAS: restore this file again when connected to it.`;
+      const got = metas.length ? await nasBackup.restorePhotos(metas) : { fetched: 0, missing: [] };
+      return `${describe(r, false)}${got.fetched ? ` ${got.fetched} photo(s) fetched from the NAS.` : ''}${got.missing.length ? ` ${got.missing.length} photo(s) this backup lists are not on the NAS — listed under Backup.` : ''}`;
     });
 
   async function onImportFile(e: Event): Promise<void> {
@@ -172,8 +226,17 @@
     <div class="card" id="backup">
       <h2 class="section-title">Backup</h2>
       {#if nasBackup.configured}
+        <p class="backup-state backup-state--{health.tone}">{health.text}</p>
         <div class="status-row">
-          <span class="status-key">Last NAS sync</span>
+          <span class="status-key">Last attempt</span>
+          <span class="status-val"
+            >{nasBackup.lastAttempt
+              ? `${when(nasBackup.lastAttempt.at)} · ${nasBackup.lastAttempt.ok ? (nasBackup.lastAttempt.partial ? 'partly backed up' : 'backed up') : 'failed'}`
+              : 'Never'}</span
+          >
+        </div>
+        <div class="status-row">
+          <span class="status-key">Last success</span>
           <span class="status-val">{when(nasBackup.lastSyncAt ?? nasBackup.lastDataAt)}</span>
         </div>
         <div class="status-row">
@@ -182,13 +245,42 @@
         </div>
         <div class="status-row">
           <span class="status-key">Photos on the NAS</span>
-          <span class="status-val">{nasBackup.photosBacked}/{nasBackup.photosTotal}</span>
+          <span class="status-val"
+            >{nasBackup.photosBacked}/{nasBackup.photosTotal}{nasBackup.progress
+              ? ` · uploading ${nasBackup.progress.done}/${nasBackup.progress.total}`
+              : ''}</span
+          >
         </div>
-        {#if nasBackup.lastError}
-          <p class="hint hint--warn">
-            Last sync didn't finish ({nasBackup.lastError}). Normal away from the NAS; it retries
-            automatically, and nothing on the NAS is replaced meanwhile.
-          </p>
+        {#if failedList.length}
+          <details class="backup-list" open>
+            <summary>
+              {failedList.length} photo{failedList.length > 1 ? 's' : ''} from this device not uploaded
+            </summary>
+            {#each failedList as f (f.id)}
+              <div class="backup-item">
+                <span class="backup-item-head"
+                  >{photoRef(f.id)} · {tripName(f.tripId)} · {(f.bytes / 1e6).toFixed(1)} MB</span
+                >
+                <span class="hint">{f.error}</span>
+                <span class="hint">Tried {f.attempts}×; next automatic try {nextTry(f)}.</span>
+              </div>
+            {/each}
+          </details>
+        {/if}
+        {#if nasBackup.missing?.items.length}
+          <details class="backup-list">
+            <summary>
+              {nasBackup.missing.items.length} photo{nasBackup.missing.items.length > 1 ? 's' : ''}
+              listed in the NAS copy but not on the NAS
+            </summary>
+            <p class="hint">
+              Found {when(nasBackup.missing.at)}. They're not on this device either: open systema on
+              the device that took them and sync, or restore them from a backup file.
+            </p>
+            {#each nasBackup.missing.items as m (m.id)}
+              <span class="hint">{photoRef(m.id)} · {tripName(m.tripId)}</span>
+            {/each}
+          </details>
         {/if}
       {:else}
         <p class="hint">
@@ -205,12 +297,33 @@
           <button class="btn btn--primary" onclick={syncNow} disabled={busy || nasBackup.running}>
             {nasBackup.running ? 'Syncing…' : 'Sync now'}
           </button>
+          {#if failedList.length}
+            <button
+              class="btn btn--ghost"
+              onclick={retryFailed}
+              disabled={busy || nasBackup.running}>Retry failed only</button
+            >
+          {/if}
+          <button class="btn btn--ghost" onclick={testConnection} disabled={busy}
+            >Test connection</button
+          >
           <button class="btn btn--ghost" onclick={checkNas} disabled={busy}>Check NAS copy</button>
         {/if}
         <button class="btn btn--ghost" onclick={downloadFull} disabled={busy}>
           Download full backup (.zip)
         </button>
       </div>
+      {#if nasBackup.lastTest && nasBackup.configured}
+        <div class="checks" aria-label="Connection test">
+          <span class="hint">Connection test, {when(nasBackup.lastTest.at)}:</span>
+          {#each nasBackup.lastTest.checks as c (c.label)}
+            <div class="check-line" class:check-line--bad={!c.ok}>
+              <span class="check-mark" aria-hidden="true">{c.ok ? '✓' : '✗'}</span>
+              <span><strong>{c.label}.</strong> {c.detail}</span>
+            </div>
+          {/each}
+        </div>
+      {/if}
       {#if status}<p class="hint hint--ok" role="status">{status}</p>{/if}
     </div>
 

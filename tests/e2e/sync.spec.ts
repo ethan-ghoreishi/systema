@@ -214,7 +214,9 @@ test('a malformed or unreadable NAS copy changes and pushes nothing', async ({ m
   expect((await state(phone)).trips).toHaveLength(1);
 });
 
-test('a photo upload failing midway pushes no snapshot, then resumes', async ({ makeContext }) => {
+test('a photo upload failing midway still backs up the data, reports it, then resumes', async ({
+  makeContext,
+}) => {
   const nas = new FakeNas();
   const phone = await device(makeContext, nas);
   const { trip } = await seedTrip(phone);
@@ -230,11 +232,24 @@ test('a photo upload failing midway pushes no snapshot, then resumes', async ({ 
     trip,
   );
   nas.failPhotoPostsAfter = 2;
-  expect((await sync(phone)).ok).toBe(false);
-  expect(nas.dataPosts).toBe(0); // no snapshot may reference photos the NAS lacks
+  const partial = await sync(phone);
+  // The data doesn't wait on the photos: the snapshot goes, the gap is named.
+  expect(partial).toMatchObject({ ok: true, partial: true });
+  expect(partial.message).toContain('3 photos from this device not on the NAS yet');
+  expect(nas.dataPosts).toBe(1);
+  const failures = await app(phone, (m) => m.nasBackup.failures);
+  expect(Object.keys(failures)).toHaveLength(3);
+  expect(Object.values(failures)[0]).toMatchObject({ kind: 'server', attempts: 1 });
+
+  // They wait out their backoff on ordinary syncs…
   nas.failPhotoPostsAfter = Infinity;
-  expect((await sync(phone)).ok).toBe(true);
+  await sync(phone);
+  expect(nas.photos.size).toBe(2);
+  // …and "Retry failed only" sends them now.
+  const retry = await app(phone, (m) => m.nasBackup.retryFailed());
+  expect(retry.message).toBe('3 photos uploaded. Every photo on this device is on the NAS.');
   expect(nas.photos.size).toBe(5);
+  expect((await sync(phone)).partial).toBeUndefined();
   expect(nas.latest().photosMeta).toHaveLength(5);
 });
 
@@ -398,6 +413,7 @@ test('checking the NAS copy reports accurately and changes nothing', async ({ ma
   const r = await check();
   expect(r.ok).toBe(false);
   expect(r.message).toContain('1 photo listed but not on the NAS yet');
+  expect(r.message).toContain('1 photo of those is on this device and will upload again');
   expect(r.message).toContain('A sync would bring 0 changes here and send 1 change.');
   expect({ posts: nas.dataPosts, files: nas.files.size }).toEqual(before);
   expect((await state(phone)).trips[0].planText).toBe('Not synced yet');

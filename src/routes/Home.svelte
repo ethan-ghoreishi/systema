@@ -36,6 +36,8 @@
   // Nudge only when action is needed: never backed up, or not for a week.
   const backupNotice = $derived.by(() => {
     if (!trips.length || !nasBackup.healthLoaded) return '';
+    const failed = Object.keys(nasBackup.failures).length;
+    if (failed) return `${failed} photo${failed > 1 ? 's' : ''} not backed up — review`;
     // lastDataAt: devices upgraded from the push-only version have only this.
     const last = Math.max(
       nasBackup.lastSyncAt ?? 0,

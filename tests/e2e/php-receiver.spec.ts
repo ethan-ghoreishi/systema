@@ -1,4 +1,4 @@
-import { readdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
@@ -19,10 +19,11 @@ const run = <T, A>(page: Page, fn: (m: any, a: A) => Promise<T>, arg?: A) =>
     [fn.toString(), arg] as const,
   ) as Promise<T>;
 
-// The current receiver, and the original one most NAS installs still run:
-// the app must be safe against both without a redeploy.
+// The current receiver, the previous one, and the original one: the app must
+// be safe against whichever a NAS still runs, without a redeploy.
 for (const [label, receiver] of [
   ['current receiver', 'nas/systema-backup.php'],
+  ['previous receiver', 'tests/e2e/systema-backup-v1.1.php'],
   ['original receiver', 'tests/e2e/systema-backup-v1.php'],
 ])
   test(`two devices sync through the ${label}, then idle syncs write nothing`, async ({
@@ -114,4 +115,52 @@ test('the receiver keeps the newest 60 snapshots plus one per day', async ({ mak
     kept.map((f) => f.slice('systema-data-'.length, 'systema-data-'.length + 8)),
   );
   expect(days.size).toBe(51); // every day still has a snapshot
+});
+
+// The PHP server runs with post_max_size=2M (see the workflow), like a
+// receiver whose limit is below a phone photo.
+test('the current receiver verifies, replaces a damaged copy, lists photos and names its size limit', async ({
+  makeContext,
+}) => {
+  const rx = phpReceiver()!;
+  const phone = await device(makeContext, rx);
+  await run(phone, async (m) => {
+    m.nasBackup.retryDelays = [0, 0];
+  });
+  const ids = await run(phone, async (m) => {
+    const trip = await m.createTrip('custom');
+    const out: string[] = [];
+    for (const [i, n] of [2_000, 3_000, 3_000_000].entries())
+      out.push(
+        await m.addPhoto(new Blob([new Uint8Array(n).fill(i + 7)], { type: 'image/png' }), {
+          tripId: trip,
+          kind: 'cover',
+        }),
+      );
+    return out;
+  });
+  // A half-written copy of the second photo is already on the NAS.
+  const photos = join(rx.dir, 'systema-backups', 'photos');
+  mkdirSync(photos, { recursive: true });
+  writeFileSync(join(photos, `${ids[1]}.png`), 'trunc');
+
+  const outcome = await sync(phone);
+  expect(outcome).toMatchObject({ ok: true, partial: true });
+  expect(readFileSync(join(photos, `${ids[1]}.png`)).length).toBe(3_000); // replaced
+  const failures = await run(phone, async (m) => m.nasBackup.failures);
+  expect(Object.keys(failures)).toEqual([ids[2]]);
+  // PHP's server cuts an over-limit upload off rather than answering 413.
+  expect(failures[ids[2]].kind).toBe('too-large');
+  expect(failures[ids[2]].error).toContain('post_max_size');
+
+  // PHP stored it anyway — only the reply was lost — and the listing shows it.
+  const check = await run(phone, async (m) => m.nasBackup.check());
+  expect(check.message).toContain('Every photo it lists is on the NAS.');
+  // A retry verifies the stored copy by size and SHA-256 instead of trusting it.
+  const retry = await run(phone, async (m) => m.nasBackup.retryFailed());
+  expect(retry.message).toContain('Every photo on this device is on the NAS.');
+
+  const test = await run(phone, async (m) => m.nasBackup.testConnection());
+  expect(test.checks.map((c: any) => c.ok)).toEqual([true, true, true, false]);
+  expect(test.checks[3].detail).toContain('display_errors is on');
 });
