@@ -109,8 +109,8 @@
 
   const issues = $derived(trip ? [...legIssues(trip, cities), ...stopoverNotes(trip, cities)] : []);
   const departures = $derived(trip ? tripDepartures(trip, cities) : []);
-  const zones = allTimeZones();
   let zonePickerFor = $state<string | null>(null);
+  const zones = $derived(zonePickerFor ? allTimeZones() : []);
 
   async function addCityNow() {
     const name = newCityName.trim();
@@ -562,9 +562,12 @@
             <option value={ccy.code}>{ccy.name}</option>
           {/each}
         </datalist>
-        <datalist id="tz-list">
-          {#each zones as z (z)}<option value={z}></option>{/each}
-        </datalist>
+        {#if zonePickerFor}
+          <!-- ~420 zones: only in the page while a zone is being picked. -->
+          <datalist id="tz-list">
+            {#each zones as z (z)}<option value={z}></option>{/each}
+          </datalist>
+        {/if}
       </div>
 
       <CoverPicker {trip} />
