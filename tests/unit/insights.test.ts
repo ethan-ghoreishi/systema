@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { buildCityInsights } from '../../src/lib/insights';
-import type { Expense, Trip } from '../../src/lib/db';
+import { compareCities, dataQuality, transitRows, tripRhythm } from '../../src/lib/insights';
+import type { City, Expense, Stop, Trip } from '../../src/lib/db';
 
 function trip(over: Partial<Trip>): Trip {
   return {
@@ -46,45 +46,146 @@ function exp(over: Partial<Expense>): Expense {
   };
 }
 
-describe('buildCityInsights', () => {
-  it('ranks cities by total and computes per-day from trip length', () => {
-    const trips = [
-      trip({ id: 'v', startDate: '2024-10-01', endDate: '2024-10-03' }), // 3 days
-      trip({ id: 'p', startDate: '2024-11-01', endDate: '2024-11-01' }), // 1 day
-    ];
-    const expenses = [
-      exp({ tripId: 'v', destination: 'Vienna', amountGBP: 60 }),
-      exp({ tripId: 'p', destination: 'Prague', amountGBP: 30 }),
-    ];
-    const { cities, cheapest, priciest } = buildCityInsights(trips, expenses);
+const city = (over: Partial<City>): City => ({
+  id: 'c',
+  tripId: 't',
+  name: 'Vienna',
+  currency: 'EUR',
+  order: 0,
+  ...over,
+});
 
-    const vienna = cities.find((c) => c.name === 'Vienna')!;
-    const prague = cities.find((c) => c.name === 'Prague')!;
-    expect(vienna.total).toBe(60);
-    expect(vienna.days).toBe(3);
-    expect(vienna.perDay).toBe(20);
-    expect(prague.perDay).toBe(30);
+describe('compareCities', () => {
+  // Two-city trip with leg times, plus an imported single-city trip without.
+  const trips = [
+    trip({ id: 'x', partySize: 2 }),
+    trip({ id: 'v', startDate: '2024-10-01', endDate: '2024-10-03' }),
+  ];
+  const cities = [
+    city({
+      id: 'blq',
+      tripId: 'x',
+      name: 'Bologna',
+      order: 0,
+      arrival: '2026-10-16T09:00',
+      departure: '2026-10-16T21:00',
+      tz: 'Europe/Rome',
+    }),
+    city({
+      id: 'bcn',
+      tripId: 'x',
+      name: 'Barcelona',
+      order: 1,
+      arrival: '2026-10-16T22:00',
+      departure: '2026-10-17T22:00',
+      tz: 'Europe/Madrid',
+    }),
+    city({ id: 'vie', tripId: 'v', name: 'Vienna' }),
+  ];
+  const expenses = [
+    exp({ tripId: 'x', cityId: 'blq', destination: 'Bologna', amountGBP: 30 }), // half a day
+    exp({ tripId: 'x', destination: 'Barcelona', amountGBP: 40 }), // linked by name
+    exp({
+      tripId: 'x',
+      destination: 'Bologna/Barcelona',
+      category: 'Transportation',
+      subcategory: 'Flight',
+      amountGBP: 200,
+    }),
+    exp({ tripId: 'v', destination: 'Vienna', amountGBP: 90 }),
+    exp({
+      tripId: 'x',
+      cityId: 'bcn',
+      category: 'Transportation',
+      subcategory: 'Airport Transfer (Abroad)',
+      description: 'Aerobús',
+      amountGBP: 12,
+    }),
+  ];
 
-    // Best value = lowest per-day; priciest = highest per-day.
-    expect(cheapest?.name).toBe('Vienna');
-    expect(priciest?.name).toBe('Prague');
+  it('uses real leg time and never splits shared spend into cities', () => {
+    const { rows } = compareCities(trips, cities, expenses, [], 'perDay');
+    const byName = Object.fromEntries(rows.map((r) => [r.name, r]));
+    expect(byName.Bologna.value).toBe(60); // £30 over 12 hours
+    expect(byName.Barcelona.value).toBe(52); // (£40 + £12) over 24 hours; the £200 flight isn't in it
+    expect(byName.Vienna).toMatchObject({ value: 30, approximate: true, thin: true }); // 3 calendar days
   });
 
-  it('splits a combined "A/B" destination evenly and shares the trip days', () => {
-    const trips = [trip({ id: 'x', startDate: '2024-10-07', endDate: '2024-10-08' })]; // 2 days
-    const expenses = [exp({ tripId: 'x', destination: 'Barcelona/Bologna', amountGBP: 40 })];
-    const { cities } = buildCityInsights(trips, expenses);
-
-    const barca = cities.find((c) => c.name === 'Barcelona')!;
-    const bologna = cities.find((c) => c.name === 'Bologna')!;
-    expect(barca.total).toBe(20);
-    expect(bologna.total).toBe(20);
-    expect(barca.days).toBe(1); // 2 trip days shared across 2 cities
+  it('names the cities it has no data for, and ranks without calling one best', () => {
+    const r = compareCities(trips, cities, expenses, [], 'transferPP');
+    expect(r.rows).toEqual([
+      { name: 'Barcelona', value: 6, visits: 1, days: 1, thin: true, approximate: false },
+    ]);
+    expect(r.missing).toEqual(['Bologna', 'Vienna']);
   });
 
-  it('ignores expenses with no destination', () => {
-    const trips = [trip({ id: 't', startDate: '2024-10-01', endDate: '2024-10-01' })];
-    const { cities } = buildCityInsights(trips, [exp({ destination: '', amountGBP: 99 })]);
-    expect(cities).toHaveLength(0);
+  it('discloses what the numbers rest on', () => {
+    const q = dataQuality(trips, cities, [
+      ...expenses,
+      exp({ tripId: 'v', destination: 'Graz', amountGBP: 5 }),
+    ]);
+    expect(q.shared).toEqual({ count: 1, total: 200 });
+    expect(q.unlinked).toEqual({ count: 1, total: 5 });
+    expect(q.legsTimed).toBe(2);
+    expect(q.legs).toBe(3);
+  });
+
+  it('reports airport transfers per person with the plan beside them', () => {
+    const withPlan = cities.map((c) =>
+      c.id === 'bcn'
+        ? { ...c, exit: { transport: 'Aerobús', journeyMin: 35, notes: 'Buy at the stop' } }
+        : c,
+    );
+    expect(transitRows(trips, withPlan, expenses)).toEqual([
+      expect.objectContaining({
+        city: 'Barcelona',
+        mode: 'Aerobús',
+        costPP: 6,
+        journeyMin: 35,
+        notes: 'Buy at the stop',
+      }),
+    ]);
+  });
+
+  it('reads a trip rhythm: planned against visited, off-plan, rides, slack', () => {
+    const stops: Stop[] = ['a', 'b', 'c'].map((id, i) => ({
+      id,
+      tripId: 'x',
+      cityId: 'blq',
+      name: id,
+      notes: '',
+      checklist: [],
+      visited: i < 2,
+      order: i,
+      createdAt: 0,
+    }));
+    const rides = [
+      exp({
+        tripId: 'x',
+        category: 'Transportation',
+        subcategory: 'Local Transport (Abroad)',
+        amountGBP: 2,
+      }),
+    ];
+    const [r] = tripRhythm(trips, cities, [...expenses, ...rides], stops, [
+      {
+        id: 'm',
+        tripId: 'x',
+        cityId: 'blq',
+        title: 'Concert',
+        note: '',
+        at: 1,
+        stopId: null,
+        createdAt: 1,
+      },
+    ]);
+    expect(r).toMatchObject({
+      planned: 3,
+      visited: 2,
+      offPlan: 1,
+      rides: 1,
+      departures: 2,
+      slackMin: 105,
+    });
   });
 });

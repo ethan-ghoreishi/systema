@@ -1,7 +1,7 @@
 <script lang="ts">
   import { liveQuery } from 'dexie';
   import { db, type CoverMode, type Trip } from '../lib/db';
-  import { newId } from '../lib/ids';
+  import { addPhotos } from '../lib/photos';
   import { updateTrip } from '../lib/trips';
   import TripCover from './TripCover.svelte';
   import { isMultiCity } from '../lib/trip-shape';
@@ -52,16 +52,7 @@
     const file = input.files?.[0];
     input.value = '';
     if (!file) return;
-    const photoId = newId();
-    await db.photos.add({
-      id: photoId,
-      tripId: trip.id,
-      stopId: null,
-      expenseId: null,
-      kind: 'cover',
-      blob: file,
-      createdAt: Date.now(),
-    });
+    const [photoId] = await addPhotos([file], { tripId: trip.id, kind: 'cover' });
     await updateTrip(trip.id, { coverMode: 'photo', coverPhotoId: photoId });
   }
 </script>
