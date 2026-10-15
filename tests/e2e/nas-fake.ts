@@ -38,6 +38,10 @@ export class FakeNas {
     if (this.unreachable) return route.abort('failed');
     const req = route.request();
     const url = new URL(req.url());
+    // Like the NAS's web server: anything but the receiver is a page without
+    // the receiver's CORS headers.
+    if (url.pathname !== '/systema-backup.php')
+      return route.fulfill({ status: 404, contentType: 'text/html', body: '<h1>404</h1>' });
     const kind = url.searchParams.get('kind');
     const id = url.searchParams.get('id') ?? '';
     const sha = (b: Buffer) => createHash('sha256').update(b).digest('hex');

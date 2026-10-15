@@ -5,6 +5,7 @@ import {
   classifyThrown,
   explain,
   probeVerdict,
+  receiverUrl,
   redact,
 } from '../../src/lib/nas-diagnostics';
 
@@ -51,5 +52,26 @@ describe('NAS diagnostics', () => {
       /post_max_size/,
     );
     expect(probeVerdict('threw', null, 5).detail).toMatch(/proxy/);
+  });
+});
+
+describe('receiverUrl', () => {
+  it('reads a bare host or a folder as its systema-backup.php', () => {
+    expect(receiverUrl('https://nas.example.ts.net')).toBe(
+      'https://nas.example.ts.net/systema-backup.php',
+    );
+    expect(receiverUrl(' https://nas.example.ts.net/ ')).toBe(
+      'https://nas.example.ts.net/systema-backup.php',
+    );
+    expect(receiverUrl('https://nas.example.ts.net/backup/')).toBe(
+      'https://nas.example.ts.net/backup/systema-backup.php',
+    );
+    expect(receiverUrl('https://nas.example.ts.net/systema-backup.php?kind=latest#x')).toBe(
+      'https://nas.example.ts.net/systema-backup.php',
+    );
+    expect(receiverUrl('https://nas.example.ts.net/other/receiver.php')).toBe(
+      'https://nas.example.ts.net/other/receiver.php',
+    );
+    expect(receiverUrl('not a url')).toBe('not a url');
   });
 });

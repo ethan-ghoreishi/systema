@@ -26,6 +26,7 @@ import {
   explain,
   fatal,
   probeVerdict,
+  receiverUrl,
   redact,
   transient,
   type Check,
@@ -358,8 +359,11 @@ class NasBackup {
     return settingsStore.current.nasToken.trim();
   }
 
-  private endpoint(kind: string, extra = ''): string {
-    const base = settingsStore.current.nasUrl.trim().replace(/[?#].*$/, '');
+  private endpoint(
+    kind: string,
+    extra = '',
+    base = receiverUrl(settingsStore.current.nasUrl),
+  ): string {
     return `${base}?kind=${kind}&token=${encodeURIComponent(this.token)}${extra}`;
   }
 
@@ -502,8 +506,7 @@ class NasBackup {
 
   /** Whether the receiver answers at all (no token, nothing written). */
   private async receiverAnswers(): Promise<boolean> {
-    const base = settingsStore.current.nasUrl.trim().replace(/[?#].*$/, '');
-    return fetch(base).then(
+    return fetch(receiverUrl(settingsStore.current.nasUrl)).then(
       (r) => r.ok,
       () => false,
     );
@@ -1042,47 +1045,69 @@ class NasBackup {
       });
       return finish();
     }
-    checks.push({ label: 'Address', ok: true, detail: parsed.host });
+    let base = receiverUrl(url);
+    const shown = (u: string) => u.replace(/^https?:\/\//, '');
+    checks.push({ label: 'Address', ok: true, detail: shown(base) });
     if (!online()) {
       checks.push({ label: 'Network', ok: false, detail: explain('offline') });
       return finish();
     }
 
     // 1. Reach the receiver (no token needed).
-    const base = url.replace(/[?#].*$/, '');
-    let info: {
-      version?: number;
-      maxBody?: number;
-      displayErrors?: boolean;
-      writable?: boolean;
-    } | null;
-    try {
-      const res = await fetch(base);
-      const json = await res.json().catch(() => null);
-      if (res.ok && json?.service === 'systema-backup') {
-        info = json;
-        checks.push({
-          label: 'Receiver',
-          ok: json.writable !== false,
-          detail:
-            json.writable === false
-              ? "Found, but it can't write to its systema-backups folder: give Web Station write access."
-              : `Found${json.version ? ` (version ${json.version})` : ' (original version: update it for verified uploads and a photo list)'}.`,
-        });
-      } else {
-        checks.push({
-          label: 'Receiver',
-          ok: false,
-          detail:
-            res.status === 404
-              ? explain('not-found')
-              : json
-                ? `HTTP ${res.status}.`
-                : explain('bad-response'),
-        });
-        return finish();
+    type Info = { version?: number; maxBody?: number; displayErrors?: boolean; writable?: boolean };
+    const probe = async (u: string) => {
+      try {
+        const res = await fetch(u);
+        const json = await res.json().catch(() => null);
+        return { res, json, isReceiver: res.ok && json?.service === 'systema-backup' };
+      } catch {
+        return null; // no answer this page may read
       }
-    } catch {
+    };
+    let found = await probe(base);
+    // Not the receiver at the saved address: look where it should be, at the
+    // host's /systema-backup.php, and switch only once the token works there.
+    let moved = '';
+    if (!found?.isReceiver) {
+      const usual = `${new URL(base).origin}/systema-backup.php`;
+      const there = usual !== base ? await probe(usual) : null;
+      if (there?.isReceiver) {
+        const res = await fetch(this.endpoint('latest', '', usual)).catch(() => null);
+        if (res && (res.ok || res.status === 404)) {
+          moved = base;
+          base = usual;
+          found = there;
+          settingsStore.current.nasUrl = usual;
+          await settingsStore.save();
+          checks[0] = { label: 'Address', ok: true, detail: shown(base) };
+        }
+      }
+    }
+    let info: Info | null;
+    if (found?.isReceiver) {
+      const json = found.json as Info;
+      info = json;
+      checks.push({
+        label: 'Receiver',
+        ok: json.writable !== false,
+        detail:
+          json.writable === false
+            ? "Found, but it can't write to its systema-backups folder: give Web Station write access."
+            : `Found${json.version ? ` (version ${json.version})` : ' (original version: update it for verified uploads and a photo list)'}.${moved ? ` The saved address (${shown(moved)}) isn't the receiver; switched to this one.` : ''}`,
+      });
+    } else if (found) {
+      checks.push({
+        label: 'Receiver',
+        ok: false,
+        detail:
+          found.res.status === 404
+            ? explain('not-found')
+            : found.json
+              ? `HTTP ${found.res.status}.`
+              : explain('bad-response'),
+      });
+      return finish();
+    } else {
       // No answer the page may read. Ask again without CORS: an (opaque) answer
       // means the server is there and only the headers are missing.
       const reached = await fetch(base, { mode: 'no-cors' }).then(
@@ -1093,7 +1118,7 @@ class NasBackup {
         label: 'Receiver',
         ok: false,
         detail: reached
-          ? 'The server answered, but the browser blocked the reply (CORS): the PHP file may be missing its headers, or something in front of it strips them.'
+          ? `The server answered, but not as the receiver this app may read: ${shown(base)} is a page without the receiver's CORS headers — the address isn't the receiver's (it should end in /systema-backup.php), or something in front of PHP strips them.`
           : "No connection: wrong address, a port closed from this network, the NAS off, or a certificate this device doesn't trust. Open the address in Safari — a certificate warning there means the certificate. (Browsers don't tell an app which it is.)",
       });
       return finish();

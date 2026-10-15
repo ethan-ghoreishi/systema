@@ -27,6 +27,23 @@ export class NasError extends Error {
   }
 }
 
+/**
+ * The address to call for the receiver. A saved address that is just the
+ * host, or a folder, means the receiver file in it: anything else there is a
+ * web page without the receiver's CORS headers, which the browser hides.
+ */
+export function receiverUrl(saved: string): string {
+  const raw = saved.trim().replace(/[?#].*$/, '');
+  try {
+    const u = new URL(raw);
+    if (u.pathname === '' || u.pathname === '/') u.pathname = '/systema-backup.php';
+    else if (u.pathname.endsWith('/')) u.pathname += 'systema-backup.php';
+    return u.toString();
+  } catch {
+    return raw;
+  }
+}
+
 /** Replace the token (raw or URL-encoded) wherever it could appear. */
 export function redact(text: string, token: string): string {
   let out = text.replace(/([?&]token=)[^&\s"']*/gi, '$1•••');
