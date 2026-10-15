@@ -1,3 +1,13 @@
+import {
+  expenseCityId,
+  findDuplicate,
+  isManualGBP,
+  isShared,
+  lastPaymentMethod,
+  likelySubcategory,
+  recentTemplates,
+  sharedDestination,
+} from '../../src/lib/expense-defaults';
 import { describe, it, expect } from 'vitest';
 import {
   realExpenses,
@@ -99,5 +109,79 @@ describe('withFxNote', () => {
       '2x tickets (€4.5 each)',
     );
     expect(withFxNote('', 'EUR', 0.85)).toBe('FX: 1 EUR = £0.85');
+  });
+});
+
+describe('quick capture defaults', () => {
+  const base = {
+    id: 'x',
+    tripId: 't',
+    cityId: null,
+    date: '2026-10-16',
+    destination: 'Bologna',
+    category: 'Experiences',
+    subcategory: 'Museum',
+    description: 'Archiginnasio',
+    paymentMethod: 'Cash Payment',
+    amountGBP: 4.25,
+    amountLocal: 5,
+    notes: '',
+    currency: 'EUR',
+    fxRate: 0.85,
+    skeleton: false,
+    order: 0,
+    createdAt: 1,
+  };
+
+  it('offers recent picks, the last payment method, and a likely subcategory', () => {
+    const older = {
+      ...base,
+      id: 'o',
+      createdAt: 0,
+      category: 'Food',
+      subcategory: 'Café',
+      description: '',
+    };
+    expect(recentTemplates([older, base]).map((t) => t.label)).toEqual(['Archiginnasio', 'Café']);
+    expect(lastPaymentMethod([base], 'other-trip')).toBe('Cash Payment');
+    expect(lastPaymentMethod([], 't')).toBe('Card Payment');
+    expect(likelySubcategory('Food', [])).toBe('Grocery Shopping');
+    expect(likelySubcategory('Food', [older])).toBe('Café');
+  });
+
+  it("reads 'A/B' destinations as trip-wide, and links the rest to their leg", () => {
+    const cities = [
+      { id: 'blq', tripId: 't', name: 'Bologna', currency: 'EUR', order: 0 },
+      { id: 'bcn', tripId: 't', name: 'Barcelona', currency: 'EUR', order: 1 },
+    ];
+    expect(isShared({ ...base, destination: 'Bologna/Barcelona' })).toBe(true);
+    expect(isShared({ ...base, shared: false, destination: 'Bologna/Barcelona' })).toBe(false);
+    expect(expenseCityId(base, cities)).toBe('blq');
+    expect(expenseCityId({ ...base, destination: 'Somewhere else' }, cities)).toBeNull();
+    expect(sharedDestination(cities)).toBe('Bologna/Barcelona');
+  });
+
+  it('spots a likely double entry', () => {
+    const dup = findDuplicate({ ...base, description: '' }, [base]);
+    expect(dup?.id).toBe('x');
+    expect(findDuplicate({ ...base, amountLocal: 6 }, [base])).toBeUndefined();
+    expect(findDuplicate(base, [base], 'x')).toBeUndefined();
+  });
+});
+
+describe('isManualGBP', () => {
+  const row = {
+    currency: 'AMD',
+    fxRate: null,
+    fxPending: false,
+    amountGBP: 4.2,
+    skeleton: false,
+  };
+  it('reads an older non-GBP row with a £ but no rate as typed by hand', () => {
+    expect(isManualGBP(row)).toBe(true);
+    expect(isManualGBP({ ...row, fxRate: 0.0021 })).toBe(false); // priced from a rate
+    expect(isManualGBP({ ...row, fxPending: true, amountGBP: 0 })).toBe(false);
+    expect(isManualGBP({ ...row, currency: 'GBP' })).toBe(false);
+    expect(isManualGBP({ ...row, gbpManual: false })).toBe(false); // the flag wins
   });
 });

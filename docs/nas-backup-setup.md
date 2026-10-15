@@ -1,11 +1,20 @@
 # NAS sync and backup — Synology setup
 
 systema syncs and backs itself up through your Synology **automatically**:
-whenever the receiver is reachable it uploads new photos (each once), merges in
-the NAS's newest snapshot, and pushes a new snapshot if the NAS lacks anything.
-Every device you set up (iPhone, Mac) does the same, so they stay in step.
-Failures are expected and harmless — no wifi, NAS asleep — nothing is pushed or
-replaced, and it retries on the next change, reconnect, or app open.
+whenever the receiver is reachable it uploads new photos (each once, verified
+by size and SHA-256), merges in the NAS's newest snapshot, and pushes a new
+snapshot if the NAS lacks anything. Every device you set up (iPhone, Mac) does
+the same, so they stay in step.
+
+When something fails, Settings → **Backup** says what, in one line — never just
+"normal": couldn't reach the NAS (away from home, NAS asleep), the token was
+refused, nothing at that address, a photo too large for the receiver, the
+receiver couldn't write. A photo that keeps failing is listed with its reason
+and retried with a growing wait (5 minutes, doubling, up to 6 hours) — or at
+once with **Retry failed only** — while everything else, and the data, still
+backs up: that is a **partly backed up** state, shown as such. A failure of the
+receiver itself (token, address, unreachable) pushes and replaces nothing; it
+retries on the next change, reconnect, or app open.
 
 How two devices combine: each keeps the last snapshot it agreed with the NAS,
 so changes merge three ways. Edits to different things combine. The same thing
@@ -56,17 +65,69 @@ provides all of it for free:
    browser: it should show `{"ok":true,"service":"systema-backup"}`.
 
 Then in systema → **Settings → NAS sync**: paste that URL and the same token,
-Save, and tap **Sync now** in the Backup card ("Last NAS sync" gets a time). Do
-this on every device. A new or reset device merges the NAS copy before it ever
-pushes, so it can't replace it. **Check NAS copy** verifies the snapshot and
-that every photo it lists is on the NAS, without changing anything.
+Save, tap **Test connection**, then **Sync now** in the Backup card ("Last
+success" gets a time). Do this on every device. A new or reset device merges
+the NAS copy before it ever pushes, so it can't replace it. **Check NAS copy**
+verifies the snapshot and that every photo it lists is on the NAS at the right
+size, and names any that are missing; photos this device still holds are
+queued to upload again — it changes nothing else.
 
-**Updating the receiver (optional):** the app works with the original
-`systema-backup.php`. The current version keeps two snapshots pushed in the
-same second (instead of the second replacing the first), never serves a
-half-written file, reports uploaded photo sizes for the app to verify, and keeps
-a daily snapshot for 90 days. To update, copy the new file over the old one and
-set `$TOKEN` again.
+**Updating the receiver (recommended):** the app works with the original
+`systema-backup.php` and the previous one. The current version (2) also
+
+- reports every stored photo's size **and SHA-256**, so the app verifies a
+  photo landed intact before counting it — and replaces a damaged copy, but
+  only with one that matches the photo as it was taken (a device whose own
+  copy is damaged never overwrites the NAS);
+- lets the app confirm a photo whose upload reply was lost (by its hash)
+  instead of sending it again;
+- lists the photos it holds, so **Check NAS copy** is one request and names
+  exactly which photos are missing;
+- answers a size probe and reports its upload limit and whether
+  `display_errors` is on, for **Test connection**;
+- reports an upload over PHP's limit as HTTP 413 with the limit.
+
+It also keeps two snapshots pushed in the same second, never serves a
+half-written file, and keeps a daily snapshot for 90 days. To update, copy the
+new file over the old one and set `$TOKEN` again.
+
+### PHP settings that matter for photos
+
+In Web Station → Script Language Settings → your PHP profile:
+
+- **`post_max_size` and `upload_max_filesize`: 64M or more.** iPhone photos
+  are often 3–15 MB (48 MP ones more). Over the limit, PHP either drops the
+  upload or prints a warning.
+- **`display_errors`: off.** With it on, PHP prints that over-the-limit
+  warning _before_ the receiver's headers, which strips the CORS header: the
+  browser reports the upload as failed even though the file may have been
+  stored. (systema copes — it confirms such a photo by its hash on the next
+  try — but it's noise you don't want.)
+
+If a reverse proxy sits in front of Web Station, its body limit (nginx
+`client_max_body_size`) needs the same headroom: it refuses with a 413 that
+has no CORS headers, which the browser can only report as a failed connection.
+
+### Test connection
+
+Settings → Backup → **Test connection** checks, in order, and says what to do
+at the first failure:
+
+1. **Address** — a valid `https://` URL (an `http://` one is blocked by the
+   browser from an HTTPS app);
+2. **Receiver** — something answers at that path and it is the systema
+   receiver; it tells _no connection_ (wrong address, port closed from this
+   network, NAS off, untrusted certificate) apart from _the browser blocked the
+   reply_ (CORS headers missing). Browsers don't tell an app which certificate
+   problem it is: open the URL in Safari — a certificate warning there means the
+   certificate;
+3. **Token** — accepted or refused;
+4. **Upload size** — a real upload the size of your largest photo (the
+   receiver writes nothing for it) arrives intact.
+
+The token never appears in any message, log or backup file. (It does travel
+in the request URL to your own NAS, so it can appear in that NAS's web server
+access log.)
 
 ## If `synology.me` won't connect (CGNAT / ISP blocks inbound)
 
@@ -126,7 +187,9 @@ anywhere. It is built without loading all photos into memory.
    Clipboard) — same check and preview.
 
 Restoring only adds records this device doesn't have — safe over existing data,
-and safe to run twice. To move edits between devices, use NAS sync.
+and safe to run twice. To move edits between devices, use NAS sync. Photos a
+restore or sync expects but the NAS doesn't hold are listed by reference under
+Backup — never skipped silently.
 
 **Getting back something deleted** (deletions sync to every device): restore
 the last backup file that had it, or pick an older snapshot from

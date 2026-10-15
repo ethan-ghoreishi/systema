@@ -46,6 +46,15 @@ const FIELD_LABELS: Record<string, string> = {
   date: 'Date',
   promptPrefs: 'Prompt answers',
   coverMode: 'Cover',
+  tz: 'Time zone',
+  base: 'Hotel / base',
+  exit: 'Departure plan',
+  outbound: 'Leaving home',
+  guide: 'Visit anchor',
+  shared: 'Trip-wide',
+  title: 'Title',
+  note: 'Note',
+  at: 'Time',
 };
 
 export const fieldLabel = (field: string) => FIELD_LABELS[field] ?? field;

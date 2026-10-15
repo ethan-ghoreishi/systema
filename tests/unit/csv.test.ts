@@ -117,3 +117,86 @@ it('discloses expenses left out of the CSV while awaiting a rate', () => {
   expect(csvNote(rows)).toContain('1 expense(s) awaiting an exchange rate were left out');
   expect(csvNote([exp({})])).toBe('');
 });
+
+/** RFC 4180 reader, enough to read our own export back. */
+function parseCsv(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = '';
+  let quoted = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (quoted) {
+      if (ch === '"' && text[i + 1] === '"') {
+        cell += '"';
+        i += 1;
+      } else if (ch === '"') quoted = false;
+      else cell += ch;
+    } else if (ch === '"') quoted = true;
+    else if (ch === ',') {
+      row.push(cell);
+      cell = '';
+    } else if (ch === '\n') {
+      row.push(cell);
+      rows.push(row);
+      row = [];
+      cell = '';
+    } else cell += ch;
+  }
+  return rows;
+}
+
+describe('CSV round trip', () => {
+  it('reads back exactly what was written, column for column', () => {
+    const rows = [
+      exp({
+        description: 'Duomo, roof "terraces"',
+        notes: 'line one\nline two',
+        amountGBP: 12.5,
+        amountLocal: 14.75,
+      }),
+      exp({
+        description: 'Flights',
+        destination: 'Bologna/Barcelona',
+        shared: true,
+        category: 'Transportation',
+        subcategory: 'Flight',
+        currency: 'GBP',
+        amountGBP: 80,
+        amountLocal: 0,
+        fxDate: '2024-10-08',
+        gbpManual: true,
+      }),
+    ];
+    const parsed = parseCsv(buildTripCsv(rows));
+    expect(parsed[0]).toHaveLength(11);
+    expect(parsed[1]).toEqual([
+      '08/10/2024',
+      '1',
+      'Vienna',
+      'Food',
+      'Snacks',
+      'Duomo, roof "terraces"',
+      'Card Payment',
+      '12.5',
+      '14.75 EUR',
+      'line one\nline two',
+      '',
+    ]);
+    // New fields never leak into the sheet's columns.
+    expect(parsed[2]).toEqual([
+      '08/10/2024',
+      '2',
+      'Bologna/Barcelona',
+      'Transportation',
+      'Flight',
+      'Flights',
+      'Card Payment',
+      '80',
+      '',
+      '',
+      '',
+    ]);
+    expect(parsed[3]).toEqual(['', '', '', '', '', '', '', '', '', '', '92.5']);
+  });
+});

@@ -43,41 +43,71 @@ subscription.**
 
 - **Home** — current trips up top; trips marked Done shelve into a **Trip
   journal** section (everything kept: plan, stops, notes, photos, expenses,
-  journal). Each card names itself from its legs (e.g. `Barcelona → Bologna`)
-  and shows a cover: the route map, a photo, or a generated route card — your
-  choice per trip.
-- **Insights** (`#/insights`) — the whole ledger at a glance: every trip, every
-  pound, per-category bars, per-trip totals, and a **by-city** view (cheapest
-  and priciest by cost-per-day, sortable), plus an all-trips CSV export in the
-  master-sheet column format. The app is the source of truth; the Google sheet
-  is updated by pasting CSV when reconciling, not by a live service.
+  journal). Each card names itself from its legs (e.g. `Barcelona → Bologna`);
+  a trip about to move shows its next leave-by time. Covers: a single city's
+  route sketch, a photo, or — for a multi-city trip — a journey card (cities,
+  dates, rhythm); your choice per trip.
+- **Insights** (`#/insights`) — decisions, not charts: what a day on the
+  ground, food, an airport transfer (per person) or a place visited cost in
+  each city — one question at a time, from each leg's real hours and each
+  expense's own city, every figure with its sample size and nothing called
+  "best" — plus airport-transfer notes, each trip's rhythm against its plan,
+  per-category and per-trip totals, and what the numbers rest on (trip-wide
+  spend kept apart, never split; unlinked and unpriced rows disclosed). An
+  all-trips CSV exports in the master-sheet column format; the Google sheet is
+  updated by pasting CSV when reconciling, not by a live service.
 - **History import** — `scripts/import-travel-spending.mjs` converts a dump of
   the legacy Travel Spending sheet into a backup file the app imports (trips,
   cities with currencies, expenses, and visited stops inferred from ticket
   purchases). Generated files contain personal data — never commit them.
-- A trip is described by its **legs** — each city with its arrival, departure
-  and where you slept (nothing / airport / hotel). From those the app derives
-  the trip's shape (same-day dash, airport sleep, city break, multi-city…),
-  dates, countdown and name — so nothing has to be kept in sync by hand, and
-  transit trips (two cities on one ticket) are first-class.
+- A trip is described by its **legs** — each city with its arrival and
+  departure (as printed on the tickets, in that city's own time zone), where you
+  slept (nothing / airport / hotel), an optional hotel/base, and how you leave
+  (airport or station, terminal, flight number, booking reference, how you get
+  there and how long it takes, how early you want to be there). Leaving home is
+  a departure too. From those the app derives the trip's shape (same-day dash,
+  airport sleep, city break, multi-city, **two-city stopover** 1–4…), dates and
+  name — so nothing has to be kept in sync by hand. A departure before its own
+  arrival is refused, with how to fix it; other timing clashes are explained.
+- **Two-City Stopover** is a starting point (New trip): pick one of the four
+  scenarios from the flight finder, name the stopover and the destination, and
+  the legs, the hotel night and the protected hop are laid out; drift from the
+  pattern (land by ~11:00, hop after ~18:00 or before ~10:00, home after
+  ~18:00) is noted, never blocked.
 - Inside a trip, four tabs only:
   1. **Plan** — your pasted itinerary, rendered and readable offline, with an
-     auto contents list and a departure-time countdown at the top. A
-     **Research prompt** builder pre-fills a copy-ready Claude prompt from the
-     legs and asks for a route format the app imports automatically. Two modes:
-     _plan a new route_, or _I already have the plan_ (enrich an existing
-     itinerary instead of inventing one — the default for past trips). Once a
+     auto contents list and, at the top, a calm **Next departure** card: the
+     next airport or station departure not yet gone (not the final flight
+     home), `leave by = departure − buffer − journey − spare`, in plain words
+     and stages (Later · Prepare · Leave by · Time to go · Plan B), refreshed
+     once a minute — no ticking clock. Adjust changes the plan in a few taps;
+     Calendar reminders saves an .ics with a "get ready" and a "leave now"
+     alert per departure. A **Research prompt** builder pre-fills copy-ready
+     Claude prompts — for a multi-city trip **one city at a time** (Research
+     Bologna, Paste Bologna plan, then Barcelona), each with only that city's
+     hours, base and transfers — in a format the app imports automatically.
+     Two modes: _plan a new route_, or _I already have the plan_. Once a
      journal is saved, the tab grows a Plan | Journal toggle.
-  2. **Stops** — an ordered, tickable list of places with notes, discovery
-     checklists and photos, plus a **List | Map toggle**: OpenStreetMap route
-     map (numbered pins, walking order line, drag to adjust, tap to place;
-     tiles cached for offline). One tap **extracts stops — with notes,
-     checklist items and map pins — from the pasted plan** (deterministic
-     parsing, deduped, re-runnable).
-  3. **Expenses** — two-tap capture and a running total. Non-GBP amounts save
-     instantly with no £ needed and **price themselves from the day's ECB rate**
-     when online.
-  4. **Export** — journaling prompt prefilled with the trip pack (photo
+  2. **Stops** — an ordered, tickable list of places grouped by city, with
+     notes, discovery checklists, photos and, for major sites, a **visit
+     anchor** (where to begin, the 10–20 minute version, three things to look
+     for, a stretch, what can be skipped), plus off-plan moments in their
+     city. **List | Map**: one city at a time (numbered within the city, a
+     walking line only inside it) or a labelled Transfers overview; drag to
+     adjust, tap to place; tiles cached for offline. One tap **extracts stops —
+     with notes, anchors, checklist items and map pins — from the plan**.
+  3. **Expenses** — capture is an amount and one tap: quick picks (recent and
+     templates) set the category; city, currency, date, destination and
+     payment default from the leg you're in; the rest is under More details.
+     Trip-wide spend is an explicit choice. A likely double entry is flagged.
+     Non-GBP amounts save with no £ needed and **price themselves from the
+     day's ECB rate** when online; a £ typed by hand is never re-priced.
+  - **What happened?** (the spark in a trip's header) keeps something off the
+    plan in seconds — a place found by accident, a changed plan, a missed bus,
+    an encounter — with photos from the camera or the library.
+  4. **Export** — journaling prompt prefilled with the trip pack (visit order,
+     unplanned moments, a numbered photo list with stable references to attach
+     in order; photo
      placeholders included), a **reconstruction prompt** for pre-app trips
      (expense trail as memory scaffold), journal paste-back and per-trip CSV.
 - **Settings** (gear on Home) — backup health (last sync, changes not yet on
@@ -103,6 +133,46 @@ npm run preview      # serve the production build locally
 npm run format       # Prettier
 npm run lint         # ESLint
 ```
+
+## Testing
+
+`npm run test` (Vitest) covers the pure logic: zone maths across clock
+changes, leave-by and stages, .ics output, chronology, the two-city scenarios,
+per-city prompts, plan blocks, anchors, the visit timeline, journal photo
+references, quick-capture defaults and duplicates, CSV round trip, insights,
+NAS failure classes, EXIF — and that a snapshot from this version still passes
+the **previous version's** validator and merge (frozen in
+`tests/unit/fixtures`).
+
+`npm run test:e2e` (Playwright) runs every flow on Chromium **and on WebKit
+with an iPhone profile** (the iPhone's engine): Back and scroll restore, the
+fixed shell (the document never scrolls, the bars never move), double-tap
+policy, the expense `<dialog>` in the top layer, copying inside the tap and
+the fallback sheet, itinerary zones and refusals, city-local maps and covers,
+moments and library imports, quick capture and the CSV, a v3 → v4 database
+upgrade, and NAS sync, partial backups, retries and diagnostics against a fake
+receiver — plus the real PHP receiver (current, previous and original) in CI.
+
+### On the iPhone (what emulation can't show)
+
+After a deploy, on the installed app (Add to Home Screen):
+
+1. Scroll a long Stops list hard, both ways: the top bar and tab bar stay
+   exactly put; no rubber-band of the whole page.
+2. Double-tap a chip, a keypad key and the gap between buttons: no zoom.
+   Pinch still zooms.
+3. Add an expense; type in Description and close the keyboard: Cancel/Save
+   stay at the top, and the page is back in place after the keyboard goes.
+4. Research prompt → Research a city: "copied" appears; paste in Claude. (If
+   it ever refuses, a sheet shows the text to copy or share.)
+5. Open a stop from far down the list, then the header's ‹ Stops: same place.
+6. Next departure → Calendar reminders: the .ics opens with "Add All" (or use
+   Share… → Calendar/Files).
+7. What happened? → Choose from library → pick several: they appear in the
+   order taken. Export → Share the photos for Claude: the share sheet lists
+   them numbered.
+8. Settings → Backup → Test connection on home wifi and away: each line says
+   what it found.
 
 ## Hosting
 
@@ -141,7 +211,13 @@ src/
     TopBar.svelte          Per-screen top bar
     Icon.svelte            Inline icon set
     Keypad.svelte          Numeric keypad
-    ExpenseCapture.svelte  Two-tap expense capture modal (native <dialog>)
+    ExpenseCapture.svelte  Quick expense capture (native <dialog>)
+    CopySheet.svelte       Text the clipboard refused, to copy or share by hand
+    NextDeparture.svelte   The calm leave-by card
+    DepartureEditor.svelte A departure's plan (native <dialog>)
+    MomentCapture.svelte   "What happened?" (native <dialog>)
+    PastePlanDialog.svelte Paste one city's plan
+    PhotoPicker.svelte     Take photo / Choose from library
     UpdateToast.svelte     Update / offline-ready toast
     TripCover.svelte       Trip cover (route sketch / photo / ribbon)
     CoverPicker.svelte     Choose/upload a trip's cover
@@ -165,7 +241,15 @@ src/
     cover.ts               Pure SVG cover generators (sketch/ribbon)
     markdown.ts            Plan rendering (marked + DOMPurify)
     headings.ts            Pure heading parsing (contents list + split helper)
-    countdown.ts           Pure departure-countdown maths
+    tz.ts                  Pure: zoned wall clock ↔ instant (Intl), zone suggestions
+    readiness.ts           Pure: leave-by, stages, next departure, .ics reminders
+    moments.ts             Off-plan moments + the visit timeline
+    exif.ts                Pure: a JPEG's capture time
+    expense-defaults.ts    Pure: quick picks, defaults, trip-wide, duplicates
+    nas-diagnostics.ts     Pure: failure classes, explanations, backoff, redaction
+    copy.svelte.ts         Copy inside the tap, with a selectable fallback sheet
+    ui-memory.ts           Per-screen scroll/view memory (session only)
+    viewport.ts            On-screen keyboard handling, apart from layout
     currencies.ts          Currency suggestions
     format.ts              Pure helpers
     ids.ts                 UUID helper
@@ -188,8 +272,10 @@ nas/systema-backup.php     Token-gated NAS receiver (self-hosted)
 docs/nas-backup-setup.md   Synology setup + Tailscale/CGNAT notes
 tests/
   unit/                    Vitest
-  e2e/                     Playwright: two-device sync (fake NAS + real PHP),
-                           backups, data safety; Chromium + WebKit
+  unit/fixtures/            The previous version's validator and merge (frozen)
+  e2e/                     Playwright, Chromium + WebKit (iPhone profile): app
+                           flows, layout, sync (fake NAS + real PHP), backups,
+                           data safety, the v3 → v4 upgrade
   pwa/                     Update-while-editing test on two production builds
 ```
 
@@ -205,18 +291,26 @@ tests/
   instead of "last device wins": edits to different things combine; the same
   thing edited on both keeps the newer edit and lists the other in Settings to
   choose from; a deletion applies unless the other device edited the record.
-  Photos upload before any snapshot that lists them, never leave because a
+  Each photo uploads on its own and counts as backed up only once its size and
+  SHA-256 are verified; one that keeps failing is listed with its reason and
+  retried with a growing wait, while the data and every other photo still back
+  up (an explicit partial-success state). Photos never leave because a
   snapshot lacks them (only an explicit delete does), and download one at a
   time. A new, reset or empty device merges before it pushes, so it can't
-  replace the NAS copy; an idle sync writes and pushes nothing.
+  replace the NAS copy; an idle sync writes and pushes nothing. A device still
+  on the previous version keeps syncing safely: every new field is optional,
+  and a snapshot without the newer tables deletes nothing.
 - **Backup files:** Settings → Download full backup gives a ZIP — the data
   plus every photo as a normal image file — built without holding the photos in
   memory. Restore checks every checksum and shows what would be added before
   writing; it only ever adds what the device lacks. Older .json backups and NAS
   snapshot files restore too (a snapshot's photos are fetched from the NAS).
-- **Check NAS copy** verifies the NAS snapshot and that every photo it lists is
-  on the NAS, and says what a sync would change — without changing anything.
-  See [`docs/nas-backup-setup.md`](docs/nas-backup-setup.md).
+- **Test connection** tells apart the address, no connection, a CORS block, a
+  refused token and an upload size limit. **Check NAS copy** verifies the NAS
+  snapshot and that every photo it lists is on the NAS at the right size, names
+  the missing ones, and queues any this device holds to upload again. The token
+  never appears in a message, log or backup. See
+  [`docs/nas-backup-setup.md`](docs/nas-backup-setup.md).
 - No paid hosting, no metered AI, no paid backend. If a feature would need
   ongoing payment, it isn't built — a free alternative is used or it's flagged.
 

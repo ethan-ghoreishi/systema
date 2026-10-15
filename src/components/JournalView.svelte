@@ -19,6 +19,7 @@
   const stopsQ = liveQuery(() => db.stops.where('tripId').equals(trip.id).sortBy('order'));
   const citiesQ = liveQuery(() => db.cities.where('tripId').equals(trip.id).sortBy('order'));
   const photosQ = liveQuery(() => db.photos.where('tripId').equals(trip.id).toArray());
+  const momentsQ = liveQuery(() => db.moments.where('tripId').equals(trip.id).toArray());
   const expensesQ = liveQuery(() => db.expenses.where('tripId').equals(trip.id).toArray());
   const stops = $derived($stopsQ ?? []);
   const cities = $derived($citiesQ ?? []);
@@ -33,16 +34,12 @@
   const stopNameById = $derived(
     Object.fromEntries(stops.map((s) => [s.id, s.name])) as Record<string, string>,
   );
+  const momentTitleById = $derived(
+    Object.fromEntries(($momentsQ ?? []).map((m) => [m.id, m.title])) as Record<string, string>,
+  );
 
-  const assignment = $derived.by(() => {
-    const byName: Record<string, Photo[]> = {};
-    for (const p of photos) {
-      const name = p.stopId ? (stopNameById[p.stopId] ?? '') : '';
-      if (!name) continue;
-      (byName[name] ??= []).push(p);
-    }
-    return assignPhotos(segments, byName);
-  });
+  // Placeholders resolve by stable reference (P-xxxxxx); older journals by stop name.
+  const assignment = $derived(assignPhotos(segments, photos, captionFor));
 
   // Object URLs for every photo shown; revoked when the set changes.
   let urls = $state<Record<string, string>>({});
@@ -56,6 +53,7 @@
   });
 
   function captionFor(p: Photo): string {
+    if (p.momentId && momentTitleById[p.momentId]) return momentTitleById[p.momentId];
     return p.stopId ? (stopNameById[p.stopId] ?? '') : '';
   }
 
@@ -77,9 +75,7 @@
   {#if mappedStops.length}
     <div class="journal-map">
       <span class="section-title">The route</span>
-      {#key mappedStops.length}
-        <StopsMap {stops} readonly />
-      {/key}
+      <StopsMap {stops} {cities} readonly memoryKey={`journal:${trip.id}:map-city`} />
     </div>
   {/if}
 

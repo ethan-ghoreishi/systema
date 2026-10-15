@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { checklistProgress, extractStopsFromPlan, newStopCandidates } from '../../src/lib/stops';
+import {
+  checklistProgress,
+  extractStopsFromPlan,
+  newStopCandidates,
+  guideBackfill,
+} from '../../src/lib/stops';
 import type { Stop } from '../../src/lib/db';
 
 function stop(over: Partial<Stop> = {}): Stop {
@@ -176,5 +181,67 @@ describe('newStopCandidates', () => {
     const md = '## Route\n### Kastellet\nx\n### Superkilen\ny';
     const existing = [stop({ name: 'kastellet' })];
     expect(newStopCandidates(md, existing).map((s) => s.name)).toEqual(['Superkilen']);
+  });
+});
+
+describe('visit anchors', () => {
+  const plan = `# Bologna
+
+## Route
+
+### Archiginnasio
+- The old university's seat: civic pride written in coats of arms.
+**Anchor:** Start in the Anatomical Theatre — dissection as public knowledge.
+**Minimum visit:** 15 minutes: the theatre, then the main stair.
+**Look for:** students' coats of arms; the skinless statues; the lecturer's canopy.
+Stretch: the Stabat Mater hall, if calm.
+- Exit rule: skip the library corridors; the theatre carries the thesis.
+- [ ] Count the coats of arms on one ceiling bay
+Location: 44.4935, 11.3431
+
+### Piazza Maggiore
+- Look for:
+  - the meridian line
+  - the Neptune fountain's sightline
+- Market stalls behind the square.
+`;
+
+  it('extracts the five anchor fields, out of the notes', () => {
+    const [arch, piazza] = extractStopsFromPlan(plan, ['Bologna']);
+    expect(arch.guide).toEqual({
+      anchor: 'Start in the Anatomical Theatre — dissection as public knowledge.',
+      minimum: '15 minutes: the theatre, then the main stair.',
+      lookFor: ["students' coats of arms", 'the skinless statues', "the lecturer's canopy"],
+      stretch: 'the Stabat Mater hall, if calm.',
+      exit: 'skip the library corridors; the theatre carries the thesis.',
+    });
+    expect(arch.notes).toBe("- The old university's seat: civic pride written in coats of arms.");
+    expect(arch.checklist).toHaveLength(1);
+    expect(arch.lat).toBe(44.4935);
+    expect(piazza.guide?.lookFor).toEqual([
+      'the meridian line',
+      "the Neptune fountain's sightline",
+    ]);
+    expect(piazza.notes).toBe('- Market stalls behind the square.');
+  });
+
+  it('fills empty anchors on existing stops and never overwrites', () => {
+    const existing = [
+      {
+        id: 's1',
+        tripId: 't',
+        cityId: null,
+        name: 'Archiginnasio',
+        notes: '',
+        checklist: [],
+        visited: false,
+        guide: { anchor: 'My own anchor' },
+        order: 0,
+        createdAt: 0,
+      },
+    ];
+    const [b] = guideBackfill(plan, existing, ['Bologna']);
+    expect(b.guide.anchor).toBe('My own anchor');
+    expect(b.guide.minimum).toBe('15 minutes: the theatre, then the main stair.');
   });
 });

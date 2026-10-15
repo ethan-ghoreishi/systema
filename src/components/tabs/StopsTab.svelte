@@ -1,6 +1,7 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { liveQuery } from 'dexie';
-  import { db, type Stop, type Trip } from '../../lib/db';
+  import { db, type Moment, type Stop, type StopGuide, type Trip } from '../../lib/db';
   import {
     addStop,
     updateStop,
@@ -14,19 +15,37 @@
     importStopsFromPlan,
     newStopCandidates,
   } from '../../lib/stops';
-  import { addPhoto, deletePhoto, downloadPhoto } from '../../lib/photos';
+  import { addPhotos, deletePhoto, downloadPhoto, photoTime } from '../../lib/photos';
+  import { instantToWall } from '../../lib/tz';
+  import { nasBackup } from '../../lib/nas.svelte';
+  import PhotoPicker from '../PhotoPicker.svelte';
+  import MomentCapture from '../MomentCapture.svelte';
   import { router, navigate } from '../../lib/router.svelte';
+  import { recall, remember } from '../../lib/ui-memory';
   import Icon from '../Icon.svelte';
   import StopsMap from '../StopsMap.svelte';
 
   let { trip }: { trip: Trip } = $props();
 
-  // 'list' | 'map' — the map redraws live as stops change in the field.
-  let stopView = $state<'list' | 'map'>('list');
+  // 'list' | 'map', kept per trip — the map redraws live as stops change.
+  const viewKey = untrack(() => `stops:${trip.id}:view`);
+  let stopView = $state<'list' | 'map'>(recall(viewKey, 'list'));
+  $effect(() => remember(viewKey, stopView));
+
+  // The stop just opened gets focus back when the list returns.
+  let returnFocus = $state<string | null>(null);
+  function focusReturn(node: HTMLElement, on: boolean) {
+    if (!on) return;
+    node.focus({ preventScroll: true });
+    returnFocus = null;
+  }
 
   const stopsQ = liveQuery(() => db.stops.where('tripId').equals(trip.id).sortBy('order'));
   const citiesQ = liveQuery(() => db.cities.where('tripId').equals(trip.id).sortBy('order'));
   const photosQ = liveQuery(() => db.photos.where('tripId').equals(trip.id).toArray());
+  const momentsQ = liveQuery(() => db.moments.where('tripId').equals(trip.id).sortBy('at'));
+  const moments = $derived($momentsQ ?? []);
+  let editingMoment = $state<Moment | null>(null);
   const stops = $derived($stopsQ ?? []);
   const cities = $derived($citiesQ ?? []);
   const allPhotos = $derived($photosQ ?? []);
@@ -35,24 +54,56 @@
   const multiCity = $derived(cities.length >= 2);
   const cityNameById = $derived(new Map(cities.map((c) => [c.id, c.name])));
 
-  type StopRow = { kind: 'header'; label: string } | { kind: 'stop'; stop: Stop; index: number };
+  type StopRow =
+    | { kind: 'header'; label: string }
+    | { kind: 'stop'; stop: Stop; index: number }
+    | { kind: 'moment'; moment: Moment };
+  /** Planned stops grouped by city, each city's off-plan moments after its stops. */
   const stopRows = $derived.by<StopRow[]>(() => {
-    if (!multiCity) return stops.map((stop, index) => ({ kind: 'stop', stop, index }));
+    const momentsFor = (key: string | null) =>
+      moments
+        .filter(
+          (m) => (m.cityId ?? null) === key || (key === null && !cityNameById.has(m.cityId ?? '')),
+        )
+        .map((moment) => ({ kind: 'moment' as const, moment }));
+    if (!multiCity) {
+      const rows: StopRow[] = stops.map((stop, index) => ({ kind: 'stop', stop, index }));
+      if (moments.length)
+        rows.push(
+          { kind: 'header', label: 'Off the plan' },
+          ...moments.map((moment) => ({ kind: 'moment' as const, moment })),
+        );
+      return rows;
+    }
     const rows: StopRow[] = [];
     let lastKey: string | null | undefined = undefined;
+    const closeGroup = () => {
+      if (lastKey !== undefined) rows.push(...momentsFor(lastKey));
+    };
     stops.forEach((stop, index) => {
-      const key = stop.cityId ?? null;
+      const key = stop.cityId && cityNameById.has(stop.cityId) ? stop.cityId : null;
       if (key !== lastKey) {
-        rows.push({
-          kind: 'header',
-          label: (stop.cityId && cityNameById.get(stop.cityId)) || 'Other',
-        });
+        closeGroup();
+        rows.push({ kind: 'header', label: (key && cityNameById.get(key)) || 'Other' });
         lastKey = key;
       }
       rows.push({ kind: 'stop', stop, index });
     });
+    closeGroup();
+    // Cities with moments but no stops yet.
+    const shownKeys = new Set(
+      stops.map((s) => (s.cityId && cityNameById.has(s.cityId) ? s.cityId : null)),
+    );
+    for (const c of cities)
+      if (!shownKeys.has(c.id) && moments.some((m) => m.cityId === c.id))
+        rows.push({ kind: 'header', label: c.name }, ...momentsFor(c.id));
     return rows;
   });
+
+  function momentTime(m: Moment): string {
+    const tz = cities.find((c) => c.id === m.cityId)?.tz;
+    return instantToWall(m.at, tz).slice(11, 16);
+  }
 
   // Detail selection via the route: #/trip/:id/stops/:stopId
   const selectedId = $derived(router.path.split('/').filter(Boolean)[3] ?? null);
@@ -76,7 +127,9 @@
     return m;
   });
 
-  const photos = $derived(allPhotos.filter((p) => p.stopId === selectedId));
+  const photos = $derived(
+    allPhotos.filter((p) => p.stopId === selectedId).sort((a, b) => photoTime(a) - photoTime(b)),
+  );
   let photoUrls = $state<Record<string, string>>({});
   $effect(() => {
     const map: Record<string, string> = {};
@@ -108,10 +161,12 @@
     if (n > 0) flashSaved();
   }
   function openStop(s: Stop) {
+    returnFocus = s.id;
     navigate(`/trip/${trip.id}/stops/${s.id}`);
   }
   function backToList() {
-    navigate(`/trip/${trip.id}/stops`);
+    const list = `/trip/${trip.id}/stops`;
+    router.back(list, (p) => p === list);
   }
 
   // Persist input immediately, bound to the currently selected stop.
@@ -120,6 +175,7 @@
   let draftsFor = $state<string | null>(null);
   $effect(() => {
     if (selected && draftsFor !== selected.id) {
+      editingGuide = false;
       nameDraft = selected.name;
       notesDraft = selected.notes;
       draftsFor = selected.id;
@@ -145,15 +201,36 @@
     void updateStop(selected.id, { notes: notesDraft }).then(flashSaved).catch(failed);
   }
 
+  // ---- detail: visit anchor ----
+  let editingGuide = $state(false);
+  const hasGuide = (g?: StopGuide) =>
+    !!g && Object.values(g).some((v) => (Array.isArray(v) ? v.length : v));
+  function saveGuide(key: keyof StopGuide, value: string) {
+    if (!selected) return;
+    const guide: StopGuide = { ...selected.guide };
+    if (key === 'lookFor')
+      guide.lookFor = value
+        .split(/\n|;/)
+        .map((v) => v.trim())
+        .filter(Boolean);
+    else guide[key] = value.trim() || undefined;
+    saveError = '';
+    void updateStop(selected.id, { guide }).then(flashSaved).catch(failed);
+  }
+
   // ---- detail: photos + checklist ----
-  async function onPhoto(e: Event) {
-    const input = e.currentTarget as HTMLInputElement;
-    const file = input.files?.[0];
-    if (file && selected) {
-      await addPhoto(file, { tripId: trip.id, stopId: selected.id, kind: 'stop' });
-      flashSaved();
-    }
-    input.value = '';
+  async function onPhotos(files: File[]) {
+    if (!selected) return;
+    const tz = cities.find((c) => c.id === selected.cityId)?.tz;
+    await addPhotos(files, { tripId: trip.id, stopId: selected.id, kind: 'stop', tz });
+    flashSaved();
+  }
+
+  /** On the NAS, waiting, or failed — so the backup state of each photo is plain. */
+  function backupBadge(id: string): string {
+    if (!nasBackup.configured) return '';
+    if (nasBackup.failures[id]) return 'not backed up';
+    return '';
   }
 
   let newItemText = $state('');
@@ -177,9 +254,6 @@
   <!-- Detail -->
   <div class="stop-detail">
     <div class="detail-bar">
-      <button class="btn btn--ghost btn--sm back-link" onclick={backToList}>
-        <Icon name="back" size={18} /> Stops
-      </button>
       <span class="autosave" class:autosave--on={savedAt}>
         {savedAt ? 'Saved ✓' : 'Saves automatically'}
       </span>
@@ -197,6 +271,49 @@
       <input type="checkbox" checked={selected.visited} onchange={() => toggleVisited(selected)} />
       <span>Visited</span>
     </label>
+
+    {#if hasGuide(selected.guide) || editingGuide}
+      <section class="card anchor" aria-label="Visit anchor">
+        <div class="anchor-head">
+          <span class="section-title">Visit anchor</span>
+          <button class="link-btn" onclick={() => (editingGuide = !editingGuide)}
+            >{editingGuide ? 'Done' : 'Edit'}</button
+          >
+        </div>
+        {#if editingGuide}
+          {#each [['anchor', 'Anchor — where to begin, and why'], ['minimum', 'Minimum visit — the 10–20 minute version'], ['lookFor', 'Look for — three cues, one per line'], ['stretch', 'Stretch — only if calm and ahead'], ['exit', 'Exit rule — what can be skipped']] as const as [key, label] (key)}
+            <label class="label" for={`guide-${key}`}>{label}</label>
+            <textarea
+              id={`guide-${key}`}
+              class="field"
+              rows="2"
+              value={key === 'lookFor'
+                ? (selected.guide?.lookFor ?? []).join('\n')
+                : (selected.guide?.[key] ?? '')}
+              onchange={(e) => saveGuide(key, (e.currentTarget as HTMLTextAreaElement).value)}
+            ></textarea>
+          {/each}
+        {:else}
+          {@const g = selected.guide!}
+          {#if g.anchor}<p><strong>Begin:</strong> {g.anchor}</p>{/if}
+          {#if g.minimum}<p><strong>Minimum visit:</strong> {g.minimum}</p>{/if}
+          {#if g.lookFor?.length}
+            <div>
+              <strong>Look for</strong>
+              <ul class="anchor-cues">
+                {#each g.lookFor as cue (cue)}<li>{cue}</li>{/each}
+              </ul>
+            </div>
+          {/if}
+          {#if g.stretch}<p class="hint"><strong>Stretch, if calm:</strong> {g.stretch}</p>{/if}
+          {#if g.exit}<p class="hint"><strong>Can skip:</strong> {g.exit}</p>{/if}
+        {/if}
+      </section>
+    {:else}
+      <button class="link-btn anchor-add" onclick={() => (editingGuide = true)}
+        >Add a visit anchor</button
+      >
+    {/if}
 
     <div>
       <label class="label" for="stop-notes">Notes</label>
@@ -250,7 +367,8 @@
         <div class="photo-grid">
           {#each photos as p (p.id)}
             <div class="photo-thumb">
-              <img src={photoUrls[p.id]} alt={selected.name} />
+              <img src={photoUrls[p.id]} alt={selected.name} loading="lazy" decoding="async" />
+              {#if backupBadge(p.id)}<span class="photo-badge">{backupBadge(p.id)}</span>{/if}
               <div class="photo-actions">
                 <button class="photo-act" aria-label="Save photo" onclick={() => downloadPhoto(p)}>
                   <Icon name="export" size={16} />
@@ -274,10 +392,7 @@
           {/each}
         </div>
       {/if}
-      <label class="btn btn--ghost receipt-btn">
-        <Icon name="camera" size={20} /> Add photo
-        <input type="file" accept="image/*" capture="environment" hidden onchange={onPhoto} />
-      </label>
+      <PhotoPicker onFiles={onPhotos} />
       <p class="hint">
         Stored on this device (and your NAS, if set up). Deleting a photo also removes it from this
         trip's journal and future backups.
@@ -314,7 +429,7 @@
     {/if}
 
     {#if stopView === 'map' && stops.length > 0}
-      <StopsMap {stops} onOpen={openStop} />
+      <StopsMap {stops} {cities} onOpen={openStop} memoryKey={`stops:${trip.id}:map-city`} />
     {:else}
       {#if extractable.length > 0}
         <button class="btn btn--ghost" onclick={extractNow}>
@@ -337,9 +452,21 @@
 
       {#if stops.length}
         <div class="stop-list">
-          {#each stopRows as row (row.kind === 'stop' ? row.stop.id : `h-${row.label}`)}
+          {#each stopRows as row, ri (row.kind === 'stop' ? row.stop.id : row.kind === 'moment' ? `m-${row.moment.id}` : `h-${ri}-${row.label}`)}
             {#if row.kind === 'header'}
               <span class="stop-city-head section-title">{row.label}</span>
+            {:else if row.kind === 'moment'}
+              {@const m = row.moment}
+              {@const n = allPhotos.filter((p) => p.momentId === m.id).length}
+              <div class="stop-row moment-row">
+                <span class="check-box check-box--none" aria-hidden="true"></span>
+                <button class="stop-open" onclick={() => (editingMoment = m)}>
+                  <span class="stop-name">{m.title}</span>
+                  <span class="stop-meta"
+                    >off-plan · {momentTime(m)}{n ? ` · ${n} photo${n > 1 ? 's' : ''}` : ''}</span
+                  >
+                </button>
+              </div>
             {:else}
               {@const s = row.stop}
               {@const i = row.index}
@@ -352,9 +479,16 @@
                 >
                   {#if s.visited}<Icon name="check" size={16} />{/if}
                 </button>
-                <button class="stop-open" onclick={() => openStop(s)}>
+                <button
+                  class="stop-open"
+                  onclick={() => openStop(s)}
+                  use:focusReturn={returnFocus === s.id}
+                >
                   <span class="stop-name">{s.name}</span>
                   <span class="stop-meta">
+                    {#if hasGuide(s.guide)}<span class="stop-anchor">anchor</span>
+                      {#if s.notes.trim() || checklistProgress(s).total || photoCounts[s.id]}·
+                      {/if}{/if}
                     {#if s.notes.trim()}notes{/if}
                     {#if p.total}{s.notes.trim() ? ' · ' : ''}{p.done}/{p.total} ticked{/if}
                     {#if photoCounts[s.id]}{s.notes.trim() || p.total ? ' · ' : ''}{photoCounts[
@@ -391,4 +525,14 @@
       {/if}
     {/if}
   </div>
+{/if}
+
+{#if editingMoment}
+  <MomentCapture
+    {trip}
+    {cities}
+    {stops}
+    moment={editingMoment}
+    onClose={() => (editingMoment = null)}
+  />
 {/if}

@@ -1,4 +1,5 @@
 import type { BrowserContext, Page, Route } from '@playwright/test';
+import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -18,13 +19,28 @@ export class FakeNas {
   photoPosts = 0;
   /** Fail photo uploads once this many have been stored (simulated outage). */
   failPhotoPostsAfter = Infinity;
+  /** Photos that always fail, with the HTTP status to answer. */
+  failPhotos = new Map<string, number>();
+  /** Bodies above this arrive empty, as PHP does past post_max_size. */
+  maxBody = Infinity;
+  /** 1 = the original receiver (no listing, no hashes); 2 = the current one. */
+  version: 1 | 2 = 2;
+  /** No answer at all (NAS asleep, away from home). */
+  unreachable = false;
+  /**
+   * Bodies above this get the connection cut mid-upload — what a proxy limit
+   * (or PHP printing a warning before its headers) looks like to a browser.
+   */
+  cutOffAbove = Infinity;
   latestOverride: { status: number; body: string } | null = null;
 
   handle = async (route: Route) => {
+    if (this.unreachable) return route.abort('failed');
     const req = route.request();
     const url = new URL(req.url());
     const kind = url.searchParams.get('kind');
     const id = url.searchParams.get('id') ?? '';
+    const sha = (b: Buffer) => createHash('sha256').update(b).digest('hex');
     const cors = {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'POST, OPTIONS',
@@ -38,6 +54,12 @@ export class FakeNas {
         body: JSON.stringify(obj),
       });
     if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: cors });
+    if (req.method() === 'GET' && !kind)
+      return json(200, {
+        ok: true,
+        service: 'systema-backup',
+        ...(this.version === 2 ? { version: 2, maxBody: 0, writable: true } : {}),
+      });
     if (url.searchParams.get('token') !== 'synthetic')
       return json(403, { ok: false, error: 'bad token' });
 
@@ -57,14 +79,27 @@ export class FakeNas {
           body: this.files.get(name),
         });
       }
+      if (kind === 'photos' && this.version === 2)
+        return json(200, {
+          ok: true,
+          photos: [...this.photos].map(([pid, b]) => ({ id: pid, ext: 'png', bytes: b.length })),
+        });
       const photo = this.photos.get(id);
+      if (kind === 'photo' && photo && url.searchParams.get('meta') === '1' && this.version === 2)
+        return json(200, { ok: true, bytes: photo.length, sha256: sha(photo) });
       if (kind === 'photo' && photo)
         return route.fulfill({ headers: cors, contentType: 'image/png', body: photo });
       return json(404, { ok: false, error: 'not found' });
     }
 
-    const body = req.postDataBuffer() ?? Buffer.alloc(0);
+    let body = req.postDataBuffer() ?? Buffer.alloc(0);
+    if (body.length > this.cutOffAbove) return route.abort('connectionreset');
+    if (body.length > this.maxBody) {
+      if (this.version === 2) return json(413, { ok: false, error: 'larger than post_max_size' });
+      body = Buffer.alloc(0); // PHP drops it before the script runs
+    }
     if (!body.length) return json(400, { ok: false, error: 'empty body' });
+    if (kind === 'probe' && this.version === 2) return json(200, { ok: true, bytes: body.length });
     if (kind === 'data') {
       try {
         JSON.parse(body.toString());
@@ -81,11 +116,24 @@ export class FakeNas {
       return json(200, { ok: true, stored: name });
     }
     if (kind === 'photo') {
+      if (this.failPhotos.has(id))
+        return json(this.failPhotos.get(id)!, { ok: false, error: 'write failed' });
       if (this.photos.size >= this.failPhotoPostsAfter)
         return json(500, { ok: false, error: 'write failed' });
-      if (!this.photos.has(id)) this.photos.set(id, body);
       this.photoPosts += 1;
-      return json(200, { ok: true });
+      const existing = this.photos.get(id);
+      if (existing && url.searchParams.get('replace') !== '1')
+        return json(
+          200,
+          this.version === 2
+            ? { ok: true, existed: true, bytes: existing.length, sha256: sha(existing) }
+            : { ok: true },
+        );
+      this.photos.set(id, body);
+      return json(
+        200,
+        this.version === 2 ? { ok: true, bytes: body.length, sha256: sha(body) } : { ok: true },
+      );
     }
     return json(400, { ok: false, error: 'unknown kind' });
   };
@@ -122,6 +170,7 @@ export async function device(
     m.settingsStore.current = { nasUrl, nasToken: 'synthetic' };
     // Tests drive every sync explicitly; no debounced background syncs.
     m.nasBackup.schedule = () => {};
+    m.nasBackup.retryDelays = [0, 0];
     (window as any).m = m;
   }, nasUrl);
   return page;

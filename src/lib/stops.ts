@@ -1,6 +1,6 @@
-import { db, type ChecklistItem, type City, type Stop } from './db';
+import { db, type ChecklistItem, type City, type Stop, type StopGuide } from './db';
 import { newId } from './ids';
-import { extractSections, type Section } from './headings';
+import { cityOfHeading, extractSections, type Section } from './headings';
 import { deletePhotosWhere } from './photos';
 
 /** Stop + checklist mutations over Dexie. */
@@ -38,8 +38,13 @@ export async function deleteStop(id: string): Promise<void> {
   });
 }
 
+/** Tick a stop visited (recording when, for the visit order) or un-tick it. */
 export async function toggleVisited(stop: Stop): Promise<void> {
-  await db.stops.update(stop.id, { visited: !stop.visited });
+  await db.stops.update(stop.id, (s) => {
+    s.visited = !s.visited;
+    if (s.visited) s.visitedAt = Date.now();
+    else delete s.visitedAt;
+  });
 }
 
 /** Persist `order` to match the given array order. */
@@ -100,6 +105,8 @@ export interface StopCandidate {
   checklist: { text: string; done: boolean }[];
   lat?: number;
   lng?: number;
+  /** The visit anchor, from labelled lines (Anchor / Minimum visit / Look for / Stretch / Exit rule). */
+  guide?: StopGuide;
   /** City this stop belongs to, from the plan's `# <City>` heading (multi-city). */
   city?: string;
 }
@@ -123,7 +130,19 @@ interface ParsedBody {
   checklist: { text: string; done: boolean }[];
   lat?: number;
   lng?: number;
+  guide?: StopGuide;
 }
+
+const GUIDE_LABEL =
+  /^\s*(?:[-*]\s*)?\**\s*(anchor|minimum(?: viable)? visit|look for|stretch|exit rule)\s*\**\s*:\s*\**\s*(.*?)\s*$/i;
+const GUIDE_KEY: Record<string, keyof StopGuide> = {
+  anchor: 'anchor',
+  'minimum visit': 'minimum',
+  'minimum viable visit': 'minimum',
+  'look for': 'lookFor',
+  stretch: 'stretch',
+  'exit rule': 'exit',
+};
 
 /**
  * Split a stop's body into structured parts:
@@ -135,14 +154,46 @@ interface ParsedBody {
 function parseBody(body: string): ParsedBody {
   const checklist: { text: string; done: boolean }[] = [];
   const kept: string[] = [];
+  const guide: StopGuide = {};
   let lat: number | undefined;
   let lng: number | undefined;
+  // "Look for:" may list its cues on the following bullet lines — indented
+  // under it when the label is itself a bullet.
+  let collectingCues = false;
+  let cueIndent = 0;
 
   for (const line of body.split(/\r?\n/)) {
     const task = line.match(/^\s*[-*]\s*\[([ xX])\]\s+(.+)$/);
     if (task) {
+      collectingCues = false;
       checklist.push({ text: task[2].trim(), done: task[1].trim() !== '' });
       continue;
+    }
+    const label = line.match(GUIDE_LABEL);
+    if (label) {
+      const key = GUIDE_KEY[label[1].toLowerCase().replace(/\s+/g, ' ')];
+      const value = label[2].replace(/\*+$/, '').trim();
+      if (key === 'lookFor') {
+        guide.lookFor = value
+          .split(';')
+          .map((v) => v.trim().replace(/\.$/, ''))
+          .filter(Boolean);
+        collectingCues = !value;
+        const indent = line.search(/\S/);
+        cueIndent = /^\s*[-*]\s/.test(line) ? indent + 1 : indent;
+      } else {
+        guide[key] = value;
+        collectingCues = false;
+      }
+      continue;
+    }
+    if (collectingCues) {
+      const cue = line.match(/^\s*[-*]\s+(.+)$/);
+      if (cue && line.search(/\S/) >= cueIndent) {
+        (guide.lookFor ??= []).push(cue[1].trim().replace(/\.$/, ''));
+        continue;
+      }
+      if (line.trim()) collectingCues = false;
     }
     const loc = line.match(
       /^\s*(?:[-*]\s*)?\**location\**[:\s]\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/i,
@@ -160,7 +211,14 @@ function parseBody(body: string): ParsedBody {
     kept.push(line);
   }
 
-  return { notes: kept.join('\n').trim(), checklist, lat, lng };
+  const hasGuide = Object.values(guide).some((v) => (Array.isArray(v) ? v.length : v));
+  return {
+    notes: kept.join('\n').trim(),
+    checklist,
+    lat,
+    lng,
+    ...(hasGuide ? { guide } : {}),
+  };
 }
 
 function toCandidate(name: string, body: string): StopCandidate {
@@ -171,20 +229,13 @@ function toCandidate(name: string, body: string): StopCandidate {
     checklist: parsed.checklist,
     lat: parsed.lat,
     lng: parsed.lng,
+    ...(parsed.guide ? { guide: parsed.guide } : {}),
   };
 }
 
 /** Resolve a `# <heading>` to a known city name (longest match), else the raw text. */
 function resolveCity(headingText: string, knownCities: string[]): string | undefined {
-  const t = headingText.toLowerCase();
-  let best: string | undefined;
-  for (const c of knownCities) {
-    const name = c.trim();
-    if (name && t.includes(name.toLowerCase()) && (!best || name.length > best.length)) {
-      best = name;
-    }
-  }
-  return best ?? (headingText.trim() || undefined);
+  return cityOfHeading(headingText, knownCities) ?? (headingText.trim() || undefined);
 }
 
 /**
@@ -289,18 +340,46 @@ export function newStopCandidates(
   );
 }
 
-/** Import the not-yet-present candidates as stops (with notes + city). Returns count added. */
+/**
+ * Stops already in the list whose visit anchor the plan now fills in: only
+ * empty guide fields are filled — never a word the traveller wrote.
+ */
+export function guideBackfill(planText: string, existing: Stop[], knownCities: string[] = []) {
+  const byName = new Map(existing.map((s) => [s.name.trim().toLowerCase(), s]));
+  const out: { id: string; guide: StopGuide }[] = [];
+  for (const c of extractStopsFromPlan(planText, knownCities)) {
+    const stop = byName.get(c.name.trim().toLowerCase());
+    if (!stop || !c.guide) continue;
+    const have = stop.guide ?? {};
+    const merged: StopGuide = { ...have };
+    let changed = false;
+    for (const k of Object.keys(c.guide) as (keyof StopGuide)[]) {
+      const empty = Array.isArray(have[k]) ? !(have[k] as string[]).length : !have[k];
+      if (empty && c.guide[k]) {
+        (merged as Record<string, unknown>)[k] = c.guide[k];
+        changed = true;
+      }
+    }
+    if (changed) out.push({ id: stop.id, guide: merged });
+  }
+  return out;
+}
+
+/**
+ * Import the not-yet-present candidates as stops (with notes, anchor and
+ * city), and fill empty anchors on stops already there. Returns how many
+ * stops were added.
+ */
 export async function importStopsFromPlan(
   tripId: string,
   planText: string,
   existing: Stop[],
   cities: City[] = [],
 ): Promise<number> {
-  const fresh = newStopCandidates(
-    planText,
-    existing,
-    cities.map((c) => c.name),
-  );
+  const names = cities.map((c) => c.name);
+  const fresh = newStopCandidates(planText, existing, names);
+  const backfill = guideBackfill(planText, existing, names);
+  for (const b of backfill) await db.stops.update(b.id, { guide: b.guide });
   if (fresh.length === 0) return 0;
 
   const cityIdByName = new Map(cities.map((c) => [c.name.trim().toLowerCase(), c.id]));
@@ -316,6 +395,7 @@ export async function importStopsFromPlan(
     visited: false,
     lat: c.lat,
     lng: c.lng,
+    ...(c.guide ? { guide: c.guide } : {}),
     order: base + i,
     createdAt: now,
   }));

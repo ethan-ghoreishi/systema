@@ -45,9 +45,14 @@ jobs:
       - name: NAS receiver e2e (real PHP)
         run: |
           mkdir -p "$RUNNER_TEMP/nas"
-          php -S 127.0.0.1:8099 -t "$RUNNER_TEMP/nas" > "$RUNNER_TEMP/php.log" 2>&1 &
+          # Production-like PHP; several workers, as a NAS serves requests in parallel.
+          PHP_CLI_SERVER_WORKERS=4 php -d display_errors=0 -d post_max_size=8M -d upload_max_filesize=8M \
+            -S 127.0.0.1:8099 -t "$RUNNER_TEMP/nas" > "$RUNNER_TEMP/php.log" 2>&1 &
           SYSTEMA_PHP_URL=http://127.0.0.1:8099 SYSTEMA_PHP_ROOT="$RUNNER_TEMP/nas" \
             npx playwright test tests/e2e/php-receiver.spec.ts
+      - name: PHP receiver log (on failure)
+        if: failure()
+        run: tail -n 80 "$RUNNER_TEMP/php.log" || true
       # Two real builds with the service worker on: no reload mid-entry.
       - run: npm run test:pwa
 

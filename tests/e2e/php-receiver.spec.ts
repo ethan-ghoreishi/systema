@@ -1,4 +1,4 @@
-import { readdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
@@ -19,10 +19,11 @@ const run = <T, A>(page: Page, fn: (m: any, a: A) => Promise<T>, arg?: A) =>
     [fn.toString(), arg] as const,
   ) as Promise<T>;
 
-// The current receiver, and the original one most NAS installs still run:
-// the app must be safe against both without a redeploy.
+// The current receiver, the previous one, and the original one: the app must
+// be safe against whichever a NAS still runs, without a redeploy.
 for (const [label, receiver] of [
   ['current receiver', 'nas/systema-backup.php'],
+  ['previous receiver', 'tests/e2e/systema-backup-v1.1.php'],
   ['original receiver', 'tests/e2e/systema-backup-v1.php'],
 ])
   test(`two devices sync through the ${label}, then idle syncs write nothing`, async ({
@@ -40,7 +41,7 @@ for (const [label, receiver] of [
       });
       return { trip, stop };
     });
-    expect((await sync(phone)).ok).toBe(true);
+    expect(await sync(phone)).toMatchObject({ ok: true });
 
     const mac = await device(makeContext, rx);
     expect((await sync(mac)).message).toContain('1 photo downloaded');
@@ -114,4 +115,45 @@ test('the receiver keeps the newest 60 snapshots plus one per day', async ({ mak
     kept.map((f) => f.slice('systema-data-'.length, 'systema-data-'.length + 8)),
   );
   expect(days.size).toBe(51); // every day still has a snapshot
+});
+
+test('the current receiver verifies uploads, replaces a damaged copy, lists photos and passes Test connection', async ({
+  makeContext,
+}) => {
+  const rx = phpReceiver()!;
+  const phone = await device(makeContext, rx);
+  const ids = await run(phone, async (m) => {
+    const trip = await m.createTrip('custom');
+    const out: string[] = [];
+    for (const [i, n] of [2_000, 3_000, 1_500_000].entries())
+      out.push(
+        await m.addPhoto(new Blob([new Uint8Array(n).fill(i + 7)], { type: 'image/png' }), {
+          tripId: trip,
+          kind: 'cover',
+        }),
+      );
+    return out;
+  });
+  // A half-written copy of the second photo is already on the NAS.
+  const photos = join(rx.dir, 'systema-backups', 'photos');
+  mkdirSync(photos, { recursive: true });
+  writeFileSync(join(photos, `${ids[1]}.png`), 'trunc');
+
+  expect(await sync(phone)).toMatchObject({ ok: true });
+  expect(readFileSync(join(photos, `${ids[1]}.png`)).length).toBe(3_000); // replaced, verified
+  expect(readFileSync(join(photos, `${ids[2]}.png`)).length).toBe(1_500_000);
+  expect(await run(phone, async (m) => m.nasBackup.failures)).toEqual({});
+
+  // The listing answers the check in one request.
+  const check = await run(phone, async (m) => m.nasBackup.check());
+  expect(check.message).toContain('Every photo it lists is on the NAS.');
+
+  const test = await run(phone, async (m) => m.nasBackup.testConnection());
+  expect(test.checks.map((c: any) => [c.label.split(' ')[0], c.ok])).toEqual([
+    ['Address', true],
+    ['Receiver', true],
+    ['Token', true],
+    ['An', true],
+  ]);
+  expect(test.checks[1].detail).toContain('version 2');
 });

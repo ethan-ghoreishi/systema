@@ -1,4 +1,4 @@
-import type { City, Expense, KeyValue, Photo, Stop, Trip } from './db';
+import type { City, Expense, KeyValue, Moment, Photo, Stop, Trip } from './db';
 
 /**
  * Pure three-way merge for NAS sync between devices (iPhone + Mac).
@@ -17,6 +17,10 @@ import type { City, Expense, KeyValue, Photo, Stop, Trip } from './db';
  * a union and never deletes. Photos are union-only: a photo leaves only via an
  * explicit tombstone (`deleted-photo:<id>` kv row), never because a snapshot
  * lacks it — it may be the only copy.
+ *
+ * A table missing from a snapshot altogether (a device on an older version,
+ * which doesn't know `moments`) is unknown, not empty: nothing is deleted
+ * because of it.
  */
 
 export type PhotoMeta = Omit<Photo, 'blob'>;
@@ -27,13 +31,15 @@ export interface SyncRecords {
   cities: City[];
   stops: Stop[];
   expenses: Expense[];
+  /** Absent in snapshots from versions before moments existed. */
+  moments?: Moment[];
   /** Synced key/value rows: conflicts and photo tombstones. Never device settings. */
   kv: KeyValue[];
   photosMeta: PhotoMeta[];
 }
 
-export type SyncTable = 'trips' | 'cities' | 'stops' | 'expenses' | 'kv';
-export const SYNC_TABLES: SyncTable[] = ['trips', 'cities', 'stops', 'expenses', 'kv'];
+export type SyncTable = 'trips' | 'cities' | 'stops' | 'expenses' | 'moments' | 'kv';
+export const SYNC_TABLES: SyncTable[] = ['trips', 'cities', 'stops', 'expenses', 'moments', 'kv'];
 
 type Row = Record<string, unknown>;
 const keyOf = (table: SyncTable | 'photosMeta') => (table === 'kv' ? 'key' : 'id');
@@ -141,14 +147,16 @@ export function mergeRecords(
   for (const table of SYNC_TABLES) {
     const key = keyOf(table);
     const B = byKey(base?.[table] as Row[] | undefined, key);
-    const L = byKey(local[table] as unknown as Row[], key);
+    const L = byKey(local[table] as unknown as Row[] | undefined, key);
     const R = byKey(remote?.[table] as Row[] | undefined, key);
+    // A snapshot without this table knows nothing about it: it deletes nothing.
+    const remoteKnows = descends && remote?.[table] !== undefined;
     const out: Row[] = [];
     for (const id of new Set([...L.keys(), ...R.keys()])) {
       const [b, l, r] = [B.get(id), L.get(id), R.get(id)];
       if (!r) {
         // Remote lacks it: deleted there (only provable via lineage), or new here.
-        if (l && !(b && descends && same(l, b))) out.push(l);
+        if (l && !(b && remoteKnows && same(l, b))) out.push(l);
       } else if (!l) {
         // Local lacks it: deleted here (remote untouched since), or new/edited there.
         if (!(b && same(r, b))) out.push(r);
@@ -177,7 +185,13 @@ export function mergeRecords(
   // deleted on another). Keep the trip rather than orphan the new data.
   const tripIds = new Set(merged.trips.map((t) => t.id));
   const allTrips = [...(remote?.trips ?? []), ...(base?.trips ?? []), ...local.trips];
-  for (const row of [...merged.cities, ...merged.stops, ...merged.expenses, ...merged.photosMeta]) {
+  for (const row of [
+    ...merged.cities,
+    ...merged.stops,
+    ...merged.expenses,
+    ...(merged.moments ?? []),
+    ...merged.photosMeta,
+  ]) {
     if (tripIds.has(row.tripId)) continue;
     const trip = allTrips.find((t) => t.id === row.tripId);
     if (trip) {
@@ -198,7 +212,7 @@ export function countDifferences(a: SyncRecords, b: SyncRecords | null, toSend =
   let n = 0;
   for (const table of [...SYNC_TABLES, 'photosMeta'] as const) {
     const key = keyOf(table);
-    const A = byKey(a[table] as unknown as Row[], key);
+    const A = byKey(a[table] as unknown as Row[] | undefined, key);
     const B = byKey(b?.[table] as Row[] | undefined, key);
     const ids = toSend && table === 'photosMeta' ? A.keys() : new Set([...A.keys(), ...B.keys()]);
     for (const id of ids) {

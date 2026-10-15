@@ -58,5 +58,12 @@
     <polyline points="6 9 12 15 18 9" />
   {:else if name === 'check'}
     <polyline points="20 6 9 17 4 12" />
+  {:else if name === 'spark'}
+    <path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z" />
+    <path d="M19 15l.7 1.8 1.8.7-1.8.7L19 20l-.7-1.8-1.8-.7 1.8-.7z" />
+  {:else if name === 'image'}
+    <rect x="3" y="4" width="18" height="16" rx="2" />
+    <circle cx="9" cy="10" r="2" />
+    <path d="M21 16l-5-5-9 9" />
   {/if}
 </svg>

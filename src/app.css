@@ -93,18 +93,43 @@
   box-sizing: border-box;
 }
 
+/*
+ * The document never scrolls: the app shell is fixed to the viewport and each
+ * screen scrolls inside its own pane. A scrolling document is what let the
+ * bars drift and resize and content slide behind them in the installed
+ * iPhone app (and `100vh` there can include the status bar).
+ */
 html,
 body {
   margin: 0;
   padding: 0;
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
 }
 
 body {
-  min-height: 100dvh;
   background: var(--paper);
   color: var(--ink);
-  overscroll-behavior-y: none;
   -webkit-tap-highlight-color: transparent;
+}
+
+/*
+ * No double-tap zoom: a quick second tap on a chip or a keypad key must not
+ * zoom the page. `manipulation` still allows panning and pinch zoom, so the
+ * page stays zoomable for reading (no maximum-scale in the viewport meta).
+ */
+html,
+button,
+a,
+input,
+select,
+textarea,
+label,
+summary,
+[role='button'],
+[role='tab'] {
+  touch-action: manipulation;
 }
 
 h1,
@@ -136,23 +161,26 @@ a {
 /* ---------- App frame ---------- */
 
 .app-shell {
+  /* Fixed to the viewport: exactly the visible area, whatever vh/dvh report. */
+  position: fixed;
+  inset: 0;
   max-width: var(--app-max);
-  margin: 0 auto;
-  /* vh fallback first: older iOS Safari has no dvh, which silently broke heights. */
-  height: 100vh;
-  height: 100dvh;
+  margin-inline: auto;
+  overflow: hidden;
   background: var(--paper);
   border-inline: 1px solid var(--hairline);
 }
 
 .screen-frame {
   display: grid;
-  grid-template-rows: auto 1fr;
+  /* minmax(0, …): the middle row may shrink below its content, so the pane scrolls. */
+  grid-template-rows: auto minmax(0, 1fr);
   height: 100%;
+  min-height: 0;
 }
 
 .screen-frame--tabbed {
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
 }
 
 .topbar {
@@ -202,15 +230,27 @@ a {
 }
 
 .screen-body {
+  min-height: 0;
   overflow-y: auto;
-  padding: var(--s4);
+  overscroll-behavior: contain;
+  /* Room for the last fields above the on-screen keyboard (see viewport.ts). */
+  padding: var(--s4) var(--s4) calc(var(--s4) + var(--kb, 0px));
   display: flex;
   flex-direction: column;
   gap: var(--s4);
 }
 
+.topbar-back--label {
+  width: auto;
+  padding-inline: 4px 10px;
+  gap: 2px;
+  color: var(--accent);
+  font-weight: 500;
+}
+
 .tabbar {
   display: flex;
+  min-height: 0;
   border-top: 1px solid var(--hairline);
   padding-bottom: env(safe-area-inset-bottom);
   background: var(--paper);
@@ -578,45 +618,6 @@ textarea.field {
   padding: 4px 10px;
   font-size: 12px;
 }
-.city-extremes {
-  display: flex;
-  gap: var(--s2);
-}
-.city-extreme {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: var(--s3);
-  border-radius: var(--r);
-  background: var(--surface-sunken);
-  border: 1px solid var(--hairline);
-}
-.city-extreme-tag {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--ink-faint);
-}
-.city-extreme--cheap .city-extreme-tag {
-  color: var(--ok);
-}
-.city-extreme--dear .city-extreme-tag {
-  color: var(--warn);
-}
-.city-extreme-name {
-  font-size: 16px;
-  font-weight: 650;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.city-extreme-val {
-  font-size: 13px;
-  color: var(--ink-soft);
-  font-variant-numeric: tabular-nums;
-}
 .bar-amt .bar-sub {
   display: block;
   text-align: right;
@@ -637,6 +638,7 @@ textarea.field {
   color: var(--ink);
   font-size: 15px;
   font-weight: 600;
+  text-decoration: none;
   cursor: pointer;
 }
 
@@ -763,40 +765,72 @@ textarea.field {
   line-height: 1.5;
 }
 
-.countdown {
+.depart {
+  gap: var(--s2);
+}
+
+.depart-head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
-  gap: var(--s3);
-  padding: 14px 16px;
-  border-radius: var(--r-lg);
-  background: var(--accent-soft);
-  border: 1px solid var(--accent-line);
+  gap: var(--s2);
 }
 
-.countdown-label {
-  font-size: 13px;
+.depart-stage {
+  font-size: 12px;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--accent);
-}
-
-.countdown-value {
-  font-size: 22px;
-  font-weight: 700;
-  color: var(--accent);
-  font-variant-numeric: tabular-nums;
-}
-
-.countdown--expired {
+  padding: 3px 10px;
+  border-radius: var(--r-pill);
   background: var(--surface-sunken);
-  border-color: var(--hairline);
+  color: var(--ink-soft);
 }
 
-.countdown--expired .countdown-label,
-.countdown--expired .countdown-value {
+.depart--prepare .depart-stage,
+.depart--leave-by .depart-stage,
+.depart--go .depart-stage {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.depart--plan-b .depart-stage {
+  background: var(--surface-sunken);
+  color: var(--warn);
+}
+
+.depart-title {
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.depart-facts {
+  font-size: 13px;
+  color: var(--ink-faint);
+}
+
+.depart-later summary {
+  font-size: 13px;
   color: var(--ink-soft);
+  cursor: pointer;
+}
+
+.depart-row {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  gap: var(--s2);
+  padding: 10px 0;
+  border: 0;
+  border-bottom: 1px solid var(--hairline);
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.dep-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s3);
 }
 
 .toc {
@@ -1128,6 +1162,10 @@ textarea.field {
   justify-content: center;
   background: var(--paper);
   color: var(--ink);
+}
+
+.modal:not([open]) {
+  display: none; /* `display: flex` above would otherwise show a closed dialog */
 }
 
 .modal::backdrop {
@@ -1821,6 +1859,56 @@ textarea.field {
   font-family: var(--font);
 }
 
+.map-box {
+  position: relative;
+}
+
+/* Journal maps: still until chosen, so a scroll that starts on the map scrolls the page. */
+.map-explore {
+  position: absolute;
+  inset: auto 12px 12px auto;
+  z-index: 500;
+  padding: 8px 14px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: var(--shadow);
+  cursor: pointer;
+}
+
+.map-route {
+  stroke: var(--accent);
+  opacity: 0.75;
+  fill: none;
+}
+
+.map-transfer {
+  stroke: var(--ink-soft);
+  opacity: 0.8;
+  fill: none;
+}
+
+.map-city {
+  display: inline-block;
+  transform: translate(-50%, -50%);
+  white-space: nowrap;
+  padding: 4px 10px;
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--accent-line);
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+}
+
+.map-cities {
+  gap: 6px;
+}
+
 /* ---------- Update / offline toast ---------- */
 
 .toast {
@@ -1871,4 +1959,362 @@ textarea.field {
 
 .cluster--wrap {
   flex-wrap: wrap;
+}
+
+.copy-sheet-text {
+  min-height: 40vh;
+  font-family: var(--mono);
+  font-size: 16px; /* no iOS focus zoom */
+  line-height: 1.4;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* ---------- Legs: zone, base, scenarios ---------- */
+
+.leg-zone {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+
+.leg-base summary {
+  font-size: 14px;
+  color: var(--ink-soft);
+  cursor: pointer;
+  padding: 6px 0;
+}
+
+.leg-base[open] {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+
+.scenario-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+
+.scenario {
+  display: flex;
+  gap: var(--s3);
+  align-items: flex-start;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r);
+  background: var(--surface);
+  text-align: left;
+  cursor: pointer;
+}
+
+.scenario--on {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+}
+
+.scenario-no {
+  flex: 0 0 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-sunken);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.scenario--on .scenario-no {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.scenario-text {
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+/* ---------- Backup health ---------- */
+
+.backup-state {
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.backup-state--ok {
+  color: var(--ok);
+}
+
+.backup-state--warn {
+  color: var(--warn);
+}
+
+.backup-list summary {
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 4px 0;
+}
+
+.backup-list[open] {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+
+.backup-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--s2) 0;
+  border-top: 1px solid var(--hairline);
+}
+
+.backup-item-head {
+  font-size: 14px;
+  font-family: var(--mono);
+}
+
+.checks {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+
+.check-line {
+  display: flex;
+  gap: var(--s2);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.check-mark {
+  color: var(--ok);
+  font-weight: 700;
+}
+
+.check-line--bad .check-mark {
+  color: var(--danger);
+}
+
+/* ---------- City-by-city research ---------- */
+
+.phase {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding: var(--s3) 0;
+  border-top: 1px solid var(--hairline);
+}
+
+.phase-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+}
+
+.phase-no {
+  font-weight: 700;
+  color: var(--ink-faint);
+}
+
+.phase--next .phase-no {
+  color: var(--accent);
+}
+
+.phase-name {
+  font-weight: 600;
+  flex: 1;
+}
+
+/* ---------- Visit anchor ---------- */
+
+.anchor {
+  gap: var(--s2);
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
+}
+
+.anchor p {
+  line-height: 1.45;
+}
+
+.anchor-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.anchor-cues {
+  margin: 4px 0 0;
+  padding-left: 1.2em;
+}
+
+.anchor-add {
+  align-self: flex-start;
+}
+
+.stop-anchor {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* ---------- Journey card (multi-city cover) ---------- */
+
+.journey-card {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  padding: 10%;
+  background: linear-gradient(135deg, var(--accent-soft), var(--surface-sunken));
+  color: var(--ink);
+  overflow: hidden;
+}
+
+.journey-cities {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+}
+
+.journey-dates {
+  font-size: 14px;
+  color: var(--ink-soft);
+}
+
+.journey-rhythm {
+  font-size: 13px;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.journey-short {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-align: center;
+  color: var(--accent);
+  line-height: 1.2;
+  word-break: break-all;
+}
+
+.trip-cover--thumb .journey-card {
+  padding: 4px;
+  align-items: center;
+}
+
+/* ---------- Photos and moments ---------- */
+
+.photo-picker {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s2);
+}
+
+.photo-picker .btn {
+  padding-inline: 8px;
+  font-size: 14px;
+}
+
+.moment-when {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+
+.moment-row .stop-name::before {
+  content: '✦ ';
+  color: var(--accent);
+}
+
+.photo-badge {
+  position: absolute;
+  left: 4px;
+  bottom: 4px;
+  padding: 1px 6px;
+  border-radius: var(--r-pill);
+  font-size: 10px;
+  font-weight: 700;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+}
+
+.check-box--none {
+  border-color: transparent;
+  background: none;
+}
+
+.manifest {
+  margin: var(--s2) 0 0;
+  padding-left: 1.6em;
+  font-size: 13px;
+  color: var(--ink-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* ---------- Quick expense capture ---------- */
+
+.quick-picks {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  scrollbar-width: none;
+}
+
+.quick-picks .chip {
+  flex: 0 0 auto;
+}
+
+.more-details > summary {
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  padding: 8px 0;
+}
+
+.more-details[open] {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* ---------- Insights ---------- */
+
+.data-quality summary {
+  cursor: pointer;
+}
+
+.transit-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--s2) 0;
+  border-top: 1px solid var(--hairline);
+  color: inherit;
+  text-decoration: none;
+}
+
+.stopover-card > summary {
+  cursor: pointer;
+}
+
+.stopover-card[open] > summary {
+  margin-bottom: var(--s2);
+}
+
+.trip-card-leave {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent);
 }

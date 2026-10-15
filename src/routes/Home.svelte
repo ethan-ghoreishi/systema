@@ -5,10 +5,13 @@
   import { realExpenses, tripTotalGBP } from '../lib/expenses';
   import { formatGBP } from '../lib/money';
   import TopBar from '../components/TopBar.svelte';
+  import { scrollMemory } from '../lib/ui-memory';
+  import { router } from '../lib/router.svelte';
   import Icon from '../components/Icon.svelte';
   import TripCover from '../components/TripCover.svelte';
   import { conflictsQuery } from '../lib/conflicts';
   import { nasBackup } from '../lib/nas.svelte';
+  import { clockLabel, nextDeparture, tripDepartures } from '../lib/readiness';
 
   const tripsQ = liveQuery(() => db.trips.orderBy('order').reverse().toArray());
   const citiesQ = liveQuery(() => db.cities.toArray());
@@ -34,6 +37,8 @@
   // Nudge only when action is needed: never backed up, or not for a week.
   const backupNotice = $derived.by(() => {
     if (!trips.length || !nasBackup.healthLoaded) return '';
+    const failed = Object.keys(nasBackup.failures).length;
+    if (failed) return `${failed} photo${failed > 1 ? 's' : ''} not backed up — review`;
     // lastDataAt: devices upgraded from the push-only version have only this.
     const last = Math.max(
       nasBackup.lastSyncAt ?? 0,
@@ -45,6 +50,20 @@
       return `Last backup ${new Date(last).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} — back up now`;
     return '';
   });
+
+  // A calm line on a trip whose next departure is within a day and a half.
+  let now = $state(Date.now());
+  $effect(() => {
+    const t = setInterval(() => (now = Date.now()), 60_000);
+    return () => clearInterval(t);
+  });
+  function leaveLine(trip: Trip): string {
+    const d = nextDeparture(tripDepartures(trip, citiesFor(trip)), now);
+    if (!d || d.leaveBy - now > 36 * 3_600_000) return '';
+    return d.leaveBy <= now
+      ? `Time to leave for ${d.hub}`
+      : `Leave for ${d.hub} by ${clockLabel(d.leaveBy, d.tz, now)}`;
+  }
 
   // Past trips (marked Done) live in their own journal section below.
   const current = $derived(trips.filter((t) => t.status !== 'done'));
@@ -83,7 +102,7 @@
     {/snippet}
   </TopBar>
 
-  <div class="screen-body">
+  <div class="screen-body" use:scrollMemory={router.path}>
     <a class="btn btn--primary new-trip" href="#/new">
       <Icon name="plus" size={20} /> New trip
     </a>
@@ -116,6 +135,7 @@
             <a class="card trip-card" href={`#/trip/${trip.id}/plan`}>
               <span class="trip-card-name">{tripDisplayName(trip, citiesFor(trip))}</span>
               <span class="trip-card-meta">{currentMeta(trip)}</span>
+              {#if leaveLine(trip)}<span class="trip-card-leave">{leaveLine(trip)}</span>{/if}
             </a>
           {/each}
         </div>
