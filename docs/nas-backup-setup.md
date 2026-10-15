@@ -121,6 +121,10 @@ at the first failure:
    reply_ (CORS headers missing). Browsers don't tell an app which certificate
    problem it is: open the URL in Safari — a certificate warning there means the
    certificate;
+   The address it shows is the full path it called. If the saved address
+   isn't the receiver (just the host, a folder, or a copy of the file
+   somewhere Web Station doesn't serve), it looks for the receiver at the
+   host's `/systema-backup.php` and switches to it once your token works there;
 3. **Token** — accepted or refused;
 4. **Upload size** — a real upload the size of your largest photo (the
    receiver writes nothing for it) arrives intact.

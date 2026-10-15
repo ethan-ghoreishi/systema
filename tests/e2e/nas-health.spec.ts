@@ -243,3 +243,54 @@ test('oversized photos at the front of the queue never hold back the data', asyn
   expect(Object.keys(failures).sort()).toEqual([ids[0], ids[1]].sort());
   expect(failures[ids[0]].kind).toBe('too-large');
 });
+
+test('a saved address that is not the receiver is found and corrected by Test connection', async ({
+  makeContext,
+}) => {
+  const nas = new FakeNas();
+  const phone = await device(makeContext, nas);
+  await tripWithPhotos(phone, [10]);
+  // The receiver copy in a private folder, typed as the address.
+  await app(phone, (m) => {
+    m.settingsStore.current.nasUrl = 'https://nas.test/systema-backups/receiver/systema-backup.php';
+  });
+  const before = await sync(phone);
+  expect(before.ok).toBe(false);
+  expect(nas.dataPosts).toBe(0);
+
+  const t = await app(phone, (m) => m.nasBackup.testConnection());
+  expect(t.ok).toBe(true);
+  expect(t.checks[0].detail).toBe('nas.test/systema-backup.php');
+  expect(t.checks[1].detail).toContain(
+    "The saved address (nas.test/systema-backups/receiver/systema-backup.php) isn't the receiver; switched to this one.",
+  );
+  expect(await app(phone, (m) => m.settingsStore.current.nasUrl)).toBe(
+    'https://nas.test/systema-backup.php',
+  );
+  expect(await sync(phone)).toMatchObject({ ok: true });
+  expect(nas.dataPosts).toBe(1);
+  expect((await app(phone, (m) => m.nasBackup.check())).ok).toBe(true);
+});
+
+test('a bare host works as the receiver address; a wrong token is never switched to', async ({
+  makeContext,
+}) => {
+  const nas = new FakeNas();
+  const phone = await device(makeContext, nas);
+  await tripWithPhotos(phone, [10]);
+  await app(phone, (m) => {
+    m.settingsStore.current.nasUrl = 'https://nas.test/';
+  });
+  expect(await sync(phone)).toMatchObject({ ok: true });
+
+  await app(phone, (m) => {
+    m.settingsStore.current = { nasUrl: 'https://nas.test/elsewhere.php', nasToken: 'not-it' };
+  });
+  const t = await app(phone, (m) => m.nasBackup.testConnection());
+  expect(t.ok).toBe(false);
+  expect(t.checks[1]).toMatchObject({ label: 'Receiver', ok: false });
+  expect(t.checks[1].detail).toContain('systema-backup.php');
+  expect(await app(phone, (m) => m.settingsStore.current.nasUrl)).toBe(
+    'https://nas.test/elsewhere.php',
+  );
+});
