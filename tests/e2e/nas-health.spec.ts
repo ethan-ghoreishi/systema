@@ -74,8 +74,8 @@ test('an unreachable NAS fails honestly, then a reconnect uploads everything', a
   expect(down.ok).toBe(false);
   expect(down.message).toContain('Nothing on the NAS was replaced');
   expect(await app(phone, (m) => m.nasBackup.lastAttempt.kind)).toBe('unreachable');
-  // Not every photo marked failed: the network was down, not the photos.
-  expect(Object.keys(await app(phone, (m) => m.nasBackup.failures)).length).toBeLessThanOrEqual(2);
+  // No photo is blamed: the network was down, not the photos.
+  expect(await app(phone, (m) => m.nasBackup.failures)).toEqual({});
 
   nas.unreachable = false;
   await app(phone, (m) => m.nasBackup.retryFailed());
@@ -190,4 +190,56 @@ test('an upload cut off mid-way while smaller ones get through is named as a siz
   const probe = (await app(phone, (m) => m.nasBackup.testConnection())).checks.at(-1);
   expect(probe.ok).toBe(false);
   expect(probe.detail).toMatch(/size limit/);
+});
+
+test('a damaged copy on this device never overwrites a good copy on the NAS', async ({
+  makeContext,
+}) => {
+  const nas = new FakeNas();
+  const phone = await device(makeContext, nas);
+  const { ids } = await tripWithPhotos(phone, [500, 600]);
+  await sync(phone);
+  const good = [Buffer.from(nas.photos.get(ids[0])!), Buffer.from(nas.photos.get(ids[1])!)];
+
+  // Both local copies go bad (as WebKit storage has done); the second is an
+  // older photo with no recorded size or hash. A check then asks for both again.
+  await app(
+    phone,
+    async (m, ids: string[]) => {
+      await m.db.photos.update(ids[0], { blob: new Blob(['damaged'], { type: 'image/png' }) });
+      const old = await m.db.photos.get(ids[1]);
+      delete old.sha256;
+      delete old.bytes;
+      await m.db.photos.put({ ...old, blob: new Blob(['damaged too'], { type: 'image/png' }) });
+      await m.db.kv.put({
+        key: 'local:nasPhotoState',
+        value: { [ids[0]]: 'redo', [ids[1]]: 'redo' },
+      });
+    },
+    ids,
+  );
+  const outcome = await sync(phone);
+  expect(outcome.partial).toBe(true);
+  expect([nas.photos.get(ids[0]), nas.photos.get(ids[1])]).toEqual(good); // untouched
+  const failures = await app(phone, (m) => m.nasBackup.failures);
+  expect(failures[ids[0]].kind).toBe('unreadable'); // not sent at all
+  expect(failures[ids[1]]).toMatchObject({ kind: 'verify' });
+  expect(failures[ids[1]].error).toContain('the NAS copy is left as it is');
+});
+
+test('oversized photos at the front of the queue never hold back the data', async ({
+  makeContext,
+}) => {
+  const nas = new FakeNas();
+  nas.cutOffAbove = 50_000;
+  const phone = await device(makeContext, nas);
+  const { ids } = await tripWithPhotos(phone, [80_000, 90_000, 1_000]);
+  const outcome = await sync(phone);
+  expect(outcome).toMatchObject({ ok: true, partial: true });
+  expect(nas.dataPosts).toBe(1);
+  expect(nas.latest().trips[0].planText).toBe('Plan to keep');
+  expect([...nas.photos.keys()]).toEqual([ids[2]]);
+  const failures = await app(phone, (m) => m.nasBackup.failures);
+  expect(Object.keys(failures).sort()).toEqual([ids[0], ids[1]].sort());
+  expect(failures[ids[0]].kind).toBe('too-large');
 });

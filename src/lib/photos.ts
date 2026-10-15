@@ -43,47 +43,69 @@ export async function captureTime(file: Blob, tz?: string): Promise<number | und
   return modified && Math.abs(Date.now() - modified) > 60_000 ? modified : undefined;
 }
 
+/** Files in the order they were taken (reads only each file's header). */
+async function inCaptureOrder(files: Blob[], tz?: string) {
+  const timed = await Promise.all(
+    files.map(async (file, i) => ({ file, i, takenAt: await captureTime(file, tz) })),
+  );
+  return timed.sort((a, b) => (a.takenAt ?? Infinity) - (b.takenAt ?? Infinity) || a.i - b.i);
+}
+
 /**
- * Picked or captured images as photo records, in the order they were taken —
- * without writing them, so a caller can add them inside its own transaction
- * (preparing involves reads and hashing, which can't run inside one). Each
- * is copied to its own bytes (never a reference into the picked file), with
- * its size and SHA-256 recorded so its NAS copy can be verified, and its
- * original capture time where the file carries one.
+ * One picked or captured image as a photo record: copied to its own bytes
+ * (never a reference into the picked file), with its size and SHA-256
+ * recorded so its NAS copy can be verified, and its capture time.
+ */
+async function photoRecord(
+  file: Blob,
+  takenAt: number | undefined,
+  target: PhotoTarget,
+  createdAt: number,
+): Promise<Photo> {
+  const buf = await file.arrayBuffer();
+  const sha256 = await sha256Hex(buf);
+  return {
+    id: newId(),
+    tripId: target.tripId,
+    stopId: target.stopId ?? null,
+    expenseId: target.expenseId ?? null,
+    ...(target.momentId ? { momentId: target.momentId } : {}),
+    kind: target.kind,
+    blob: new Blob([buf], { type: file.type }),
+    bytes: buf.byteLength,
+    ...(sha256 ? { sha256 } : {}),
+    ...(takenAt != null ? { takenAt } : {}),
+    createdAt,
+  };
+}
+
+/**
+ * A few images (receipts) as records, without writing them, so a caller can
+ * add them inside its own transaction — reading and hashing can't run inside
+ * one. Holds them all in memory: for many photos, use addPhotos.
  */
 export async function preparePhotos(files: Blob[], target: PhotoTarget): Promise<Photo[]> {
-  const timed = await Promise.all(
-    files.map(async (file, i) => ({ file, i, takenAt: await captureTime(file, target.tz) })),
-  );
-  timed.sort((a, b) => (a.takenAt ?? Infinity) - (b.takenAt ?? Infinity) || a.i - b.i);
   const now = Date.now();
   const out: Photo[] = [];
-  for (const [n, { file, takenAt }] of timed.entries()) {
-    const buf = await file.arrayBuffer();
-    const sha256 = await sha256Hex(buf);
-    out.push({
-      id: newId(),
-      tripId: target.tripId,
-      stopId: target.stopId ?? null,
-      expenseId: target.expenseId ?? null,
-      ...(target.momentId ? { momentId: target.momentId } : {}),
-      kind: target.kind,
-      blob: new Blob([buf], { type: file.type }),
-      bytes: buf.byteLength,
-      ...(sha256 ? { sha256 } : {}),
-      ...(takenAt != null ? { takenAt } : {}),
-      // Distinct, ordered stamps keep a batch in capture order everywhere.
-      createdAt: now + n,
-    });
-  }
+  for (const [n, { file, takenAt }] of (await inCaptureOrder(files, target.tz)).entries())
+    out.push(await photoRecord(file, takenAt, target, now + n));
   return out;
 }
 
-/** Store picked or captured images (see preparePhotos). */
+/**
+ * Store picked or captured images in the order they were taken, one at a
+ * time — a big multi-select from the library never sits in memory at once.
+ * Distinct, ordered stamps keep a batch in capture order everywhere.
+ */
 export async function addPhotos(files: Blob[], target: PhotoTarget): Promise<string[]> {
-  const rows = await preparePhotos(files, target);
-  await db.photos.bulkAdd(rows);
-  return rows.map((r) => r.id);
+  const now = Date.now();
+  const ids: string[] = [];
+  for (const [n, { file, takenAt }] of (await inCaptureOrder(files, target.tz)).entries()) {
+    const row = await photoRecord(file, takenAt, target, now + n);
+    await db.photos.add(row);
+    ids.push(row.id);
+  }
+  return ids;
 }
 
 export async function addPhoto(file: Blob, target: PhotoTarget): Promise<string> {

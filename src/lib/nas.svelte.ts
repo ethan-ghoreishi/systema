@@ -417,11 +417,6 @@ class NasBackup {
   }
 
   /**
-   * Upload one photo and verify what landed; retries a blip twice. A photo
-   * that failed before is first looked up on the NAS: its upload may have
-   * landed with only the reply lost.
-   */
-  /**
    * A stored photo's bytes. WebKit has failed to read an IndexedDB Blob
    * ("The object can not be found here") and then read it fine moments later,
    * so a failed read is retried on a fresh copy of the record.
@@ -439,21 +434,39 @@ class NasBackup {
     throw new NasError(explain('unreadable'), 'unreadable');
   }
 
-  private async uploadOne(id: string, replace = false, failedBefore = false): Promise<void> {
+  /**
+   * Upload one photo and verify what landed; retries a blip twice. A photo
+   * that failed before is first looked up on the NAS: its upload may have
+   * landed with only the reply lost.
+   *
+   * The bytes sent are hashed as they are now and checked against the hash
+   * recorded when the photo was taken: a copy damaged on this device is never
+   * sent, and a damaged NAS copy is replaced only by one proven intact (older
+   * photos without a recorded hash never replace anything).
+   */
+  private async uploadOne(id: string, failedBefore = false): Promise<void> {
     // Bytes, not the stored Blob: IndexedDB-backed Blobs have uploaded empty
     // in WebKit. One photo in memory at a time.
     const read = await this.readBytes(id);
     if (!read) return;
     const { p, buf } = read;
     const ext = photoExt(p.blob);
-    // Hashed for verification only. Older photos don't gain the fields: the
-    // previous version never updates a photo's metadata from a snapshot, so
-    // changing it would make two devices on different versions push forever.
-    const sha256 = p.sha256 ?? (await sha256Hex(buf));
-    if (failedBefore && !replace && (await this.nasHasCopy(id, buf.byteLength, sha256))) {
+    // Hashed here only — older photos don't gain the fields: the previous
+    // version never updates a photo's metadata from a snapshot, so changing
+    // it would make two devices on different versions push forever.
+    const sha256 = await sha256Hex(buf);
+    const intact =
+      p.sha256 && sha256
+        ? p.sha256 === sha256
+        : p.bytes != null
+          ? p.bytes === buf.byteLength
+          : undefined;
+    if (intact === false) throw new NasError(explain('unreadable'), 'unreadable');
+    if (failedBefore && (await this.nasHasCopy(id, buf.byteLength, sha256))) {
       await this.setPhotoState([id], 'up');
       return;
     }
+    let replace = false;
     for (let attempt = 0; ; attempt += 1) {
       try {
         const json = await this.post(
@@ -466,9 +479,16 @@ class NasBackup {
         const hashOk = !json.sha256 || !sha256 || json.sha256 === sha256;
         if (!sizeOk || !hashOk) {
           const what = !sizeOk ? `${json.bytes} of ${buf.byteLength} bytes` : 'SHA-256 differs';
-          // A damaged copy already on the NAS is replaced, once.
-          if (json.existed && !replace) return this.uploadOne(id, true);
-          throw new NasError(explain('verify', what), 'verify');
+          if (json.existed && !replace && intact === true) {
+            // A damaged copy already on the NAS, and this one is the photo as taken.
+            replace = true;
+            attempt = -1;
+            continue;
+          }
+          throw new NasError(
+            explain('verify', json.existed ? `${what}; the NAS copy is left as it is` : what),
+            'verify',
+          );
         }
         await this.setPhotoState([id], 'up');
         return;
@@ -478,6 +498,15 @@ class NasBackup {
         await sleep(this.retryDelays[attempt]);
       }
     }
+  }
+
+  /** Whether the receiver answers at all (no token, nothing written). */
+  private async receiverAnswers(): Promise<boolean> {
+    const base = settingsStore.current.nasUrl.trim().replace(/[?#].*$/, '');
+    return fetch(base).then(
+      (r) => r.ok,
+      () => false,
+    );
   }
 
   private async saveFailures(): Promise<void> {
@@ -498,7 +527,27 @@ class NasBackup {
     let uploaded = 0;
     let failed = 0;
     let waiting = 0;
-    let unreachable = 0;
+    // Photos that got no answer at all: a size limit if the NAS answers otherwise.
+    const cutOff: { id: string; prev?: PhotoFailure }[] = [];
+    let answers: boolean | undefined;
+    const record = async (
+      id: string,
+      prev: PhotoFailure | undefined,
+      kind: FailureKind,
+      error: string,
+    ) => {
+      const p = await db.photos.get(id);
+      this.failures[id] = {
+        tripId: p?.tripId ?? '',
+        attempts: (prev?.attempts ?? 0) + 1,
+        lastAt: Date.now(),
+        kind,
+        error: this.safe(error),
+        bytes: p?.blob.size ?? 0,
+      };
+      await this.saveFailures();
+      failed += 1;
+    };
     this.progress = queue.length ? { done: 0, total: queue.length } : null;
     try {
       for (const id of queue) {
@@ -508,7 +557,7 @@ class NasBackup {
           continue;
         }
         try {
-          await this.uploadOne(id, false, !!prev);
+          await this.uploadOne(id, !!prev);
           uploaded += 1;
           if (prev) {
             delete this.failures[id];
@@ -518,41 +567,33 @@ class NasBackup {
         } catch (err) {
           const e = err instanceof NasError ? err : new NasError(String(err), 'other');
           if (fatal(e.kind)) throw e;
-          // Everything unreachable from the start: the network, not the photos.
-          if (e.kind === 'unreachable' && uploaded === 0 && ++unreachable >= 2) throw e;
-          const p = await db.photos.get(id);
-          this.failures[id] = {
-            tripId: p?.tripId ?? '',
-            attempts: (prev?.attempts ?? 0) + 1,
-            lastAt: Date.now(),
-            kind: e.kind,
-            error: this.safe(e.message),
-            bytes: p?.blob.size ?? 0,
-          };
-          await this.saveFailures();
-          failed += 1;
+          if (e.kind === 'unreachable') {
+            // Nothing through yet: is it the network (stop, blame no photo) or
+            // this photo being cut off (carry on with the others)? Ask once.
+            if (uploaded === 0 && answers === undefined) answers = await this.receiverAnswers();
+            if (uploaded === 0 && !answers) throw e;
+            cutOff.push({ id, prev });
+          } else {
+            await record(id, prev, e.kind, e.message);
+          }
         }
         if (this.progress) this.progress = { ...this.progress, done: this.progress.done + 1 };
       }
-      // ponytail: heuristic. A photo whose connection dropped while others in
-      // the same run went through is almost always over a size limit: PHP's
-      // built-in server and nginx (413 without CORS headers) both just cut the
-      // upload off, so the browser sees no answer. Test connection confirms it.
-      if (uploaded > 0) {
-        const runStart = Date.now() - 6 * 3_600_000;
-        for (const [id, f] of Object.entries(this.failures))
-          if (f.kind === 'unreachable' && f.lastAt > runStart && queue.includes(id))
-            this.failures[id] = {
-              ...f,
-              kind: 'too-large',
-              error: explain(
-                'too-large',
-                'The connection was cut off while sending it, though smaller photos went through.',
-                f.bytes,
-              ),
-            };
-        await this.saveFailures();
-      }
+      // ponytail: heuristic. An upload that got no answer while the NAS answers
+      // otherwise is almost always over a size limit: nginx (a 413 without CORS
+      // headers) and PHP printing a warning before its headers both look like
+      // a dropped connection to the browser. Test connection confirms it.
+      for (const c of cutOff)
+        await record(
+          c.id,
+          c.prev,
+          'too-large',
+          explain(
+            'too-large',
+            'The connection was cut off while sending it, though the NAS answers.',
+            (await db.photos.get(c.id))?.blob.size,
+          ),
+        );
     } finally {
       this.progress = null;
     }

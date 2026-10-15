@@ -101,7 +101,7 @@ export function explain(kind: FailureKind, detail = '', bytes?: number): string 
     case 'unreadable':
       return "This device can't read the photo's image data from its storage. It tries again later; if it keeps failing, the copy here is damaged — any copy on another device or the NAS is unaffected.";
     case 'verify':
-      return `The stored copy didn't match the original${detail ? ` (${detail})` : ''}. It will be uploaded again.`;
+      return `The copy on the NAS didn't match this device's${detail ? ` (${detail})` : ''}. It is tried again later.`;
     default:
       return detail || 'Unexpected reply from the receiver.';
   }

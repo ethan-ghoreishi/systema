@@ -133,3 +133,43 @@ test('a moment off the plan, with library photos in the order they were taken', 
   await expect(page.locator('.journal-photo figcaption').first()).toHaveText('Portico concert');
   await expect(page.locator('.journal-gallery .journal-photo')).toHaveCount(1); // the other one
 });
+
+test('a moment whose photo could not be stored is not duplicated when saved again', async ({
+  page,
+}) => {
+  await page.goto('/');
+  const id = await page.evaluate(async () => {
+    const { createTrip, addCity } = await import(/* @vite-ignore */ '/src/lib/trips.ts');
+    const { db } = await import(/* @vite-ignore */ '/src/lib/db.ts');
+    const id = await createTrip('custom');
+    await addCity(id, 'Bologna', 'EUR');
+    const fail = () => {
+      throw new Error('Storage full');
+    };
+    (window as any).failPhotos = fail;
+    db.photos.hook('creating', fail);
+    return id;
+  });
+  await page.goto(`/#/trip/${id}/stops`);
+  await page.getByRole('button', { name: 'What happened?' }).click();
+  const sheet = page.locator('dialog.modal[open]');
+  await sheet.getByLabel('Place or event').fill('Courtyard choir');
+  await sheet.locator('input[type="file"]:not([capture])').setInputFiles({
+    name: 'IMG.jpg',
+    mimeType: 'image/jpeg',
+    buffer: Buffer.from('synthetic'),
+  });
+  await sheet.getByRole('button', { name: 'Save' }).click();
+  await expect(sheet.getByRole('alert')).toContainText('Not saved');
+  await page.evaluate(async () => {
+    const { db } = await import(/* @vite-ignore */ '/src/lib/db.ts');
+    db.photos.hook('creating').unsubscribe((window as any).failPhotos);
+  });
+  await sheet.getByRole('button', { name: 'Save' }).click();
+  await expect(sheet).toHaveCount(0);
+  const counts = await page.evaluate(async () => {
+    const { db } = await import(/* @vite-ignore */ '/src/lib/db.ts');
+    return { moments: await db.moments.count(), photos: await db.photos.count() };
+  });
+  expect(counts).toEqual({ moments: 1, photos: 1 });
+});

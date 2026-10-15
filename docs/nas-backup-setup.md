@@ -76,7 +76,9 @@ queued to upload again — it changes nothing else.
 `systema-backup.php` and the previous one. The current version (2) also
 
 - reports every stored photo's size **and SHA-256**, so the app verifies a
-  photo landed intact before counting it — and replaces a damaged copy;
+  photo landed intact before counting it — and replaces a damaged copy, but
+  only with one that matches the photo as it was taken (a device whose own
+  copy is damaged never overwrites the NAS);
 - lets the app confirm a photo whose upload reply was lost (by its hash)
   instead of sending it again;
 - lists the photos it holds, so **Check NAS copy** is one request and names

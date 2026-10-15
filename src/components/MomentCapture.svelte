@@ -48,6 +48,7 @@
   let at = $state(init.at);
   let editingTime = $state(false);
   let files = $state<File[]>([]);
+  let savedId = $state<string | undefined>(untrack(() => moment?.id));
   let saving = $state(false);
   let error = $state('');
 
@@ -60,12 +61,14 @@
     saving = true;
     error = '';
     try {
-      let id = moment?.id;
       const fields = { cityId, title: title.trim(), note: note.trim(), stopId, at };
-      if (id) await updateMoment(id, fields);
-      else id = await addMoment({ tripId: trip.id, ...fields });
-      if (files.length)
-        await addPhotos(files, { tripId: trip.id, kind: 'stop', stopId, momentId: id, tz });
+      // Kept once created, so a retry after a failed photo save updates it.
+      if (savedId) await updateMoment(savedId, fields);
+      else savedId = await addMoment({ tripId: trip.id, ...fields });
+      if (files.length) {
+        await addPhotos(files, { tripId: trip.id, kind: 'stop', stopId, momentId: savedId, tz });
+        files = [];
+      }
       dialogEl.close();
     } catch (err) {
       error = `Not saved: ${err instanceof Error ? err.message : String(err)}. Your entry is still here.`;
