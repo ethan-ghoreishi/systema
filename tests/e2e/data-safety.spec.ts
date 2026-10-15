@@ -416,3 +416,34 @@ test('plan edits can be undone, and clearing a journal asks first', async ({ pag
   await page.getByRole('button', { name: 'Save journal' }).click();
   expect((await stored()).journal).toBe('Kept journal');
 });
+
+test('an arrival and a departure saved at the same moment never store a departure before arrival', async ({
+  page,
+}) => {
+  const result = await page.evaluate(async () => {
+    const tripsPath = '/src/lib/trips.ts';
+    const dbPath = '/src/lib/db.ts';
+    const { addCity, updateCity } = await import(/* @vite-ignore */ tripsPath);
+    const { db } = await import(/* @vite-ignore */ dbPath);
+    const outcomes: string[] = [];
+    for (let i = 0; i < 20; i += 1) {
+      const id = await addCity(sessionStorage.getItem('testTrip'), `Leg ${i}`, 'EUR');
+      // Not awaited one after the other: both edits are in flight together.
+      const r = await Promise.allSettled([
+        updateCity(id, { arrival: '2026-10-16T09:00' }),
+        updateCity(id, { departure: '2026-10-15T21:00' }),
+      ]);
+      const c = await db.cities.get(id);
+      outcomes.push(
+        `${r.map((x) => x.status).join('/')} ${c.arrival ?? '-'} ${c.departure ?? '-'}`,
+      );
+    }
+    return outcomes;
+  });
+  for (const o of result) {
+    // Exactly one of the two is refused, and what's stored makes sense.
+    expect(o).toMatch(
+      /^(fulfilled\/rejected 2026-10-16T09:00 -|rejected\/fulfilled - 2026-10-15T21:00)$/,
+    );
+  }
+});

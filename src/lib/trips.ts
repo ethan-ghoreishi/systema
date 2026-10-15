@@ -96,13 +96,19 @@ export class LegError extends Error {}
  * traveller may be halfway through moving several legs.
  */
 export async function updateCity(id: string, patch: Partial<City>): Promise<void> {
-  const city = await db.cities.get(id);
-  if (city) {
-    const problem = legOrderProblem({ ...city, ...patch });
-    if (problem) throw new LegError(problem);
-  }
-  const hadDates = city ? await legsHaveDates(city.tripId) : false;
-  await db.cities.update(id, patch);
+  // Check and write in one transaction: two edits in flight (an arrival and a
+  // departure changed in quick succession) are serialised, so the second is
+  // checked against the first instead of both passing on the old leg.
+  const { city, hadDates } = await db.transaction('rw', db.cities, async () => {
+    const city = await db.cities.get(id);
+    if (city) {
+      const problem = legOrderProblem({ ...city, ...patch });
+      if (problem) throw new LegError(problem);
+    }
+    const hadDates = city ? await legsHaveDates(city.tripId) : false;
+    await db.cities.update(id, patch);
+    return { city, hadDates };
+  });
   if (city) await recomputeTripDerived(city.tripId, hadDates);
 }
 
