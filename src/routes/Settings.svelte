@@ -162,8 +162,12 @@
   // ---- Restore from a file: check it, show what it would add, then confirm ----
   // Raw state: the backup must reach IndexedDB as plain data, not a proxy.
   let pending = $state.raw<{ backup: Backup; files: Map<string, Blob> } | null>(null);
+  // Off by default: a restore adds, and only says otherwise when asked to.
+  let fillEmpty = $state(false);
+  const changes = (r: ImportResult) =>
+    r.trips + r.stops + r.expenses + r.moments + r.photos + r.filled;
   const describe = (r: ImportResult, preview: boolean) =>
-    r.trips + r.stops + r.expenses + r.moments + r.photos === 0
+    changes(r) === 0
       ? `Everything in this backup is already on this device.${importNote(r)}`
       : `${preview ? 'This backup would add' : 'Added'} ${r.trips} trip(s), ${r.stops} stop(s), ${r.expenses} expense(s), ${r.moments ? `${r.moments} moment(s), ` : ''}${r.photos} photo(s).${importNote(r)}`;
 
@@ -174,9 +178,8 @@
         file,
         (d, t) => (status = `Checking the backup… ${d}/${t}`),
       );
-      const preview = await importBackup(read.backup, read.files, { dryRun: true });
-      if (preview.trips + preview.stops + preview.expenses + preview.moments + preview.photos)
-        pending = read;
+      const preview = await importBackup(read.backup, read.files, { dryRun: true, fillEmpty });
+      if (changes(preview)) pending = read;
       return `Backup checked: intact. ${describe(preview, true)}`;
     });
   }
@@ -185,7 +188,7 @@
     run('Restoring…', async () => {
       const { backup, files } = pending!;
       const had = new Set(await db.trips.toCollection().primaryKeys());
-      const r = await importBackup(backup, files);
+      const r = await importBackup(backup, files, { fillEmpty });
       pending = null;
       // An older NAS snapshot carries photo metadata only: fetch the photos of
       // the trips it brought back from the NAS, where their files still are.
@@ -347,6 +350,13 @@
       <button class="btn btn--ghost" onclick={pasteImport} disabled={busy}>
         Paste a .json backup from the clipboard
       </button>
+      <label class="switch">
+        <input type="checkbox" bind:checked={fillEmpty} disabled={busy || !!pending} />
+        <span class="hint">
+          Also fill in blank fields on records I already have — a reconstructed journal, say.
+          Anything already filled in here is left alone.
+        </span>
+      </label>
       {#if pending}
         <button class="btn btn--primary" onclick={confirmImport} disabled={busy}>
           Restore these records

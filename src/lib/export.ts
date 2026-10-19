@@ -454,6 +454,8 @@ export interface ImportResult {
   photos: number;
   /** Records already on this device whose content differs from the backup (kept as they are). */
   differing: number;
+  /** Existing records whose blank fields were filled in from the backup (fillEmpty only). */
+  filled: number;
   /** Photos listed in the backup whose file is missing from it. */
   missingPhotos: number;
 }
@@ -461,6 +463,7 @@ export interface ImportResult {
 /** Status-message tail: flag edits that didn't transfer, stay quiet when identical. */
 export function importNote(r: ImportResult): string {
   return (
+    (r.filled ? ` ${r.filled} existing record(s) had blank fields filled in.` : '') +
     (r.differing
       ? ` ${r.differing} record(s) on this device differ from the backup and stay as they are.`
       : '') +
@@ -469,14 +472,37 @@ export function importNote(r: ImportResult): string {
 }
 
 /**
+ * A field counts as blank when there is nothing in it: absent, null, an empty
+ * string or an empty list. Filling only those can never displace information,
+ * which is what makes `fillEmpty` safe to offer alongside the add-only rule.
+ */
+const blank = (v: unknown): boolean =>
+  v === undefined || v === null || v === '' || (Array.isArray(v) && v.length === 0);
+
+/** The backup's values for fields this device has left blank. Identity never moves. */
+export function blankFieldPatch<T extends object>(existing: T, incoming: T): Partial<T> {
+  const patch: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(incoming)) {
+    if (key === 'id' || key === 'tripId' || key === 'createdAt' || key === 'updatedAt') continue;
+    if (blank(value)) continue;
+    if (blank((existing as Record<string, unknown>)[key])) patch[key] = value;
+  }
+  return patch as Partial<T>;
+}
+
+/**
  * Add missing records only: a backup can never overwrite this device's data.
  * `files` holds a ZIP backup's photos by id. With `dryRun`, nothing is
  * written and the result says what an import would do.
+ *
+ * `fillEmpty` additionally writes the backup's values into fields an existing
+ * record has left blank (see `blankFieldPatch`) — never over anything already
+ * there. It is how a reconstructed journal reaches a trip that already exists.
  */
 export async function importBackup(
   data: Backup,
   files = new Map<string, Blob>(),
-  { dryRun = false } = {},
+  { dryRun = false, fillEmpty = false } = {},
 ): Promise<ImportResult> {
   validateBackup(data);
   // Blob decoding is asynchronous work outside IndexedDB. Doing it inside the
@@ -502,6 +528,7 @@ export async function importBackup(
     moments: 0,
     photos: 0,
     differing: 0,
+    filled: 0,
     missingPhotos: files.size ? metas.filter((m) => !files.has(m.id)).length : 0,
   };
   await db.transaction(
@@ -527,11 +554,27 @@ export async function importBackup(
           throw new Error('Backup IDs belong to different trips on this device. No data imported.');
         }
         const fresh = rows.filter((_, i) => existing[i] === undefined);
+        // Blank fields on records this device already has: filled only when
+        // asked, and only where there is nothing to displace.
+        const patches: [string, Partial<T>][] = [];
+        if (compare && fillEmpty) {
+          for (const [i, row] of rows.entries()) {
+            const have = existing[i];
+            if (!have) continue;
+            const patch = blankFieldPatch(have, row);
+            if (Object.keys(patch).length) patches.push([key(row), patch]);
+          }
+          result.filled += patches.length;
+        }
         if (compare)
           result.differing += rows.filter(
-            (row, i) => existing[i] && !same(existing[i], row),
+            (row, i) =>
+              existing[i] && !same(existing[i], row) && !patches.some(([id]) => id === key(row)),
           ).length;
         if (fresh.length && write) await table.bulkAdd(fresh);
+        // `update` leaves `updatedAt` to the table hook, so sync carries the
+        // fill to the other device as the newer edit it is.
+        if (write) for (const [id, patch] of patches) await table.update(id, patch as object);
         return fresh;
       }
       result.trips = (await addMissing(db.trips, data.trips, (r) => r.id)).length;
