@@ -475,3 +475,29 @@ test('a photo file lost from the NAS causes no push ping-pong between devices', 
   expect(nas.dataPosts).toBe(posts);
   expect((await state(phone)).photos).toHaveLength(1); // still on the device that took it
 });
+
+// The number Settings shows next to "Changes not on the NAS yet". It was both
+// wrong (it counted NAS photos this device can't hold) and stale (it was only
+// recomputed by a sync started from this page, never by an automatic one).
+test('Settings shows nothing left to send after a sync it did not start', async ({
+  makeContext,
+}) => {
+  const nas = new FakeNas();
+  const mac = await device(makeContext, nas);
+  const phone = await device(makeContext, nas);
+  const { trip } = await seedTrip(mac);
+  await app(
+    mac,
+    (m, id) => m.addPhoto(new Blob(['pic'], { type: 'image/png' }), { tripId: id, kind: 'cover' }),
+    trip,
+  );
+  await sync(mac);
+  nas.photos.clear(); // the photo file is gone, so the phone can never hold it
+
+  await phone.evaluate(() => (location.hash = '/settings'));
+  const unsynced = phone
+    .locator('.status-row', { has: phone.getByText('Changes not on the NAS yet') })
+    .locator('.status-val');
+  await sync(phone); // as the automatic sync does: nothing on the page started it
+  await expect(unsynced).toHaveText('0');
+});

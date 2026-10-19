@@ -413,22 +413,28 @@ export async function readBackupFile(
  * enough to send after every change. Photos travel separately, one file each.
  */
 export async function buildDataBackup(): Promise<Backup> {
-  const [trips, cities, stops, expenses, moments, fxRates, settings, photoRows] =
-    await db.transaction(
-      'r',
-      [db.trips, db.cities, db.stops, db.expenses, db.moments, db.fxRates, db.kv, db.photos],
-      () =>
-        Promise.all([
-          db.trips.toArray(),
-          db.cities.toArray(),
-          db.stops.toArray(),
-          db.expenses.toArray(),
-          db.moments.toArray(),
-          db.fxRates.toArray(),
-          db.kv.toArray(),
-          db.photos.toArray(),
-        ]),
-    );
+  // Photo rows are streamed, not collected: a device holds gigabytes of them
+  // and only the metadata is wanted, so one blob is alive at a time.
+  const photosMeta: Omit<Photo, 'blob'>[] = [];
+  const [trips, cities, stops, expenses, moments, fxRates, settings] = await db.transaction(
+    'r',
+    [db.trips, db.cities, db.stops, db.expenses, db.moments, db.fxRates, db.kv, db.photos],
+    async () => {
+      const rows = await Promise.all([
+        db.trips.toArray(),
+        db.cities.toArray(),
+        db.stops.toArray(),
+        db.expenses.toArray(),
+        db.moments.toArray(),
+        db.fxRates.toArray(),
+        db.kv.toArray(),
+      ]);
+      await db.photos.each(({ blob: _blob, ...meta }) => {
+        photosMeta.push(meta);
+      });
+      return rows;
+    },
+  );
 
   return {
     app: 'systema',
@@ -442,7 +448,7 @@ export async function buildDataBackup(): Promise<Backup> {
     fxRates,
     settings: settings.filter((r) => !isLocalKey(r.key)),
     photos: [],
-    photosMeta: photoRows.map(({ blob: _blob, ...meta }) => meta),
+    photosMeta,
   };
 }
 

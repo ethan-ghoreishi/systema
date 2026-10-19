@@ -74,8 +74,18 @@
       ? new Date(ms).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })
       : 'Never';
   let unsynced = $state<number | null>(null);
-  const refreshUnsynced = async () => (unsynced = await nasBackup.unsyncedChanges());
-  onMount(() => void refreshUnsynced());
+  let counted = 0;
+  async function refreshUnsynced(): Promise<void> {
+    const mine = ++counted;
+    const n = await nasBackup.unsyncedChanges().catch(() => null);
+    if (mine === counted) unsynced = n; // a slow earlier count never lands late
+  }
+  // Every sync records an attempt, so this recounts after the automatic ones
+  // too — most changes are pushed by a sync nothing on this page started.
+  $effect(() => {
+    void nasBackup.lastAttempt;
+    void refreshUnsynced();
+  });
 
   let status = $state('');
   let busy = $state(false);
@@ -244,7 +254,7 @@
         </div>
         <div class="status-row">
           <span class="status-key">Changes not on the NAS yet</span>
-          <span class="status-val">{unsynced ?? '—'}</span>
+          <span class="status-val">{nasBackup.running ? '…' : (unsynced ?? '—')}</span>
         </div>
         <div class="status-row">
           <span class="status-key">Photos on the NAS</span>
