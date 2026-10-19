@@ -1174,11 +1174,16 @@ class NasBackup {
     return finish();
   }
 
-  /** Records on this device the NAS hasn't got yet (null: never synced). */
+  /**
+   * Records on this device the NAS hasn't got yet (null: never synced). Counted
+   * as the push does (`toSend`): a photo the NAS copy lists and this device
+   * can't hold is not a change waiting to go up, and nothing would ever clear
+   * it from this number.
+   */
   async unsyncedChanges(): Promise<number | null> {
     const base = (await db.kv.get(BASE_KEY))?.value as Backup | undefined;
     if (!base) return null;
-    return countDifferences(toRecords(await buildDataBackup()), toRecords(base));
+    return countDifferences(toRecords(await buildDataBackup()), toRecords(base), true);
   }
 }
 

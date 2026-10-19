@@ -178,6 +178,33 @@ describe('mergeRecords — combining two devices against their common base', () 
     expect(countDifferences(base, null)).toBe(2);
   });
 
+  // What Settings shows as "Changes not on the NAS yet": counted as the push
+  // counts, so a device whose data is all on the NAS reads zero even when the
+  // NAS lists photos this device doesn't hold.
+  it('reads zero for the unsynced-changes indicator once everything is on the NAS', () => {
+    const synced = recs({
+      trips: [trip()],
+      stops: [stop()],
+      photosMeta: [photo('p1'), photo('p2')],
+    });
+    expect(countDifferences(synced, synced, true)).toBe(0);
+    // The NAS lists two more photos; their files are on another device. Not
+    // ours to send, and no sync could ever take the number down.
+    const nas = recs({
+      trips: [trip()],
+      stops: [stop()],
+      photosMeta: [photo('p1'), photo('p2'), photo('p3'), photo('p4')],
+    });
+    expect(countDifferences(synced, nas, true)).toBe(0);
+    expect(countDifferences(synced, nas)).toBe(2); // the old count, which never cleared
+    // Real pending changes still count: an edit, a local deletion, a new photo.
+    const changed = recs({
+      trips: [trip({ planText: 'Edited', updatedAt: 9 })],
+      photosMeta: [photo('p1'), photo('p2'), photo('p5')],
+    });
+    expect(countDifferences(changed, nas, true)).toBe(3);
+  });
+
   it('never counts a photo the other side has but this one lacks as something to send', () => {
     const remote = recs({ photosMeta: [photo('p1')] });
     expect(countDifferences(recs(), remote)).toBe(1);
