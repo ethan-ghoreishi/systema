@@ -14,7 +14,8 @@
   const citiesQ = liveQuery(() => db.cities.where('tripId').equals(trip.id).sortBy('order'));
   const cities = $derived($citiesQ ?? []);
 
-  let editing = $state(false);
+  type Field = 'planText' | 'journalText';
+  let editing = $state<Field | null>(null);
   let draft = $state('');
 
   const hasJournal = $derived((trip.journalText ?? '').trim() !== '');
@@ -31,6 +32,7 @@
     ),
   );
   $effect(() => remember(viewKey, view));
+  const showing = $derived(view === 'journal' && hasJournal ? 'journal' : 'plan');
 
   // A multi-city plan (one `# City` block per city) can be filtered to one city
   // at a time — separate spaces, and a shorter contents list for long plans.
@@ -46,10 +48,20 @@
   );
   const rendered = $derived(shownMarkdown.trim() ? renderPlan(shownMarkdown) : null);
 
+  // Emptying a journal is a deliberate act, not a keystroke: autosave leaves
+  // the saved one alone until Done confirms it (as the Export tab does).
+  const clearingJournal = $derived(
+    editing === 'journalText' && !draft.trim() && (trip.journalText ?? '').trim() !== '',
+  );
+
   let saveError = $state('');
-  async function scheduleSave() {
+  async function scheduleSave(force = false) {
+    if (clearingJournal && !force) return true;
     try {
-      await updateTrip(trip.id, { planText: draft });
+      await updateTrip(
+        trip.id,
+        editing === 'journalText' ? { journalText: draft } : { planText: draft },
+      );
       saveError = '';
       return true;
     } catch (err) {
@@ -62,21 +74,28 @@
   // way back from an accidental select-all-and-paste.
   let original = $state('');
   async function undoEdits() {
-    if (confirm('Undo every change made since you started editing this plan?')) {
+    const what = editing === 'journalText' ? 'journal' : 'plan';
+    if (confirm(`Undo every change made since you started editing this ${what}?`)) {
       draft = original;
       await scheduleSave();
     }
   }
 
-  function startEdit() {
-    original = trip.planText;
-    draft = trip.planText;
-    view = 'plan';
-    editing = true;
+  function startEdit(field: Field) {
+    const text = (field === 'journalText' ? trip.journalText : trip.planText) ?? '';
+    original = text;
+    draft = text;
+    if (field === 'planText') view = 'plan';
+    editing = field;
   }
 
   async function done() {
-    if (await scheduleSave()) editing = false;
+    if (
+      clearingJournal &&
+      !confirm('Clear the saved journal for this trip? This also clears it on your synced devices.')
+    )
+      return;
+    if (await scheduleSave(clearingJournal)) editing = null;
   }
 
   function scrollTo(slug: string) {
@@ -90,14 +109,24 @@
   {/if}
 
   {#if editing}
-    <label class="label" for="plan-text">Itinerary (Markdown)</label>
+    <label class="label" for="plan-text"
+      >{editing === 'journalText' ? 'Journal (Markdown)' : 'Itinerary (Markdown)'}</label
+    >
     <textarea
       id="plan-text"
       class="field plan-textarea"
       rows="18"
-      placeholder="Paste the plan you generated in Claude…"
+      placeholder={editing === 'journalText'
+        ? 'Write the journal, or paste the one Claude wrote…'
+        : 'Paste the plan you generated in Claude…'}
       bind:value={draft}
-      oninput={scheduleSave}></textarea>
+      oninput={() => void scheduleSave()}></textarea>
+    {#if editing === 'journalText'}
+      <p class="hint">
+        A line of its own like <code>[photo: P-3f9a1c]</code> shows that photograph there; the rest appear
+        below the text. Leave the references as they are to keep the photographs in place.
+      </p>
+    {/if}
     {#if saveError}<p role="alert" class="hint hint--warn">{saveError}</p>{/if}
     <div class="save-bar">
       <button class="btn btn--primary" onclick={done}>Done</button>
@@ -127,14 +156,18 @@
             >
           </div>
         {/if}
-        {#if view === 'plan'}
+        {#if showing === 'plan'}
           <a class="btn btn--ghost" href={`#/trip/${trip.id}/prompt`}>Research prompt</a>
-          <button class="btn btn--ghost" onclick={startEdit}>Edit plan</button>
+          <button class="btn btn--ghost" onclick={() => startEdit('planText')}>Edit plan</button>
+        {:else}
+          <button class="btn btn--ghost" onclick={() => startEdit('journalText')}
+            >Edit journal</button
+          >
         {/if}
       </div>
     {/if}
 
-    {#if view === 'journal' && hasJournal}
+    {#if showing === 'journal'}
       <JournalView {trip} />
     {:else if rendered}
       {#if multiCityPlan}
@@ -178,7 +211,7 @@
         </p>
         <div class="cluster">
           <a class="btn btn--primary" href={`#/trip/${trip.id}/prompt`}>Build research prompt</a>
-          <button class="btn btn--ghost" onclick={startEdit}>Paste plan</button>
+          <button class="btn btn--ghost" onclick={() => startEdit('planText')}>Paste plan</button>
         </div>
       </div>
     {/if}
