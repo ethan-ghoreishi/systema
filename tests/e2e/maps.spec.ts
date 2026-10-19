@@ -69,6 +69,11 @@ test('the map shows one city at a time, numbered within it, and transfers apart'
   await page.goto(`/#/trip/${id}/stops`);
   await page.getByRole('tab', { name: 'Map' }).click();
 
+  // Which city is framed first follows the leg you are in, so on a trip whose
+  // dates have gone by it is the last leg. This test is about numbering within
+  // a city, not about that default, so pick the city explicitly.
+  await page.getByRole('tab', { name: 'Bologna' }).click();
+
   const pins = page.locator('.map-pin');
   await expect(pins).toHaveText(['1', '2', '3']); // Bologna only
   expect(await pinsInsideCanvas(page)).toBe(true);
@@ -90,7 +95,9 @@ test('the map shows one city at a time, numbered within it, and transfers apart'
   await page.getByRole('link', { name: 'Plan' }).click();
   await expect(page.getByRole('tab', { name: 'Journal' })).toHaveAttribute('aria-selected', 'true');
   await expect(page.getByRole('button', { name: 'Tap to explore the map' })).toBeVisible();
-  await expect(page.locator('.journal-map .map-pin')).toHaveCount(3);
+  // Untouched, it frames the leg you are in: on a finished trip, the last one,
+  // so these are Barcelona's two pins rather than Bologna's three.
+  await expect(page.locator('.journal-map .map-pin')).toHaveCount(2);
 });
 
 test('a multi-city cover is a journey card, not a continent-wide sketch', async ({ page }) => {
