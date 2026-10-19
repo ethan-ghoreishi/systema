@@ -1579,7 +1579,6 @@ textarea.field {
 .trip-card--past {
   flex-direction: row;
   align-items: center;
-  justify-content: space-between;
 }
 
 .trip-card-main {

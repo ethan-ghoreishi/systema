@@ -430,7 +430,9 @@ test('clearing the last leg date clears stale trip dates; legacy dates survive e
   });
 });
 
-test('plan edits can be undone, and clearing a journal asks first', async ({ page }) => {
+test('plan and journal edits can be undone, and clearing a journal asks first', async ({
+  page,
+}) => {
   const trip = await page.evaluate(async () => {
     const path = '/src/lib/trips.ts';
     const { updateTrip } = await import(/* @vite-ignore */ path);
@@ -454,11 +456,25 @@ test('plan edits can be undone, and clearing a journal asks first', async ({ pag
   await page.getByRole('button', { name: 'Undo changes' }).click();
   await expect.poll(stored).toMatchObject({ plan: '# Original plan' });
 
+  await page.getByRole('button', { name: 'Done' }).click();
+
+  // The journal is edited where it is read, and autosave alone can't empty one.
+  await page.getByRole('tab', { name: 'Journal' }).click();
+  await page.getByRole('button', { name: 'Edit journal' }).click();
+  await page.getByLabel('Journal (Markdown)').fill('Rewritten on the phone');
+  await expect.poll(stored).toMatchObject({ journal: 'Rewritten on the phone' });
+  await page.getByLabel('Journal (Markdown)').fill('');
+  page.once('dialog', (d) => d.dismiss());
+  await page.getByRole('button', { name: 'Done' }).click();
+  expect((await stored()).journal).toBe('Rewritten on the phone');
+  // The plan is untouched by any of it.
+  expect((await stored()).plan).toBe('# Original plan');
+
   await page.evaluate((id) => (location.hash = `/trip/${id}/export`), trip);
   await page.getByPlaceholder('Paste the finished journal here…').fill('');
   page.once('dialog', (d) => d.dismiss());
   await page.getByRole('button', { name: 'Save journal' }).click();
-  expect((await stored()).journal).toBe('Kept journal');
+  expect((await stored()).journal).toBe('Rewritten on the phone');
 });
 
 test('an arrival and a departure saved at the same moment never store a departure before arrival', async ({

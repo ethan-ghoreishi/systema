@@ -183,7 +183,8 @@
     <h2 class="section-title">Keep the journal</h2>
     <p class="hint">
       Paste the journal Claude wrote back here to keep it with the trip — it appears as a Journal
-      view on the Plan tab, and past trips become a browsable trip journal on the home screen.
+      view on the Plan tab, where Edit journal changes it afterwards, and past trips become a
+      browsable trip journal on the home screen.
     </p>
     <textarea
       class="field"
