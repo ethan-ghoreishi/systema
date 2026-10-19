@@ -70,6 +70,50 @@ test('import reports only on-device records that differ from the backup', async 
   expect(result).toEqual([0, 1]);
 });
 
+test('filling blanks fills only what is blank here, and leaves the rest alone', async ({
+  page,
+}) => {
+  const result = await page.evaluate(async () => {
+    const dbPath = '/src/lib/db.ts';
+    const exportPath = '/src/lib/export.ts';
+    const { db } = await import(/* @vite-ignore */ dbPath);
+    const { buildZipBackup, readBackupFile, importBackup } = await import(
+      /* @vite-ignore */ exportPath
+    );
+    const id = sessionStorage.getItem('testTrip')!;
+    await db.trips.update(id, { journalText: '', planText: 'written on this device' });
+    const { backup } = await readBackupFile(await buildZipBackup());
+    // The backup carries a journal for a trip whose plan differs from this device's.
+    backup.trips = backup.trips.map((t: { id: string }) =>
+      t.id === id ? { ...t, journalText: 'reconstructed journal', planText: 'the backup plan' } : t,
+    );
+    const before = await db.trips.get(id);
+    const off = await importBackup(backup, new Map(), { dryRun: true });
+    const preview = await importBackup(backup, new Map(), { dryRun: true, fillEmpty: true });
+    const untouched = (await db.trips.get(id)).journalText;
+    const done = await importBackup(backup, new Map(), { fillEmpty: true });
+    const after = await db.trips.get(id);
+    return {
+      offFilled: off.filled,
+      previewFilled: preview.filled,
+      dryRunWroteNothing: untouched === '',
+      filled: done.filled,
+      journal: after.journalText,
+      plan: after.planText,
+      updatedAtMoved: after.updatedAt > before.updatedAt,
+    };
+  });
+  expect(result).toEqual({
+    offFilled: 0,
+    previewFilled: 1,
+    dryRunWroteNothing: true,
+    filled: 1,
+    journal: 'reconstructed journal',
+    plan: 'written on this device',
+    updatedAtMoved: true,
+  });
+});
+
 test('invalid backup writes nothing', async ({ page }) => {
   const result = await page.evaluate(async () => {
     const dbPath = '/src/lib/db.ts';

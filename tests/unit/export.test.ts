@@ -3,6 +3,7 @@ import {
   buildTripPack,
   buildJournalingPrompt,
   photoManifest,
+  blankFieldPatch,
   JOURNAL_PROMPT,
   type PackPhoto,
 } from '../../src/lib/export';
@@ -184,5 +185,45 @@ describe('buildJournalingPrompt', () => {
     expect(p.startsWith(JOURNAL_PROMPT)).toBe(true);
     expect(p).toContain('PACK_BODY');
     expect(p).not.toContain('—');
+  });
+});
+
+describe('blankFieldPatch', () => {
+  it('offers only the fields this device left blank, and never identity', () => {
+    const existing = {
+      id: 'keep',
+      tripId: 'trip-1',
+      createdAt: 1,
+      updatedAt: 2,
+      journalText: '',
+      planText: 'mine, written here',
+      notes: undefined as string | undefined,
+      checklist: [] as string[],
+      visited: false,
+      order: 0,
+    };
+    const incoming = {
+      ...existing,
+      id: 'other',
+      tripId: 'trip-2',
+      createdAt: 9,
+      updatedAt: 9,
+      journalText: 'reconstructed journal',
+      planText: 'the backup plan',
+      notes: 'recovered note',
+      checklist: ['one'],
+      visited: true,
+      order: 7,
+    };
+    expect(blankFieldPatch(existing, incoming)).toEqual({
+      journalText: 'reconstructed journal',
+      notes: 'recovered note',
+      checklist: ['one'],
+    });
+  });
+
+  it('proposes nothing when the backup itself has nothing to add', () => {
+    expect(blankFieldPatch({ journalText: 'here' }, { journalText: '' })).toEqual({});
+    expect(blankFieldPatch({ journalText: '' }, { journalText: '' })).toEqual({});
   });
 });

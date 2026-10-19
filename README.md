@@ -112,7 +112,8 @@ subscription.**
      (expense trail as memory scaffold), journal paste-back and per-trip CSV.
 - **Settings** (gear on Home) — backup health (last sync, changes not yet on
   the NAS, photos uploaded, last backup file), Sync now, Check NAS copy, full
-  backup download (.zip), restore from a file (checked and previewed first),
+  backup download (.zip), restore from a file (checked and previewed first,
+  optionally filling blank fields on records already here),
   edits made on two devices to review, NAS sync setup, storage/install status.
 
 ## Develop
@@ -305,6 +306,9 @@ tests/
   memory. Restore checks every checksum and shows what would be added before
   writing; it only ever adds what the device lacks. Older .json backups and NAS
   snapshot files restore too (a snapshot's photos are fetched from the NAS).
+  One opt-in box, off by default, also fills fields a record here has left
+  **blank** (an empty journal, say) from the backup — never over anything
+  already written, so no information can be displaced; the preview counts them.
 - **Test connection** tells apart the address, no connection, a CORS block, a
   refused token and an upload size limit. **Check NAS copy** verifies the NAS
   snapshot and that every photo it lists is on the NAS at the right size, names
