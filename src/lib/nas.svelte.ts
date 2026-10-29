@@ -501,8 +501,10 @@ class NasBackup {
     const json = (await res.json().catch(() => null)) as any;
     const sent = typeof body === 'string' ? body.length : body.byteLength;
     // Not a failure: the receiver refused a push because another device had
-    // already pushed. Nothing was written; the caller merges again.
-    if (res.status === 409 && json?.stale) return json;
+    // already pushed. Nothing was written; the caller merges again. The
+    // receiver says so with an ordinary 200 — a proxy in front of it may
+    // swallow an error body, and its CORS headers with it.
+    if (json?.stale) return json;
     const failure = classifyReply(res.status, json, sent);
     if (failure)
       throw new NasError(

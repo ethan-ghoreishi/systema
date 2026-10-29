@@ -136,7 +136,9 @@ export class FakeNas {
         const known = parent === 'none' ? !!newest : current !== '';
         if (known && current !== expected) {
           this.staleRefusals += 1;
-          return json(409, { ok: false, stale: true, error: 'a newer snapshot is already here' });
+          // 200, as the receiver does: an error body can be replaced by a
+          // proxy before the app ever sees it.
+          return json(200, { ok: false, stale: true, error: 'a newer snapshot is already here' });
         }
       }
       void snapshot;

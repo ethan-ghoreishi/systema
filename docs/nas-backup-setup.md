@@ -27,8 +27,8 @@ them.
 If both devices push before either sees the other's snapshot, the one that
 lands second would leave the NAS with a newest snapshot missing the first's
 work. Each push names the snapshot it was merged from, and the receiver
-(version 3) refuses one that has since been overtaken — HTTP 409, nothing
-written — so that device reads what landed, merges it and pushes that. Against
+(version 3) refuses one that has since been overtaken — nothing written — so
+that device reads what landed, merges it and pushes that. Against
 an older receiver the two snapshots do fork, and the merge falls back to the
 newest snapshot both devices really share (which is why a few are kept, not
 one), so an edit a device had already pushed is not undone. Past even that, the
@@ -136,8 +136,11 @@ Version 3 adds two things:
   the token. The app re-tries the header once a day, so updating the receiver
   is enough; nothing needs changing on the phone or the Mac;
 - it refuses a data push whose parent snapshot has been overtaken by another
-  device (HTTP 409, nothing written), so the newest snapshot on the NAS is
-  never one that is missing what another device pushed moments earlier.
+  device (nothing written), so the newest snapshot on the NAS is never one
+  that is missing what another device pushed moments earlier. The refusal is
+  an ordinary 200 carrying a flag, because DSM's nginx replaces the body of an
+  error reply with its own page — and drops the CORS headers with it, which
+  would leave the app unable to read the answer at all.
 
 It also keeps two snapshots pushed in the same second, never serves a
 half-written file, and keeps a daily snapshot for 90 days. To update, copy the

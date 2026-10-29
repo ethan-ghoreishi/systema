@@ -8,9 +8,10 @@
  *   ?kind=photo  body = one image blob      -> systema-backups/photos/<id>.<ext>
  *
  * A data push says which snapshot it was merged from (?parent=). If the NAS
- * has a newer one, the push is refused with 409 and the app merges again, so
- * the newest snapshot here is never one that is missing another device's
- * work. An app that sends no parent is allowed through unchecked.
+ * has a newer one the push is refused — "stale", nothing written — and the app
+ * merges again, so the newest snapshot here is never one that is missing
+ * another device's work. An app that sends no parent is allowed through
+ * unchecked.
  *
  * Photos are idempotent (same id never written twice, unless the app asks to
  * replace a copy whose size or SHA-256 doesn't match the original). Every
@@ -262,7 +263,11 @@ if ($kind === 'data') {
     $known = $parent === 'none' ? glob($BASE . '/data/systema-data-*.json') !== [] : $current !== '';
     if ($known && $current !== $expected) {
       $release();
-      reply(409, [
+      // HTTP 200, not a 4xx: a reverse proxy (DSM's own nginx among them)
+      // may replace an error body with its own page and drop the CORS
+      // headers with it, leaving the browser unable to read the reply at
+      // all. The flag is what the app reads; nothing was written.
+      reply(200, [
         'ok' => false,
         'stale' => true,
         'error' => 'a newer snapshot is already on the NAS',

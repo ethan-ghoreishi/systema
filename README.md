@@ -301,7 +301,8 @@ tests/
   Two devices pushing at the same moment would otherwise leave the NAS with a
   newest snapshot that is missing one of them: each push says which snapshot
   it was merged from, and the receiver (version 3) refuses one that has been
-  overtaken, so that device merges what landed and sends that instead. Against
+  overtaken (nothing written), so that device merges what landed and sends
+  that instead. Against
   an older receiver the fork can still happen, and the merge then falls back to
   the newest snapshot both devices really share, so an edit one had already
   pushed is not undone; past even that, the difference is listed to review
