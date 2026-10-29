@@ -90,7 +90,10 @@ export class FakeNas {
             contentType: 'application/json',
           });
         const name = [...this.files.keys()].sort().at(-1);
-        if (!name) return json(404, { ok: false, error: 'no snapshots yet' });
+        if (!name)
+          return url.searchParams.get('empty') === 'ok' && this.version >= 3
+            ? json(200, { ok: false, empty: true, error: 'no snapshots yet' })
+            : json(404, { ok: false, error: 'no snapshots yet' });
         return route.fulfill({
           headers: cors,
           contentType: 'application/json',

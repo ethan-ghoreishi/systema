@@ -145,6 +145,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
   if ($kind === 'latest') {
     $files = glob($BASE . '/data/systema-data-*.json');
     if (!$files) {
+      // An app that sends empty=ok is told there is nothing here with an
+      // ordinary 200. A 404 would be right, but a proxy in front of PHP
+      // (DSM's own nginx among them) replaces an error body with its own
+      // page and drops the CORS headers with it, so the app could not read
+      // the answer at all and reported the NAS as unreachable. Apps that
+      // don't send it still get the 404 they expect.
+      if (($_GET['empty'] ?? '') === 'ok') {
+        reply(200, ['ok' => false, 'empty' => true, 'error' => 'no snapshots yet']);
+      }
       reply(404, ['ok' => false, 'error' => 'no snapshots yet']);
     }
     sort($files);
