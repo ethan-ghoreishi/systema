@@ -170,14 +170,32 @@ export async function cityReferences(
  * Delete a leg. Stops, expenses and moments that pointed at it are detached
  * rather than left pointing at a leg that no longer exists — they keep their
  * own content and show as unassigned, and the detachment syncs like any edit.
+ *
+ * A stop's visit time and a moment's time are instants, read in the zone of
+ * the leg they happened in. That leg is about to go, so each one that has a
+ * time keeps the zone on itself: an afternoon in Rome goes on reading as the
+ * afternoon it was, not an hour earlier in London.
  */
 export async function deleteCity(id: string): Promise<void> {
   const city = await db.cities.get(id);
   const hadDates = city ? await legsHaveDates(city.tripId) : false;
+  const tz = city?.tz;
   await db.transaction('rw', [db.cities, db.stops, db.expenses, db.moments], async () => {
-    await db.stops.where('cityId').equals(id).modify({ cityId: null });
+    await db.stops
+      .where('cityId')
+      .equals(id)
+      .modify((s) => {
+        s.cityId = null;
+        if (tz && s.visitedAt != null && !s.tz) s.tz = tz;
+      });
     await db.expenses.where('cityId').equals(id).modify({ cityId: null });
-    await db.moments.where('cityId').equals(id).modify({ cityId: null });
+    await db.moments
+      .where('cityId')
+      .equals(id)
+      .modify((m) => {
+        m.cityId = null;
+        if (tz && !m.tz) m.tz = tz;
+      });
     await db.cities.delete(id);
   });
   if (city) await recomputeTripDerived(city.tripId, hadDates);

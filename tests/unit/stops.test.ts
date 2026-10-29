@@ -211,12 +211,42 @@ describe('newStopCandidates', () => {
     ]);
   });
 
-  it('still matches by name alone when either side has no city', () => {
+  it('still matches by name alone when the plan names no city', () => {
     // A stop added before the trip had legs, or a single-city plan.
+    const oneCity = '## Route\n### Duomo\nx\n### Archiginnasio\ny';
     const existing = [stop({ id: 's1', name: 'Duomo', cityId: null })];
+    expect(newStopCandidates(oneCity, existing, [], legs).map((c) => c.name)).toEqual([
+      'Archiginnasio',
+    ]);
+    // And a stop with a city still matches a plan that names none.
     expect(
-      newStopCandidates(twoCities, existing, ['Bologna', 'Florence'], legs).map((c) => c.name),
+      newStopCandidates(oneCity, [stop({ id: 's1', name: 'Duomo', cityId: 'c1' })], [], legs).map(
+        (c) => c.name,
+      ),
     ).toEqual(['Archiginnasio']);
+  });
+
+  // One stop with no city can only be one of the plan's two Duomos; the other
+  // city's is still missing and must be imported.
+  it('lets an unassigned stop stand for one city only, not every city', () => {
+    const existing = [stop({ id: 's1', name: 'Duomo', cityId: null })];
+    const fresh = newStopCandidates(twoCities, existing, ['Bologna', 'Florence'], legs);
+    expect(fresh.map((c) => [c.name, c.city])).toEqual([
+      ['Archiginnasio', 'Bologna'],
+      ['Duomo', 'Florence'],
+    ]);
+  });
+
+  it('fills the anchor of the city-matched stop before an unassigned one', () => {
+    const existing = [
+      stop({ id: 's1', name: 'Duomo', cityId: null }),
+      stop({ id: 's2', name: 'Duomo', cityId: 'c2' }),
+    ];
+    // Florence's block matches s2 by city; Bologna's falls to the spare.
+    expect(guideBackfill(twoCities, existing, ['Bologna', 'Florence'], legs)).toEqual([
+      { id: 's1', guide: { anchor: 'the west front' } },
+      { id: 's2', guide: { anchor: 'Brunelleschi’s dome' } },
+    ]);
   });
 
   it('fills a visit anchor from the plan into the stop in that same city', () => {

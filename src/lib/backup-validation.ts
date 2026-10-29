@@ -105,6 +105,7 @@ export function validateBackup(value: unknown): asserts value is Backup {
         (c: unknown) => object(c) && strings(c, 'id text') && typeof c.done === 'boolean',
       ) &&
       optionalNumbers(r, 'visitedAt') &&
+      optional(r, 'tz', 'string') &&
       (r.guide === undefined ||
         (object(r.guide) &&
           optional(r.guide, 'anchor minimum stretch exit', 'string') &&
@@ -135,6 +136,7 @@ export function validateBackup(value: unknown): asserts value is Backup {
       (r) =>
         strings(r, 'tripId title note') &&
         numbers(r, 'at createdAt') &&
+        optional(r, 'tz', 'string') &&
         (r.cityId === null || typeof r.cityId === 'string') &&
         (r.stopId === null || typeof r.stopId === 'string'),
     );
@@ -196,7 +198,12 @@ export function validateBackup(value: unknown): asserts value is Backup {
       strings(sync, 'id device deviceName') &&
       numbers(sync, 'at') &&
       Array.isArray(sync.history) &&
-      sync.history.every((h: unknown) => typeof h === 'string')
+      sync.history.every((h: unknown) => typeof h === 'string') &&
+      (sync.clock === undefined ||
+        (object(sync.clock) &&
+          Object.values(sync.clock).every(
+            (n: unknown) => typeof n === 'number' && Number.isFinite(n),
+          )))
     )
   )
     fail('sync lineage');

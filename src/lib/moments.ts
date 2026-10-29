@@ -45,6 +45,17 @@ export async function deleteMoment(id: string): Promise<void> {
   });
 }
 
+/**
+ * The zone a stop's or moment's time is read in: its leg's, or the one kept on
+ * the record itself when that leg was deleted (see deleteCity).
+ */
+export function zoneOf(
+  record: { cityId: string | null; tz?: string },
+  cities: Pick<City, 'id' | 'tz'>[],
+): string | undefined {
+  return cities.find((c) => c.id === record.cityId)?.tz ?? record.tz;
+}
+
 export type TimelineItem =
   | { kind: 'stop'; stop: Stop; at?: number }
   | { kind: 'moment'; moment: Moment; at: number };

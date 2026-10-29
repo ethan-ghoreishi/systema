@@ -76,11 +76,14 @@ export function assignPhotos<P extends JournalPhoto>(
       // A reference is a prefix of the id's hex digits, so a six-digit one
       // from an older journal still finds a photo now referenced by twelve.
       const want = ref[1].toLowerCase();
-      return take(
-        ordered.find(
-          (p) => !used.has(p.id) && p.id.replace(/-/g, '').toLowerCase().startsWith(want),
-        ),
+      const matches = ordered.filter(
+        (p) => !used.has(p.id) && p.id.replace(/-/g, '').toLowerCase().startsWith(want),
       );
+      // A six-digit reference written before a later photo happened to share
+      // those digits now matches both. The one it meant is the one that was
+      // already here when it was written: the first added.
+      if (matches.length > 1) matches.sort((a, b) => a.createdAt - b.createdAt);
+      return take(matches[0]);
     }
     const name = seg.ref.toLowerCase();
     return take(ordered.find((p) => !used.has(p.id) && placeOf(p).trim().toLowerCase() === name));

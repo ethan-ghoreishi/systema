@@ -1,7 +1,7 @@
 import type { Table } from 'dexie';
 import { validateBackup } from './backup-validation';
 import { photoExt, photoRef, photoRefs, photoTime } from './photos';
-import { visitTimeline } from './moments';
+import { visitTimeline, zoneOf } from './moments';
 import { instantToWall, wallLabel } from './tz';
 import { isZip, unzip, verifyZip, zip } from './zip';
 import {
@@ -19,7 +19,7 @@ import { formatSheetDate } from './sheet';
 import { realExpenses, tripTotalGBP, categorySummary } from './expenses';
 import { tripDisplayName, tripShape } from './trip-shape';
 import { formatGBP } from './money';
-import { TOMBSTONE, blank, isLocalKey, same, type SyncRecords } from './sync';
+import { TOMBSTONE, isLocalKey, same, type SyncRecords } from './sync';
 
 /**
  * Trip pack (Markdown) + the prefilled journaling prompt, and a full JSON
@@ -74,6 +74,7 @@ export function photoManifest(
     .map((p, i) => {
       const m = p.momentId ? momentById.get(p.momentId) : undefined;
       const s = p.stopId ? stopById.get(p.stopId) : undefined;
+      const place = m ?? s;
       const city = cityById.get((m?.cityId ?? s?.cityId) || '');
       return {
         n: i + 1,
@@ -81,7 +82,7 @@ export function photoManifest(
         ref: refs.get(p.id)!,
         city: city?.name ?? '',
         place: m?.title ?? s?.name ?? (p.kind === 'cover' ? 'Trip' : 'Unassigned'),
-        when: localStamp(photoTime(p), city?.tz),
+        when: localStamp(photoTime(p), place ? zoneOf(place, cities) : undefined),
       };
     });
 }
@@ -146,12 +147,12 @@ export function buildTripPack({
     timeline.forEach((it, i) => {
       if (it.kind === 'stop') {
         const c = cityById.get(it.stop.cityId ?? '');
-        const when = it.at != null ? `${localStamp(it.at, c?.tz)}, ` : '';
+        const when = it.at != null ? `${localStamp(it.at, zoneOf(it.stop, cities))}, ` : '';
         lines.push(`${i + 1}. ${when}${it.stop.name}${c ? ` (${c.name})` : ''}`);
       } else {
         const c = cityById.get(it.moment.cityId ?? '');
         lines.push(
-          `${i + 1}. ${localStamp(it.at, c?.tz)}, off-plan: ${it.moment.title}${c ? ` (${c.name})` : ''}`,
+          `${i + 1}. ${localStamp(it.at, zoneOf(it.moment, cities))}, off-plan: ${it.moment.title}${c ? ` (${c.name})` : ''}`,
         );
       }
     });
@@ -167,7 +168,7 @@ export function buildTripPack({
       const c = cityById.get(m.cityId ?? '');
       const refs = refsFor((p) => p.momentId === m.id);
       const bits = [
-        `- ${localStamp(m.at, c?.tz)}${c ? `, ${c.name}` : ''}: **${m.title}**`,
+        `- ${localStamp(m.at, zoneOf(m, cities))}${c ? `, ${c.name}` : ''}: **${m.title}**`,
         m.note ? `. ${m.note}` : '',
         m.stopId && stopName.get(m.stopId) ? ` (at ${stopName.get(m.stopId)})` : '',
         refs.length ? ` [photos: ${refs.join(', ')}]` : '',
@@ -316,18 +317,43 @@ export interface SyncMeta {
   at: number;
   /** Ids of the snapshots this one was merged from, newest last (capped). */
   history: string[];
+  /**
+   * How much of each device's work this snapshot includes: one counter per
+   * device, raised only by that device and carried forward by every merge.
+   * `history` answers the same question but only for its last 200 snapshots,
+   * so a device that has been away longer than that falls off the end of it;
+   * this holds for any absence, and costs one small number per device.
+   * Absent on snapshots from versions before it existed.
+   */
+  clock?: Record<string, number>;
+}
+
+/** The highest counter each device reaches across the given clocks. */
+export function mergeClocks(
+  ...clocks: (Record<string, number> | undefined)[]
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const clock of clocks)
+    for (const [device, n] of Object.entries(clock ?? {}))
+      if (typeof n === 'number' && Number.isFinite(n)) out[device] = Math.max(out[device] ?? 0, n);
+  return out;
 }
 
 /**
  * Whether `remote` is known to include everything in `base`: the same
- * snapshot, or one that lists it among its ancestors. Only then may an
- * absence on the remote side be read as a deletion (see sync.ts).
+ * snapshot, one that lists it among its ancestors, or one whose counters all
+ * reach `base`'s. Only then may an absence on the remote side be read as a
+ * deletion (see sync.ts), so every test here has to be certain; being unsure
+ * costs nothing but a union.
  */
 export function descendsFrom(base: Backup, remote: Backup | null): boolean {
   if (!remote) return false;
   if (base === remote) return true;
   if (!base.sync || !remote.sync) return false;
-  return remote.sync.id === base.sync.id || remote.sync.history.includes(base.sync.id);
+  if (remote.sync.id === base.sync.id || remote.sync.history.includes(base.sync.id)) return true;
+  const [mine, theirs] = [base.sync.clock, remote.sync.clock];
+  if (!mine || !theirs) return false;
+  return Object.entries(mine).every(([device, n]) => (theirs[device] ?? 0) >= n);
 }
 
 /** The syncable record sets of a backup or snapshot. */
@@ -514,9 +540,17 @@ export function importNote(r: ImportResult): string {
 }
 
 /**
- * The backup's values for fields this device has left blank (see `blank`).
- * Filling only those can never displace information, which is what makes
- * `fillEmpty` safe to offer alongside the add-only rule. Identity never moves.
+ * A field counts as blank when there is nothing in it: absent, null, an empty
+ * string or an empty list. (A merge is stricter — there, clearing a field is
+ * an edit to be weighed, not an absence to fill.)
+ */
+const blank = (v: unknown): boolean =>
+  v === undefined || v === null || v === '' || (Array.isArray(v) && v.length === 0);
+
+/**
+ * The backup's values for fields this device has left blank. Filling only
+ * those can never displace information, which is what makes `fillEmpty` safe
+ * to offer alongside the add-only rule. Identity never moves.
  */
 export function blankFieldPatch<T extends object>(existing: T, incoming: T): Partial<T> {
   const patch: Record<string, unknown> = {};

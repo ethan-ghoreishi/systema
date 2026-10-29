@@ -76,6 +76,18 @@ describe('photo references of a whole set', () => {
     expect(photoRefs([alone]).get(alone)).toBe(photoRef(alone));
   });
 
+  // A journal written when only one photo had those six digits must keep
+  // meaning that photo after a later one turns up sharing them.
+  it('gives an older journal the photo that was there when it was written', () => {
+    const first = { id: clashA, createdAt: 10, takenAt: 999, place: 'A' };
+    const later = { id: clashB, createdAt: 20, takenAt: 1, place: 'B' };
+    const place = (p: { place: string }) => p.place;
+    const segs = splitJournal(`[photo: ${photoRef(clashA)}]`);
+    // `later` was taken first, so capture order alone would hand it the
+    // reference; it did not exist when the journal was written.
+    expect(assignPhotos(segs, [first, later], place).photoForSegment[0]!.id).toBe(clashA);
+  });
+
   it('resolves a longer reference, and a six-digit one written before', () => {
     const a = { id: clashA, createdAt: 1, place: 'A' };
     const b = { id: clashB, createdAt: 2, place: 'B' };

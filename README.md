@@ -296,11 +296,19 @@ tests/
   instead of "last device wins": edits to different things combine; the same
   thing edited on both keeps the newer edit and lists the other in Settings to
   choose from; a deletion applies unless the other device edited the record.
-  Two devices that push at the same moment produce snapshots neither of which
-  descends from the other — the merge then uses the newest snapshot both
-  really share, so an edit one of them had already pushed is not undone. If
-  even that is too far back, the difference is listed to review rather than
-  applied quietly, and nothing is deleted.
+  Clearing a field is an edit like any other — never an empty space for the
+  other device's old text to flow back into.
+  Two devices pushing at the same moment would otherwise leave the NAS with a
+  newest snapshot that is missing one of them: each push says which snapshot
+  it was merged from, and the receiver (version 3) refuses one that has been
+  overtaken, so that device merges what landed and sends that instead. Against
+  an older receiver the fork can still happen, and the merge then falls back to
+  the newest snapshot both devices really share, so an edit one had already
+  pushed is not undone; past even that, the difference is listed to review
+  rather than applied quietly, and nothing is deleted. Each snapshot also
+  carries a count of how much of each device's work it holds, so a device
+  returning after months away is still known to be behind rather than ahead:
+  what was deleted while it was gone stays deleted.
   Each photo uploads on its own and counts as backed up only once its size and
   SHA-256 are verified; one that keeps failing is listed with its reason and
   retried with a growing wait, while the data and every other photo still back
@@ -325,8 +333,9 @@ tests/
   snapshot and that every photo it lists is on the NAS at the right size, names
   the missing ones, and queues any this device holds to upload again. The token
   is sent in a request header, not in the URL, so it stays out of the NAS's
-  access log (a receiver older than version 3 still takes it in the URL — the
-  app notices and falls back); it never appears in a message, a stored
+  access log (a receiver older than version 3 only reads it from the URL — the
+  app notices, falls back, and re-tries the header once a day so updating the
+  receiver is enough to stop it); it never appears in a message, a stored
   diagnostic or a backup, and the Settings field keeps it hidden until you
   tap Show. The receiver's folder sits in the web root, so it also writes a
   deny rule and a blank index into it — on nginx (Web Station's default) add

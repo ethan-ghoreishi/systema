@@ -216,6 +216,42 @@ describe('mergeRecords — combining two devices against their common base', () 
     expect(mergeRecords(shared, local, sibling, true).merged.stops).toEqual([]);
   });
 
+  // Clearing a field is an edit. With no base the two sides can be told apart
+  // by, "it is empty here" is not permission to put the old text back.
+  it('never replaces a cleared field without asking, whatever empty looks like', () => {
+    for (const [cleared, had] of [
+      ['', 'Long notes'],
+      [null, 'Long notes'],
+    ] as const) {
+      const local = recs({ stops: [stop({ notes: cleared as string, updatedAt: 50 })] });
+      const remote = recs({ stops: [stop({ notes: had, updatedAt: 40 })] });
+      const { merged, conflicts } = mergeRecords(null, local, remote, false);
+      expect(merged.stops[0].notes).toBe(cleared); // the newer edit, the clear
+      expect(conflicts).toHaveLength(1);
+      expect(conflicts[0].fields.notes).toEqual({ kept: cleared, other: had });
+    }
+    // An emptied list is a value too.
+    const item = { id: 'a', text: 'Ticket', done: false };
+    const { merged, conflicts } = mergeRecords(
+      null,
+      recs({ stops: [stop({ checklist: [], updatedAt: 50 })] }),
+      recs({ stops: [stop({ checklist: [item], updatedAt: 40 })] }),
+      false,
+    );
+    expect(merged.stops[0].checklist).toEqual([]);
+    expect(conflicts[0].fields.checklist).toEqual({ kept: [], other: [item] });
+  });
+
+  // A field the other device simply doesn't carry is not a disagreement: there
+  // is nothing of this device's to displace, so it arrives without a question.
+  it('takes a field one side has never had, without asking', () => {
+    const local = recs({ trips: [trip({ updatedAt: 50 })] });
+    const remote = recs({ trips: [trip({ nameManual: 'Mac name', updatedAt: 40 })] });
+    const { merged, conflicts } = mergeRecords(null, local, remote, false);
+    expect(merged.trips[0].nameManual).toBe('Mac name');
+    expect(conflicts).toEqual([]);
+  });
+
   // Photo tombstones and conflict rows are sync's own bookkeeping: two devices
   // deleting the same photo differ only in when, which is nothing to review.
   it('never asks about a kv row', () => {

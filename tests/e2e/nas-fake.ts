@@ -31,6 +31,8 @@ export class FakeNas {
   version: 1 | 2 | 3 = 3;
   /** Requests whose token arrived in the URL rather than the header. */
   tokenInUrl = 0;
+  /** Pushes refused because the NAS had moved on. */
+  staleRefusals = 0;
   /** No answer at all (NAS asleep, away from home). */
   unreachable = false;
   /**
@@ -117,11 +119,27 @@ export class FakeNas {
     if (!body.length) return json(400, { ok: false, error: 'empty body' });
     if (kind === 'probe' && this.version >= 2) return json(200, { ok: true, bytes: body.length });
     if (kind === 'data') {
+      let snapshot: any;
       try {
-        JSON.parse(body.toString());
+        snapshot = JSON.parse(body.toString());
       } catch {
         return json(400, { ok: false, error: 'not JSON' });
       }
+      // Compare and swap, as the version 3 receiver does: a push whose parent
+      // is no longer the newest snapshot here is refused, so the newest one is
+      // never missing another device's work.
+      const parent = url.searchParams.get('parent') ?? '';
+      if (this.version >= 3 && parent) {
+        const newest = [...this.files.keys()].sort().at(-1);
+        const current = newest ? (JSON.parse(this.files.get(newest)!).sync?.id ?? '') : '';
+        const expected = parent === 'none' ? '' : parent;
+        const known = parent === 'none' ? !!newest : current !== '';
+        if (known && current !== expected) {
+          this.staleRefusals += 1;
+          return json(409, { ok: false, stale: true, error: 'a newer snapshot is already here' });
+        }
+      }
+      void snapshot;
       if (this.advance) this.second += 1;
       const stamp = new Date(this.second * 1000).toISOString().replace(/[-:]/g, '').slice(0, 15);
       const name = `systema-data-${stamp.replace('T', '-')}.json`;

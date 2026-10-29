@@ -5,6 +5,7 @@ import {
   photoManifest,
   blankFieldPatch,
   descendsFrom,
+  mergeClocks,
   JOURNAL_PROMPT,
   type Backup,
   type PackPhoto,
@@ -253,5 +254,40 @@ describe('descendsFrom', () => {
   it('accepts the identical object, for a backup with no lineage at all', () => {
     const legacy = {} as Backup;
     expect(descendsFrom(legacy, legacy)).toBe(true);
+  });
+
+  // The counters answer the same question as the history list, but for an
+  // absence of any length. Saying "yes" wrongly would delete records, so it
+  // only ever says yes when every device's count is reached.
+  const clocked = (id: string, clock: Record<string, number>): Backup =>
+    ({
+      sync: { id, device: 'd', deviceName: 'n', at: 1, history: [], clock },
+    }) as unknown as Backup;
+
+  it('reads the counters when the history no longer reaches back', () => {
+    const away = clocked('old', { phone: 3, mac: 10 });
+    expect(descendsFrom(away, clocked('now', { phone: 3, mac: 510 }))).toBe(true);
+    expect(descendsFrom(away, clocked('now', { phone: 3, mac: 10 }))).toBe(true);
+    // Behind on any one device is not ahead.
+    expect(descendsFrom(away, clocked('now', { phone: 2, mac: 999 }))).toBe(false);
+    expect(descendsFrom(away, clocked('now', { mac: 999 }))).toBe(false);
+    // Siblings: each has work the other has not seen.
+    expect(descendsFrom(clocked('s1', { phone: 1 }), clocked('s2', { mac: 1 }))).toBe(false);
+  });
+
+  it('will not guess when either side keeps no counters', () => {
+    const plain = { sync: { id: 'a', device: 'd', deviceName: 'n', at: 1, history: [] } };
+    expect(descendsFrom(clocked('old', { phone: 1 }), plain as unknown as Backup)).toBe(false);
+    expect(descendsFrom(plain as unknown as Backup, clocked('new', { phone: 9 }))).toBe(false);
+  });
+
+  it('carries every device forward at its highest count', () => {
+    expect(mergeClocks({ phone: 2, mac: 1 }, { phone: 1, mac: 7 }, undefined)).toEqual({
+      phone: 2,
+      mac: 7,
+    });
+    expect(mergeClocks(undefined)).toEqual({});
+    // A snapshot that arrives with nonsense in it cannot raise a count.
+    expect(mergeClocks({ phone: 2 }, { phone: NaN, mac: 'x' } as never)).toEqual({ phone: 2 });
   });
 });

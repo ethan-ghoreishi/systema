@@ -7,6 +7,11 @@
  *   ?kind=data   body = full JSON snapshot  -> systema-backups/data/…json
  *   ?kind=photo  body = one image blob      -> systema-backups/photos/<id>.<ext>
  *
+ * A data push says which snapshot it was merged from (?parent=). If the NAS
+ * has a newer one, the push is refused with 409 and the app merges again, so
+ * the newest snapshot here is never one that is missing another device's
+ * work. An app that sends no parent is allowed through unchecked.
+ *
  * Photos are idempotent (same id never written twice, unless the app asks to
  * replace a copy whose size or SHA-256 doesn't match the original). Every
  * photo reply carries the stored file's size and SHA-256, so the app verifies
@@ -216,15 +221,60 @@ if ($kind === 'probe') {
 @mkdir($BASE . '/photos', 0770, true);
 protect_folder($BASE);
 
+/** The newest stored snapshot's own id, or '' if there is none to read. */
+function newest_id($dir) {
+  $files = glob($dir . '/systema-data-*.json');
+  if (!$files) {
+    return '';
+  }
+  sort($files);
+  $snapshot = json_decode((string) @file_get_contents(end($files)), true);
+  return is_array($snapshot) && isset($snapshot['sync']['id'])
+    ? (string) $snapshot['sync']['id']
+    : '';
+}
+
 if ($kind === 'data') {
   if (json_decode($body) === null) {
     reply(400, ['ok' => false, 'error' => 'not JSON']);
+  }
+  // One push at a time, so the check below and the write that follows it
+  // can't be split by another device's push.
+  $lock = @fopen($BASE . '/data/.push.lock', 'c');
+  if ($lock) {
+    flock($lock, LOCK_EX);
+  }
+  $release = function () use ($lock) {
+    if ($lock) {
+      flock($lock, LOCK_UN);
+      fclose($lock);
+    }
+  };
+  // Compare and swap: the app says which snapshot it merged from. If the
+  // newest one here isn't that, it has not seen what another device pushed in
+  // the meantime, and storing this would make a snapshot the newest that is
+  // missing their work. Refuse; the app merges again and pushes that. Unsure
+  // (an app that sends no parent, a snapshot without an id) means allow.
+  $parent = (string) ($_GET['parent'] ?? '');
+  if ($parent !== '') {
+    $current = newest_id($BASE . '/data');
+    $expected = $parent === 'none' ? '' : $parent;
+    $known = $parent === 'none' ? glob($BASE . '/data/systema-data-*.json') !== [] : $current !== '';
+    if ($known && $current !== $expected) {
+      $release();
+      reply(409, [
+        'ok' => false,
+        'stale' => true,
+        'error' => 'a newer snapshot is already on the NAS',
+      ]);
+    }
   }
   // Microseconds keep two devices pushing in the same second from overwriting
   // each other; names still sort chronologically.
   $micro = (int) (fmod(microtime(true), 1) * 1000000);
   $file = $BASE . '/data/systema-data-' . date('Ymd-His') . sprintf('-%06d', $micro) . '.json';
   if (!write_atomic($file, $body)) {
+    $release();
     reply(500, ['ok' => false, 'error' => 'write failed']);
   }
   // Prune: keep the newest $KEEP_DATA, plus the newest of each recent day.
@@ -242,6 +292,7 @@ if ($kind === 'data') {
   foreach (array_diff($files, $keep) as $old) {
     @unlink($old);
   }
+  $release();
   reply(200, ['ok' => true, 'stored' => basename($file), 'bytes' => strlen($body)]);
 }
 
