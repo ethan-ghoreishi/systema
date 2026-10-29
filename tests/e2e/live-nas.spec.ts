@@ -2,10 +2,19 @@ import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { device, sync } from './nas-fake';
 
-// Throwaway: two "devices" syncing through the REAL receiver on the NAS, in
-// its own folder with its own token. Not part of the suite.
+/**
+ * Two "devices" syncing through a real receiver on a real NAS — its web
+ * server, its PHP, its filesystem — which a local `php -S` cannot stand in
+ * for: DSM's nginx, for one, replaces the body of an error reply.
+ *
+ * Skipped unless SYSTEMA_LIVE_NAS names one. POINT IT AT A RECEIVER OF ITS
+ * OWN: it writes synthetic trips, so a copy in its own folder with its own
+ * token, never the one holding real backups. Delete that folder afterwards.
+ * One browser project at a time, or they share the folder and see each
+ * other's trips.
+ */
 const URL_ = process.env.SYSTEMA_LIVE_NAS;
-test.skip(!URL_, 'Needs SYSTEMA_LIVE_NAS.');
+test.skip(!URL_, 'Needs SYSTEMA_LIVE_NAS (a receiver of its own — see above).');
 const nas = { url: URL_! };
 
 function app<T, A = undefined>(page: Page, fn: (m: any, arg: A) => Promise<T> | T, arg?: A) {
@@ -18,7 +27,9 @@ const state = (page: Page) =>
   app(page, async (m) => ({
     trips: await m.db.trips.toArray(),
     stops: await m.db.stops.toArray(),
-    conflicts: (await m.db.kv.where('key').startsWith('conflict:').toArray()).map((r: any) => r.value),
+    conflicts: (await m.db.kv.where('key').startsWith('conflict:').toArray()).map(
+      (r: any) => r.value,
+    ),
   }));
 
 test('live NAS: two devices, concurrent pushes, deletion and a clear', async ({ makeContext }) => {
