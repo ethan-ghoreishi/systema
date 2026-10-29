@@ -3,22 +3,25 @@
  *
  * Photos can't travel through a copy-paste prompt, so the journaling prompt
  * lists them with stable references and asks Claude to mark where each one
- * belongs with a line `[photo: P-3f9a1c]`. When the journal is pasted back and
- * rendered, the placeholders are swapped for the real photographs on the
- * device — matched by reference, so two stops with the same name, or an
- * off-plan moment, can't take each other's photos. Journals written before
- * references used `[photo: <stop name>]`; those still resolve by name, in
- * capture order.
+ * belongs with a line `[photo: P-3f9a1c]` (longer where six hex digits would
+ * be shared by two photos). When the journal is pasted back and rendered, the
+ * placeholders are swapped for the real photographs on the device — matched by
+ * reference, so two stops with the same name, or an off-plan moment, can't
+ * take each other's photos. A reference is a prefix of the photo's id, so one
+ * written before a set needed longer references still resolves. Journals
+ * written before references used `[photo: <stop name>]`; those still resolve
+ * by name, in capture order.
  *
  * Pure module: parsing only, no DOM, no db.
  */
 
-import { photoRef, photoTime } from './photos';
+import { photoTime } from './photos';
 
 export type JournalSegment = { kind: 'md'; text: string } | { kind: 'photo'; ref: string };
 
 const PLACEHOLDER = /^\s*!?\[photo:\s*(.+?)\]\s*$/i;
-const REF = /^P-[0-9a-f]{6}$/i;
+// Six hex digits, or more where six would have been ambiguous (see photoRefs).
+const REF = /^P-([0-9a-f]{6,32})$/i;
 
 /** Split journal text into markdown chunks and photo placeholders. */
 export function splitJournal(text: string): JournalSegment[] {
@@ -68,9 +71,16 @@ export function assignPhotos<P extends JournalPhoto>(
 
   const photoForSegment = segments.map((seg) => {
     if (seg.kind !== 'photo') return null;
-    if (REF.test(seg.ref)) {
-      const ref = seg.ref.toLowerCase();
-      return take(ordered.find((p) => !used.has(p.id) && photoRef(p.id).toLowerCase() === ref));
+    const ref = seg.ref.match(REF);
+    if (ref) {
+      // A reference is a prefix of the id's hex digits, so a six-digit one
+      // from an older journal still finds a photo now referenced by twelve.
+      const want = ref[1].toLowerCase();
+      return take(
+        ordered.find(
+          (p) => !used.has(p.id) && p.id.replace(/-/g, '').toLowerCase().startsWith(want),
+        ),
+      );
     }
     const name = seg.ref.toLowerCase();
     return take(ordered.find((p) => !used.has(p.id) && placeOf(p).trim().toLowerCase() === name));

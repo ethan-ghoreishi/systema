@@ -25,6 +25,10 @@
  * reported as HTTP 413 with the limit, not as a mysterious empty body. Keep
  * display_errors off (see docs/nas-backup-setup.md).
  *
+ * The token is read from the X-Systema-Token header, or from ?token= for app
+ * versions that still send it there. Keeping it out of the URL keeps it out of
+ * the web server's access log.
+ *
  * SETUP: set $TOKEN to a long random string, and enter the same value in
  * systema -> Settings -> NAS sync. See docs/nas-backup-setup.md.
  */
@@ -33,11 +37,15 @@ $TOKEN = 'CHANGE-ME-to-a-long-random-string';
 $KEEP_DATA = 60; // most recent data snapshots to keep
 $KEEP_DAYS = 90; // plus the newest snapshot of each of this many days
 $BASE = __DIR__ . '/systema-backups';
-$VERSION = 2;
+$VERSION = 3;
 
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
-header('Access-Control-Allow-Headers: Content-Type');
+// X-Systema-Token: the app sends the token in this header instead of the URL
+// from version 3 on, so it stays out of the web server's access log. The
+// preflight that costs is cached for a day.
+header('Access-Control-Allow-Headers: Content-Type, X-Systema-Token');
+header('Access-Control-Max-Age: 86400');
 header('Content-Type: application/json');
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') { // CORS preflight
@@ -79,14 +87,38 @@ function ini_bytes($key) {
   return (int) $n;
 }
 
+/**
+ * The token, from the X-Systema-Token header (current app) or the ?token=
+ * query (older app versions, which must keep working).
+ */
 function token_ok($token) {
-  return $token !== '' && hash_equals($token, (string) ($_GET['token'] ?? ''));
+  $sent = (string) ($_SERVER['HTTP_X_SYSTEMA_TOKEN'] ?? $_GET['token'] ?? '');
+  return $token !== '' && hash_equals($token, $sent);
+}
+
+/**
+ * Keep the backup folder from being served as static files: the receiver's
+ * token guards this script, not the web root it sits in. Apache honours
+ * .htaccess; on nginx (Web Station's default) these stop a directory listing
+ * only — see docs/nas-backup-setup.md for the one-line nginx rule.
+ */
+function protect_folder($dir) {
+  if (!is_dir($dir)) {
+    return;
+  }
+  if (!file_exists($dir . '/.htaccess')) {
+    @file_put_contents($dir . '/.htaccess', "Require all denied\nDeny from all\n");
+  }
+  if (!file_exists($dir . '/index.html')) {
+    @file_put_contents($dir . '/index.html', '');
+  }
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
   $kind = $_GET['kind'] ?? '';
   if ($kind === '') {
     @mkdir($BASE, 0770, true);
+    protect_folder($BASE);
     reply(200, [
       'ok' => true,
       'service' => 'systema-backup',
@@ -182,6 +214,7 @@ if ($kind === 'probe') {
 
 @mkdir($BASE . '/data', 0770, true);
 @mkdir($BASE . '/photos', 0770, true);
+protect_folder($BASE);
 
 if ($kind === 'data') {
   if (json_decode($body) === null) {

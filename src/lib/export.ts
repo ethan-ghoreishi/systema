@@ -1,6 +1,6 @@
 import type { Table } from 'dexie';
 import { validateBackup } from './backup-validation';
-import { photoExt, photoRef, photoTime } from './photos';
+import { photoExt, photoRef, photoRefs, photoTime } from './photos';
 import { visitTimeline } from './moments';
 import { instantToWall, wallLabel } from './tz';
 import { isZip, unzip, verifyZip, zip } from './zip';
@@ -19,7 +19,7 @@ import { formatSheetDate } from './sheet';
 import { realExpenses, tripTotalGBP, categorySummary } from './expenses';
 import { tripDisplayName, tripShape } from './trip-shape';
 import { formatGBP } from './money';
-import { TOMBSTONE, isLocalKey, same, type SyncRecords } from './sync';
+import { TOMBSTONE, blank, isLocalKey, same, type SyncRecords } from './sync';
 
 /**
  * Trip pack (Markdown) + the prefilled journaling prompt, and a full JSON
@@ -53,7 +53,8 @@ function localStamp(t: number, tz?: string): string {
 
 /**
  * The photographs to attach to Claude, numbered in the order they were
- * taken, each with its stable reference (P-xxxxxx), city and place. Receipts
+ * taken, each with its stable reference (P-xxxxxx, longer where six hex
+ * digits would be shared by two of them), city and place. Receipts
  * stay out.
  */
 export function photoManifest(
@@ -65,6 +66,8 @@ export function photoManifest(
   const stopById = new Map(stops.map((s) => [s.id, s]));
   const momentById = new Map(moments.map((m) => [m.id, m]));
   const cityById = new Map(cities.map((c) => [c.id, c]));
+  // References are chosen over the whole set, so no two in one pack collide.
+  const refs = photoRefs(photos.map((p) => p.id));
   return photos
     .filter((p) => p.kind !== 'receipt')
     .sort((a, b) => photoTime(a) - photoTime(b) || a.id.localeCompare(b.id))
@@ -75,7 +78,7 @@ export function photoManifest(
       return {
         n: i + 1,
         id: p.id,
-        ref: photoRef(p.id),
+        ref: refs.get(p.id)!,
         city: city?.name ?? '',
         place: m?.title ?? s?.name ?? (p.kind === 'cover' ? 'Trip' : 'Unassigned'),
         when: localStamp(photoTime(p), city?.tz),
@@ -315,6 +318,18 @@ export interface SyncMeta {
   history: string[];
 }
 
+/**
+ * Whether `remote` is known to include everything in `base`: the same
+ * snapshot, or one that lists it among its ancestors. Only then may an
+ * absence on the remote side be read as a deletion (see sync.ts).
+ */
+export function descendsFrom(base: Backup, remote: Backup | null): boolean {
+  if (!remote) return false;
+  if (base === remote) return true;
+  if (!base.sync || !remote.sync) return false;
+  return remote.sync.id === base.sync.id || remote.sync.history.includes(base.sync.id);
+}
+
 /** The syncable record sets of a backup or snapshot. */
 export function toRecords(b: Backup): SyncRecords {
   return {
@@ -344,24 +359,43 @@ Restore: systema -> Settings -> Restore from a backup file, and pick this .zip.
 Restoring only adds what the device doesn't already have.
 `;
 
+/** One stored photo's bytes, fetched when its turn comes (see ZipEntry.data). */
+async function storedPhoto(id: string): Promise<Blob> {
+  const photo = await db.photos.get(id);
+  // Deleted between listing the photos and reaching this one. Refusing is the
+  // only honest answer: an empty file in the archive would look like a photo.
+  if (!photo)
+    throw new Error(
+      `Photo ${photoRef(id)} was deleted while the backup was being prepared. Try again.`,
+    );
+  return photo.blob;
+}
+
 /**
  * Full backup as a ZIP: the data snapshot plus every photo as its own file.
- * Read in one transaction (a consistent copy); photos are composed by
- * reference, so memory stays at about one photo however many there are.
+ * The data is read in one transaction (a consistent copy); each photo's bytes
+ * are read only when its turn comes, so a library of thousands costs about
+ * one photo's worth of memory, and a transient read failure retries instead
+ * of losing the whole backup.
  */
 export async function buildZipBackup(
   onProgress?: (done: number, total: number) => void,
 ): Promise<Blob> {
-  const { data, photos } = await db.transaction(
+  const names: { id: string; ext: string }[] = [];
+  const data = await db.transaction(
     'r',
     [db.trips, db.cities, db.stops, db.expenses, db.moments, db.fxRates, db.kv, db.photos],
-    async () => ({ data: await buildDataBackup(), photos: await db.photos.toArray() }),
+    async () => {
+      const data = await buildDataBackup();
+      await db.photos.each((p) => names.push({ id: p.id, ext: photoExt(p.blob) }));
+      return data;
+    },
   );
   return zip(
     [
       { name: BACKUP_JSON, data: new Blob([JSON.stringify(data)], { type: 'application/json' }) },
       { name: 'README.txt', data: new Blob([README]) },
-      ...photos.map((p) => ({ name: `photos/${p.id}.${photoExt(p.blob)}`, data: p.blob })),
+      ...names.map(({ id, ext }) => ({ name: `photos/${id}.${ext}`, data: () => storedPhoto(id) })),
     ],
     { onProgress },
   );
@@ -454,6 +488,8 @@ export async function buildDataBackup(): Promise<Backup> {
 
 export interface ImportResult {
   trips: number;
+  /** Legs (cities) added. A backup whose only missing record is a leg still restores. */
+  cities: number;
   stops: number;
   expenses: number;
   moments: number;
@@ -478,14 +514,10 @@ export function importNote(r: ImportResult): string {
 }
 
 /**
- * A field counts as blank when there is nothing in it: absent, null, an empty
- * string or an empty list. Filling only those can never displace information,
- * which is what makes `fillEmpty` safe to offer alongside the add-only rule.
+ * The backup's values for fields this device has left blank (see `blank`).
+ * Filling only those can never displace information, which is what makes
+ * `fillEmpty` safe to offer alongside the add-only rule. Identity never moves.
  */
-const blank = (v: unknown): boolean =>
-  v === undefined || v === null || v === '' || (Array.isArray(v) && v.length === 0);
-
-/** The backup's values for fields this device has left blank. Identity never moves. */
 export function blankFieldPatch<T extends object>(existing: T, incoming: T): Partial<T> {
   const patch: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(incoming)) {
@@ -529,6 +561,7 @@ export async function importBackup(
   let zipToAdd: Photo[] = [];
   const result: ImportResult = {
     trips: 0,
+    cities: 0,
     stops: 0,
     expenses: 0,
     moments: 0,
@@ -584,7 +617,7 @@ export async function importBackup(
         return fresh;
       }
       result.trips = (await addMissing(db.trips, data.trips, (r) => r.id)).length;
-      await addMissing(db.cities, data.cities, (r) => r.id);
+      result.cities = (await addMissing(db.cities, data.cities, (r) => r.id)).length;
       result.stops = (await addMissing(db.stops, data.stops, (r) => r.id)).length;
       result.expenses = (await addMissing(db.expenses, data.expenses, (r) => r.id)).length;
       result.moments = (await addMissing(db.moments, data.moments ?? [], (r) => r.id)).length;

@@ -172,6 +172,61 @@ describe('mergeRecords — combining two devices against their common base', () 
     expect(merged.stops.map((s) => s.id)).toEqual(['s2']);
   });
 
+  // Two devices that push from the same snapshot make siblings: neither push
+  // descends from the other, so a device's newest base holds its own edits and
+  // can no longer tell the two sides apart. The merge must not read "unchanged
+  // here since my base" as "the remote changed it".
+  it('never silently reverts an edit of its own when lineage is unknown', () => {
+    const pushed = trip({ planText: 'Phone plan', updatedAt: 10 });
+    const ownPush = recs({ trips: [pushed] });
+    const sibling = recs({
+      trips: [trip({ planText: 'Original plan', nameManual: 'Mac', updatedAt: 11 })],
+    });
+    const { merged, conflicts } = mergeRecords(ownPush, ownPush, sibling, false);
+    // The Mac's one-sided addition arrives; the phone's edit is not thrown away
+    // without being offered for review.
+    expect(merged.trips[0].nameManual).toBe('Mac');
+    expect(conflicts).toEqual([
+      {
+        table: 'trips',
+        recordId: 't1',
+        fields: { planText: { kept: 'Original plan', other: 'Phone plan' } },
+        keptLocal: false,
+      },
+    ]);
+  });
+
+  // The older base is still a common ancestor of both siblings, which is what
+  // nas.svelte.ts keeps a short chain of bases for.
+  it('merges both devices cleanly when given the base they really share', () => {
+    const shared = recs({ trips: [trip({ planText: 'Original plan', updatedAt: 1 })] });
+    const local = recs({ trips: [trip({ planText: 'Phone plan', updatedAt: 10 })] });
+    const sibling = recs({
+      trips: [trip({ planText: 'Original plan', nameManual: 'Mac', updatedAt: 11 })],
+    });
+    const { merged, conflicts } = mergeRecords(shared, local, sibling, true);
+    expect(conflicts).toEqual([]);
+    expect(merged.trips[0]).toMatchObject({ planText: 'Phone plan', nameManual: 'Mac' });
+  });
+
+  it('keeps a deletion it already pushed when a sibling snapshot still has the record', () => {
+    const shared = recs({ trips: [trip()], stops: [stop()] });
+    const local = recs({ trips: [trip()] }); // the stop was deleted and pushed
+    const sibling = recs({ trips: [trip({ nameManual: 'Mac', updatedAt: 11 })], stops: [stop()] });
+    expect(mergeRecords(shared, local, sibling, true).merged.stops).toEqual([]);
+  });
+
+  // Photo tombstones and conflict rows are sync's own bookkeeping: two devices
+  // deleting the same photo differ only in when, which is nothing to review.
+  it('never asks about a kv row', () => {
+    const withPhoto = recs({ photosMeta: [photo('p1')] });
+    const local = recs({ kv: [{ key: 'deleted-photo:p1', value: 5 }], photosMeta: [photo('p1')] });
+    const remote = recs({ kv: [{ key: 'deleted-photo:p1', value: 9 }], photosMeta: [photo('p1')] });
+    const { merged, conflicts } = mergeRecords(withPhoto, local, remote, true);
+    expect(conflicts).toEqual([]);
+    expect(merged.photosMeta).toEqual([]);
+  });
+
   it('counts differing records for the unsynced-changes indicator', () => {
     const local = recs({ trips: [trip({ planText: 'Edited' })], stops: [] });
     expect(countDifferences(local, base)).toBe(2);

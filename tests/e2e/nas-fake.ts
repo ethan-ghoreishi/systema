@@ -23,8 +23,14 @@ export class FakeNas {
   failPhotos = new Map<string, number>();
   /** Bodies above this arrive empty, as PHP does past post_max_size. */
   maxBody = Infinity;
-  /** 1 = the original receiver (no listing, no hashes); 2 = the current one. */
-  version: 1 | 2 = 2;
+  /**
+   * 1 = the original receiver (no listing, no hashes); 2 = adds both; 3 = also
+   * takes the token in the X-Systema-Token header. Below 3 the header is
+   * refused, as an un-updated receiver refuses it.
+   */
+  version: 1 | 2 | 3 = 3;
+  /** Requests whose token arrived in the URL rather than the header. */
+  tokenInUrl = 0;
   /** No answer at all (NAS asleep, away from home). */
   unreachable = false;
   /**
@@ -48,7 +54,11 @@ export class FakeNas {
     const cors = {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
+      // Before version 3 the receiver doesn't allow the token header, so the
+      // browser blocks any request carrying it — as it does for a real NAS
+      // still running the older file.
+      'Access-Control-Allow-Headers':
+        this.version >= 3 ? 'Content-Type, X-Systema-Token' : 'Content-Type',
     };
     const json = (status: number, obj: unknown) =>
       route.fulfill({
@@ -62,9 +72,11 @@ export class FakeNas {
       return json(200, {
         ok: true,
         service: 'systema-backup',
-        ...(this.version === 2 ? { version: 2, maxBody: 0, writable: true } : {}),
+        ...(this.version > 1 ? { version: this.version, maxBody: 0, writable: true } : {}),
       });
-    if (url.searchParams.get('token') !== 'synthetic')
+    const header = this.version >= 3 ? (await req.allHeaders())['x-systema-token'] : undefined;
+    if (!header && url.searchParams.get('token') === 'synthetic') this.tokenInUrl += 1;
+    if ((header ?? url.searchParams.get('token')) !== 'synthetic')
       return json(403, { ok: false, error: 'bad token' });
 
     if (req.method() === 'GET') {
@@ -83,13 +95,13 @@ export class FakeNas {
           body: this.files.get(name),
         });
       }
-      if (kind === 'photos' && this.version === 2)
+      if (kind === 'photos' && this.version >= 2)
         return json(200, {
           ok: true,
           photos: [...this.photos].map(([pid, b]) => ({ id: pid, ext: 'png', bytes: b.length })),
         });
       const photo = this.photos.get(id);
-      if (kind === 'photo' && photo && url.searchParams.get('meta') === '1' && this.version === 2)
+      if (kind === 'photo' && photo && url.searchParams.get('meta') === '1' && this.version >= 2)
         return json(200, { ok: true, bytes: photo.length, sha256: sha(photo) });
       if (kind === 'photo' && photo)
         return route.fulfill({ headers: cors, contentType: 'image/png', body: photo });
@@ -99,11 +111,11 @@ export class FakeNas {
     let body = req.postDataBuffer() ?? Buffer.alloc(0);
     if (body.length > this.cutOffAbove) return route.abort('connectionreset');
     if (body.length > this.maxBody) {
-      if (this.version === 2) return json(413, { ok: false, error: 'larger than post_max_size' });
+      if (this.version >= 2) return json(413, { ok: false, error: 'larger than post_max_size' });
       body = Buffer.alloc(0); // PHP drops it before the script runs
     }
     if (!body.length) return json(400, { ok: false, error: 'empty body' });
-    if (kind === 'probe' && this.version === 2) return json(200, { ok: true, bytes: body.length });
+    if (kind === 'probe' && this.version >= 2) return json(200, { ok: true, bytes: body.length });
     if (kind === 'data') {
       try {
         JSON.parse(body.toString());
@@ -129,14 +141,14 @@ export class FakeNas {
       if (existing && url.searchParams.get('replace') !== '1')
         return json(
           200,
-          this.version === 2
+          this.version >= 2
             ? { ok: true, existed: true, bytes: existing.length, sha256: sha(existing) }
             : { ok: true },
         );
       this.photos.set(id, body);
       return json(
         200,
-        this.version === 2 ? { ok: true, bytes: body.length, sha256: sha(body) } : { ok: true },
+        this.version >= 2 ? { ok: true, bytes: body.length, sha256: sha(body) } : { ok: true },
       );
     }
     return json(400, { ok: false, error: 'unknown kind' });

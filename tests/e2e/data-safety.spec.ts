@@ -507,3 +507,114 @@ test('an arrival and a departure saved at the same moment never store a departur
     );
   }
 });
+
+test('deleting a stop keeps a linked moment and its photos', async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const [{ db }, { addStop, deleteStop }, { addMoment }, { addPhoto }] = await Promise.all(
+      ['/src/lib/db.ts', '/src/lib/stops.ts', '/src/lib/moments.ts', '/src/lib/photos.ts'].map(
+        (p) => import(/* @vite-ignore */ p),
+      ),
+    );
+    const tripId = sessionStorage.getItem('testTrip')!;
+    const stopId = await addStop(tripId, 'Belvedere');
+    const momentId = await addMoment({ tripId, cityId: null, title: 'Portico concert', stopId });
+    // A moment's photo is filed under the stop it was linked to as well, so
+    // the stop's own delete used to take it.
+    const momentPhoto = await addPhoto(new Blob(['moment'], { type: 'image/png' }), {
+      tripId,
+      stopId,
+      momentId,
+      kind: 'stop',
+    });
+    const stopPhoto = await addPhoto(new Blob(['stop'], { type: 'image/png' }), {
+      tripId,
+      stopId,
+      kind: 'stop',
+    });
+    await deleteStop(stopId);
+    const moment = await db.moments.get(momentId);
+    return {
+      moment: moment && { title: moment.title, stopId: moment.stopId },
+      momentPhoto: !!(await db.photos.get(momentPhoto)),
+      stopPhoto: !!(await db.photos.get(stopPhoto)),
+      tombstones: (await db.kv.where('key').startsWith('deleted-photo:').primaryKeys()).sort(),
+    };
+  });
+  expect(result.moment).toEqual({ title: 'Portico concert', stopId: null });
+  expect(result.momentPhoto).toBe(true);
+  expect(result.stopPhoto).toBe(false);
+  expect(result.tombstones).toHaveLength(1); // only the stop's own photo
+});
+
+test('deleting a leg detaches what pointed at it instead of orphaning it', async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const [{ db }, trips, { addStop }, { addMoment }, { addExpense }] = await Promise.all(
+      [
+        '/src/lib/db.ts',
+        '/src/lib/trips.ts',
+        '/src/lib/stops.ts',
+        '/src/lib/moments.ts',
+        '/src/lib/expenses.ts',
+      ].map((p) => import(/* @vite-ignore */ p)),
+    );
+    const tripId = sessionStorage.getItem('testTrip')!;
+    const cityId = await trips.addCity(tripId, 'Bologna', 'EUR');
+    const keep = await trips.addCity(tripId, 'Florence', 'EUR');
+    const stopId = await addStop(tripId, 'Archiginnasio', cityId);
+    const keptStop = await addStop(tripId, 'Uffizi', keep);
+    const momentId = await addMoment({ tripId, cityId, title: 'Portico' });
+    const expenseId = await addExpense(tripId, {
+      cityId,
+      destination: 'Bologna',
+      date: '2026-10-16',
+      category: 'Food',
+      subcategory: 'Lunch',
+      description: 'Tigelle',
+      paymentMethod: 'Card',
+      amountGBP: 10,
+      amountLocal: 12,
+      currency: 'EUR',
+      fxRate: null,
+      notes: '',
+    });
+    const before = await trips.cityReferences(cityId);
+    await trips.deleteCity(cityId);
+    return {
+      before,
+      cities: (await db.cities.toArray()).map((c: { id: string }) => c.id),
+      stop: (await db.stops.get(stopId)).cityId,
+      keptStop: (await db.stops.get(keptStop)).cityId === keep,
+      moment: (await db.moments.get(momentId)).cityId,
+      expense: (await db.expenses.get(expenseId)).cityId,
+      expenseKept: (await db.expenses.get(expenseId)).description,
+    };
+  });
+  expect(result.before).toEqual({ stops: 1, expenses: 1, moments: 1 });
+  expect(result.cities).toHaveLength(1);
+  expect(result.stop).toBeNull();
+  expect(result.moment).toBeNull();
+  expect(result.expense).toBeNull();
+  expect(result.expenseKept).toBe('Tigelle');
+  expect(result.keptStop).toBe(true);
+});
+
+test('a backup whose only missing record is a leg still restores', async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const [{ db }, { addCity, deleteCity }, exp] = await Promise.all(
+      ['/src/lib/db.ts', '/src/lib/trips.ts', '/src/lib/export.ts'].map(
+        (p) => import(/* @vite-ignore */ p),
+      ),
+    );
+    const tripId = sessionStorage.getItem('testTrip')!;
+    const cityId = await addCity(tripId, 'Bologna', 'EUR');
+    const saved = new Blob([await (await exp.buildZipBackup()).arrayBuffer()]);
+    const { backup, files } = await exp.readBackupFile(saved);
+    await deleteCity(cityId);
+    const preview = await exp.importBackup(backup, files, { dryRun: true });
+    const done = await exp.importBackup(backup, files);
+    return { preview, done, city: (await db.cities.get(cityId))?.name };
+  });
+  expect(result.preview.cities).toBe(1);
+  expect(result.done.cities).toBe(1);
+  expect(result.city).toBe('Bologna');
+});

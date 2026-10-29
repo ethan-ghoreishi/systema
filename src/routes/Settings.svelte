@@ -32,6 +32,8 @@
   let deferredPrompt: any = null;
 
   // A secure (HTTPS) page cannot call an insecure (http://) endpoint.
+  // Hidden by default: the field sits on a screen that gets shown and screenshot.
+  let showToken = $state(false);
   const nasUrlMixed = $derived(
     location.protocol === 'https:' && /^http:\/\//i.test(s.current.nasUrl.trim()),
   );
@@ -175,11 +177,11 @@
   // Off by default: a restore adds, and only says otherwise when asked to.
   let fillEmpty = $state(false);
   const changes = (r: ImportResult) =>
-    r.trips + r.stops + r.expenses + r.moments + r.photos + r.filled;
+    r.trips + r.cities + r.stops + r.expenses + r.moments + r.photos + r.filled;
   const describe = (r: ImportResult, preview: boolean) =>
     changes(r) === 0
       ? `Everything in this backup is already on this device.${importNote(r)}`
-      : `${preview ? 'This backup would add' : 'Added'} ${r.trips} trip(s), ${r.stops} stop(s), ${r.expenses} expense(s), ${r.moments ? `${r.moments} moment(s), ` : ''}${r.photos} photo(s).${importNote(r)}`;
+      : `${preview ? 'This backup would add' : 'Added'} ${r.trips} trip(s), ${r.cities ? `${r.cities} leg(s), ` : ''}${r.stops} stop(s), ${r.expenses} expense(s), ${r.moments ? `${r.moments} moment(s), ` : ''}${r.photos} photo(s).${importNote(r)}`;
 
   function inspect(file: Blob): Promise<void> {
     pending = null;
@@ -414,16 +416,28 @@
 
       <div>
         <label class="label" for="nas-token">Backup token</label>
-        <input
-          id="nas-token"
-          class="field"
-          type="text"
-          autocomplete="off"
-          autocapitalize="off"
-          spellcheck="false"
-          placeholder="Same value as $TOKEN in the receiver"
-          bind:value={s.current.nasToken}
-        />
+        <div class="cluster cluster--mid">
+          <input
+            id="nas-token"
+            class="field grow"
+            type={showToken ? 'text' : 'password'}
+            autocomplete="off"
+            autocapitalize="off"
+            spellcheck="false"
+            placeholder="Same value as $TOKEN in the receiver"
+            bind:value={s.current.nasToken}
+          />
+          <button
+            class="btn btn--ghost btn--sm"
+            type="button"
+            aria-pressed={showToken}
+            onclick={() => (showToken = !showToken)}>{showToken ? 'Hide' : 'Show'}</button
+          >
+        </div>
+        <p class="hint">
+          Kept on this device only. It is sent to the receiver in a request header, so it stays out
+          of the NAS's access log (receivers before version 3 still take it in the URL).
+        </p>
       </div>
 
       <div class="save-bar">

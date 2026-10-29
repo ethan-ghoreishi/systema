@@ -80,17 +80,27 @@ test('pushes from two devices at the same moment are both kept and converge', as
   await sync(mac);
   await run(phone, (m, id) => m.addStop(id, 'From the phone'), trip);
   await run(mac, (m, id) => m.addStop(id, 'From the Mac'), trip);
+  // Each also edits a different field of the one record they already share:
+  // both snapshots then descend from the same ancestor and neither from the
+  // other, which is where an edit used to be reverted without a word.
+  await run(phone, (m, id) => m.updateTrip(id, { planText: 'Phone plan' }), trip);
+  await run(mac, (m, id) => m.updateTrip(id, { nameManual: 'Mac name' }), trip);
   const before = snapshots(rx.dir).length;
   await Promise.all([sync(phone), sync(mac)]);
   expect(snapshots(rx.dir).length).toBe(before + 2); // no overwrite
   await sync(phone);
   await sync(mac);
   await sync(phone);
-  for (const page of [phone, mac])
+  for (const page of [phone, mac]) {
     expect((await run(page, (m) => m.db.stops.toArray())).map((s: any) => s.name).sort()).toEqual([
       'From the Mac',
       'From the phone',
     ]);
+    expect(await run(page, async (m) => (await m.db.trips.toArray())[0])).toMatchObject({
+      planText: 'Phone plan',
+      nameManual: 'Mac name',
+    });
+  }
 });
 
 test('the receiver keeps the newest 60 snapshots plus one per day', async ({ makeContext }) => {
@@ -155,5 +165,12 @@ test('the current receiver verifies uploads, replaces a damaged copy, lists phot
     ['Token', true],
     ['An', true],
   ]);
-  expect(test.checks[1].detail).toContain('version 2');
+  expect(test.checks[1].detail).toContain('version 3');
+
+  // The token travels in a header, so it never reaches the NAS's access log.
+  const urls: string[] = [];
+  phone.on('request', (r) => urls.push(r.url()));
+  await sync(phone);
+  expect(urls.some((u) => u.includes('systema-backup.php'))).toBe(true);
+  expect(urls.filter((u) => u.includes('token='))).toEqual([]);
 });

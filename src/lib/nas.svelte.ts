@@ -3,7 +3,7 @@ import { db, type Photo, type Trip } from './db';
 import { newId } from './ids';
 import { settingsStore } from './settings.svelte';
 import { photoExt, sha256Hex } from './photos';
-import { buildDataBackup, toRecords, type Backup } from './export';
+import { buildDataBackup, descendsFrom, toRecords, type Backup } from './export';
 import { validateBackup } from './backup-validation';
 import {
   CONFLICT,
@@ -63,6 +63,12 @@ import {
 
 const LAST_PUSH_KEY = 'nasLastDataAt'; // ms of the last successful push (name kept from v1)
 const BASE_KEY = 'local:syncBase'; // the last snapshot this device agreed with the NAS
+// The snapshots agreed with before that one. Two devices that push from the
+// same snapshot produce siblings: neither push is an ancestor of the other, so
+// the newest base is no longer a common ancestor. The older bases still are —
+// merging against one of those keeps both devices' edits (see baseFor).
+const PREV_BASES_KEY = 'local:syncBasesPrev';
+const PREV_BASES = 3;
 const SYNCED_AT_KEY = 'local:lastSyncAt';
 const FILE_BACKUP_KEY = 'local:lastFileBackupAt';
 const DEVICE_KEY = 'local:device';
@@ -70,6 +76,7 @@ const ATTEMPT_KEY = 'local:nasAttempt';
 const FAILURES_KEY = 'local:nasFailures';
 const MISSING_KEY = 'local:nasMissing';
 const TEST_KEY = 'local:nasTest';
+const AUTH_KEY = 'local:nasAuth'; // whether this receiver takes the token in a header
 // Which photos are on the NAS, kept apart from the photo rows: those stay
 // write-once (rewriting a multi-MB row just to flip a flag copies the image
 // again, and WebKit has lost Blobs from rewritten rows). 'redo' overrides an
@@ -129,6 +136,12 @@ export interface ConnectionTest {
   at: number;
   ok: boolean;
   checks: Check[];
+}
+
+/** Where the receiver at `url` takes the token (device-local). */
+interface Auth {
+  url: string;
+  header: boolean;
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -359,12 +372,74 @@ class NasBackup {
     return settingsStore.current.nasToken.trim();
   }
 
+  /**
+   * Where this receiver takes the token. A receiver from version 3 on reads
+   * the X-Systema-Token header, which keeps the token out of the URL and so
+   * out of the NAS's access log; an older one only reads `?token=`. Assumed
+   * to be the header until one refuses it (see `fetchSigned`), and remembered
+   * per address from then on.
+   */
+  private auth: Auth | null = null;
+
+  private async tokenInHeader(): Promise<boolean> {
+    const url = receiverUrl(settingsStore.current.nasUrl);
+    if (this.auth?.url === url) return this.auth.header;
+    const stored = (await db.kv.get(AUTH_KEY))?.value as Auth | undefined;
+    this.auth = stored?.url === url ? stored : { url, header: true };
+    return this.auth.header;
+  }
+
+  private async setTokenInHeader(header: boolean): Promise<void> {
+    const url = receiverUrl(settingsStore.current.nasUrl);
+    if (this.auth?.url === url && this.auth.header === header) return;
+    this.auth = { url, header };
+    await db.kv.put({ key: AUTH_KEY, value: this.auth }).catch(() => {});
+  }
+
   private endpoint(
     kind: string,
     extra = '',
     base = receiverUrl(settingsStore.current.nasUrl),
+    inHeader = false,
   ): string {
-    return `${base}?kind=${kind}&token=${encodeURIComponent(this.token)}${extra}`;
+    const token = inHeader ? '' : `&token=${encodeURIComponent(this.token)}`;
+    return `${base}?kind=${kind}${token}${extra}`;
+  }
+
+  /**
+   * An authenticated request, with the token wherever this receiver takes it.
+   *
+   * An older receiver refuses the header (403) or, more often, doesn't list it
+   * among the headers it allows — the browser then blocks the request before
+   * sending it, which looks exactly like no connection. Either way the request
+   * is sent once more with the token in the URL; only when *that* works is the
+   * receiver known to be an older one, so a NAS that is merely asleep never
+   * puts the token back in URLs.
+   */
+  private async fetchSigned(
+    kind: string,
+    extra = '',
+    init: RequestInit = {},
+    base = receiverUrl(settingsStore.current.nasUrl),
+  ): Promise<Response> {
+    const send = (header: boolean) =>
+      fetch(this.endpoint(kind, extra, base, header), {
+        ...init,
+        headers: {
+          ...(header ? { 'X-Systema-Token': this.token } : {}),
+          ...((init.headers as Record<string, string>) ?? {}),
+        },
+      });
+    if (!(await this.tokenInHeader())) return send(false);
+    try {
+      const res = await send(true);
+      if (res.status !== 403) return res;
+    } catch {
+      // Blocked, or no connection: tell them apart by trying the URL.
+    }
+    const res = await send(false);
+    if (res.status !== 403) await this.setTokenInHeader(false);
+    return res;
   }
 
   /** Never let the token reach a message, a log or storage. */
@@ -379,10 +454,11 @@ class NasBackup {
     body?: string | ArrayBuffer,
   ): Promise<Response> {
     try {
-      return await fetch(this.endpoint(kind, extra), {
+      return await this.fetchSigned(kind, extra, {
         method,
-        // A CORS-simple type: no preflight round trip per upload. The receiver
-        // reads the raw body either way.
+        // A CORS-simple body type: the only header beyond it is the token, so
+        // one cached preflight covers every upload. The receiver reads the raw
+        // body either way.
         ...(body !== undefined
           ? { headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body }
           : {}),
@@ -664,6 +740,53 @@ class NasBackup {
     return typeof last === 'number' && Math.abs(at - last) < 60_000 ? remote : null;
   }
 
+  /** The snapshots this device has agreed with the NAS, newest first. */
+  private async baseChain(): Promise<Backup[]> {
+    const [cur, prev] = await db.kv.bulkGet([BASE_KEY, PREV_BASES_KEY]);
+    const rows = [cur?.value, ...((prev?.value as Backup[] | undefined) ?? [])];
+    return rows.filter((b): b is Backup => !!b);
+  }
+
+  /**
+   * The newest base the NAS copy descends from, so the merge has a true common
+   * ancestor even after two devices pushed siblings. Falls back to the newest
+   * base (lineage unknown: the merge then unions and conflicts rather than
+   * overwriting), and for a device updating from the add-only version to its
+   * own last push.
+   */
+  private async baseFor(
+    remote: Backup | null,
+  ): Promise<{ base: Backup | null; descends: boolean }> {
+    const chain = await this.baseChain();
+    const legacy = chain.length ? null : await this.legacyBase(remote);
+    const candidates = legacy ? [legacy] : chain;
+    const base = candidates.find((b) => descendsFrom(b, remote)) ?? candidates[0] ?? null;
+    return { base, descends: !!base && descendsFrom(base, remote) };
+  }
+
+  /**
+   * Record a snapshot as agreed with the NAS, keeping the previous few as
+   * fallback ancestors. Call inside the caller's transaction.
+   *
+   * ponytail: a fixed few, so a device unsynced for many of the other's
+   * pushes still ends up without the ancestor they share — the merge then
+   * lists the difference instead of losing it. Keep more only if that happens.
+   */
+  private async rememberBase(snapshot: Backup): Promise<void> {
+    const chain = await this.baseChain();
+    // Already the base (an idle sync): nothing moves, and these rows are big.
+    if (chain[0]?.sync && snapshot.sync && chain[0].sync.id === snapshot.sync.id) return;
+    await db.kv.bulkPut([
+      { key: BASE_KEY, value: snapshot },
+      {
+        key: PREV_BASES_KEY,
+        value: chain
+          .filter((b) => !b.sync || !snapshot.sync || b.sync.id !== snapshot.sync.id)
+          .slice(0, PREV_BASES),
+      },
+    ]);
+  }
+
   private async readLatest(): Promise<Backup | null> {
     const res = await this.request('GET', 'latest');
     if (res.status === 404) {
@@ -726,16 +849,7 @@ class NasBackup {
         [db.trips, db.cities, db.stops, db.expenses, db.moments, db.photos, db.kv, db.fxRates],
         async () => {
           const local = toRecords(await buildDataBackup());
-          const base =
-            ((await db.kv.get(BASE_KEY))?.value as Backup | undefined) ??
-            (await this.legacyBase(remote));
-          const descends =
-            !!base &&
-            !!remote &&
-            (base === remote ||
-              (!!base.sync &&
-                !!remote.sync &&
-                (remote.sync.id === base.sync.id || remote.sync.history.includes(base.sync.id))));
+          const { base, descends } = await this.baseFor(remote);
           const result = mergeRecords(
             base ? toRecords(base) : null,
             local,
@@ -759,7 +873,7 @@ class NasBackup {
             })),
           );
           await fixDerivedDates();
-          if (remote) await db.kv.put({ key: BASE_KEY, value: remote });
+          if (remote) await this.rememberBase(remote);
           return { changes, conflicts: result.conflicts.length };
         },
       );
@@ -781,10 +895,8 @@ class NasBackup {
         };
         await this.post('data', '', JSON.stringify(snapshot));
         this.lastDataAt = Date.now();
-        await db.kv.bulkPut([
-          { key: BASE_KEY, value: snapshot },
-          { key: LAST_PUSH_KEY, value: this.lastDataAt },
-        ]);
+        await this.rememberBase(snapshot);
+        await db.kv.put({ key: LAST_PUSH_KEY, value: this.lastDataAt });
       }
       this.lastSyncAt = Date.now();
       await db.kv.put({ key: SYNCED_AT_KEY, value: this.lastSyncAt });
@@ -937,9 +1049,7 @@ class NasBackup {
         const worker = async () => {
           for (let meta = queue.shift(); meta; meta = queue.shift()) {
             const ctrl = new AbortController();
-            const r = await fetch(this.endpoint('photo', `&id=${meta.id}`), {
-              signal: ctrl.signal,
-            });
+            const r = await this.fetchSigned('photo', `&id=${meta.id}`, { signal: ctrl.signal });
             if (!r.ok) absent.push(meta);
             ctrl.abort(); // only the status matters; don't download the photo
             onProgress?.((done += 1), metas.length);
@@ -967,12 +1077,8 @@ class NasBackup {
       );
 
       const localRecs = toRecords(await buildDataBackup());
-      const base = (await db.kv.get(BASE_KEY))?.value as Backup | undefined;
+      const { base, descends } = await this.baseFor(remote);
       const remoteRecs = toRecords(remote);
-      const descends =
-        !!base?.sync &&
-        !!remote.sync &&
-        (remote.sync.id === base.sync.id || remote.sync.history.includes(base.sync.id));
       const { merged, conflicts } = mergeRecords(
         base ? toRecords(base) : null,
         localRecs,
@@ -1072,7 +1178,7 @@ class NasBackup {
       const usual = `${new URL(base).origin}/systema-backup.php`;
       const there = usual !== base ? await probe(usual) : null;
       if (there?.isReceiver) {
-        const res = await fetch(this.endpoint('latest', '', usual)).catch(() => null);
+        const res = await this.fetchSigned('latest', '', {}, usual).catch(() => null);
         if (res && (res.ok || res.status === 404)) {
           moved = base;
           base = usual;
@@ -1093,7 +1199,13 @@ class NasBackup {
         detail:
           json.writable === false
             ? "Found, but it can't write to its systema-backups folder: give Web Station write access."
-            : `Found${json.version ? ` (version ${json.version})` : ' (original version: update it for verified uploads and a photo list)'}.${moved ? ` The saved address (${shown(moved)}) isn't the receiver; switched to this one.` : ''}`,
+            : `Found${
+                json.version
+                  ? ` (version ${json.version}${
+                      json.version < 3 ? ': update it to keep the token out of the NAS log' : ''
+                    })`
+                  : ' (original version: update it for verified uploads and a photo list)'
+              }.${moved ? ` The saved address (${shown(moved)}) isn't the receiver; switched to this one.` : ''}`,
       });
     } else if (found) {
       checks.push({
@@ -1159,7 +1271,7 @@ class NasBackup {
     const size = Math.max(largest, 1_000_000);
     let verdict: Check;
     try {
-      const res = await fetch(this.endpoint('probe'), {
+      const res = await this.fetchSigned('probe', '', {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: new Uint8Array(size),

@@ -385,6 +385,10 @@ textarea.field {
   gap: var(--s2);
 }
 
+.cluster--mid {
+  align-items: center;
+}
+
 .grow {
   flex: 1;
   min-width: 0;
