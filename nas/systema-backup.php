@@ -8,9 +8,10 @@
  *   ?kind=photo  body = one image blob      -> systema-backups/photos/<id>.<ext>
  *
  * A data push says which snapshot it was merged from (?parent=). If the NAS
- * has a newer one, the push is refused with 409 and the app merges again, so
- * the newest snapshot here is never one that is missing another device's
- * work. An app that sends no parent is allowed through unchecked.
+ * has a newer one the push is refused — "stale", nothing written — and the app
+ * merges again, so the newest snapshot here is never one that is missing
+ * another device's work. An app that sends no parent is allowed through
+ * unchecked.
  *
  * Photos are idempotent (same id never written twice, unless the app asks to
  * replace a copy whose size or SHA-256 doesn't match the original). Every
@@ -144,6 +145,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
   if ($kind === 'latest') {
     $files = glob($BASE . '/data/systema-data-*.json');
     if (!$files) {
+      // An app that sends empty=ok is told there is nothing here with an
+      // ordinary 200. A 404 would be right, but a proxy in front of PHP
+      // (DSM's own nginx among them) replaces an error body with its own
+      // page and drops the CORS headers with it, so the app could not read
+      // the answer at all and reported the NAS as unreachable. Apps that
+      // don't send it still get the 404 they expect.
+      if (($_GET['empty'] ?? '') === 'ok') {
+        reply(200, ['ok' => false, 'empty' => true, 'error' => 'no snapshots yet']);
+      }
       reply(404, ['ok' => false, 'error' => 'no snapshots yet']);
     }
     sort($files);
@@ -262,7 +272,11 @@ if ($kind === 'data') {
     $known = $parent === 'none' ? glob($BASE . '/data/systema-data-*.json') !== [] : $current !== '';
     if ($known && $current !== $expected) {
       $release();
-      reply(409, [
+      // HTTP 200, not a 4xx: a reverse proxy (DSM's own nginx among them)
+      // may replace an error body with its own page and drop the CORS
+      // headers with it, leaving the browser unable to read the reply at
+      // all. The flag is what the app reads; nothing was written.
+      reply(200, [
         'ok' => false,
         'stale' => true,
         'error' => 'a newer snapshot is already on the NAS',
@@ -270,9 +284,15 @@ if ($kind === 'data') {
     }
   }
   // Microseconds keep two devices pushing in the same second from overwriting
-  // each other; names still sort chronologically.
+  // each other; names still sort chronologically. The random tail is what
+  // keeps a snapshot from being fetched by anyone who can reach the web
+  // server: this folder sits in the web root, so its files are served as
+  // ordinary static files, and only their names stand between a snapshot and
+  // whoever asks for it (photos have always been named by random id). Listing
+  // the folder is refused, so a name cannot be discovered that way.
   $micro = (int) (fmod(microtime(true), 1) * 1000000);
-  $file = $BASE . '/data/systema-data-' . date('Ymd-His') . sprintf('-%06d', $micro) . '.json';
+  $file = $BASE . '/data/systema-data-' . date('Ymd-His') . sprintf('-%06d', $micro)
+    . '-' . bin2hex(random_bytes(8)) . '.json';
   if (!write_atomic($file, $body)) {
     $release();
     reply(500, ['ok' => false, 'error' => 'write failed']);

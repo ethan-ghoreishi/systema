@@ -501,8 +501,10 @@ class NasBackup {
     const json = (await res.json().catch(() => null)) as any;
     const sent = typeof body === 'string' ? body.length : body.byteLength;
     // Not a failure: the receiver refused a push because another device had
-    // already pushed. Nothing was written; the caller merges again.
-    if (res.status === 409 && json?.stale) return json;
+    // already pushed. Nothing was written; the caller merges again. The
+    // receiver says so with an ordinary 200 — a proxy in front of it may
+    // swallow an error body, and its CORS headers with it.
+    if (json?.stale) return json;
     const failure = classifyReply(res.status, json, sent);
     if (failure)
       throw new NasError(
@@ -828,7 +830,10 @@ class NasBackup {
   }
 
   private async readLatest(): Promise<Backup | null> {
-    const res = await this.request('GET', 'latest');
+    // `empty=ok`: answer "nothing here yet" with a 200, which a proxy in
+    // front of the receiver won't replace (see the receiver). An older
+    // receiver ignores it and answers 404, as before.
+    const res = await this.request('GET', 'latest', '&empty=ok');
     if (res.status === 404) {
       const json = await res.json().catch(() => null);
       // The receiver answers "no snapshots yet" in JSON; a web server's own
@@ -847,7 +852,8 @@ class NasBackup {
     }
     const remote = (await res.json().catch(() => {
       throw new NasError(explain('bad-response'), 'bad-response');
-    })) as Backup;
+    })) as Backup & { empty?: boolean };
+    if (remote?.empty) return null; // the receiver holds no snapshot yet
     validateBackup(remote);
     return remote;
   }
@@ -1306,19 +1312,20 @@ class NasBackup {
 
     // 2. The token.
     try {
-      const res = await this.request('GET', 'latest');
+      const res = await this.request('GET', 'latest', '&empty=ok');
       const json = await res.json().catch(() => null);
       if (res.status === 403) {
         checks.push({ label: 'Token', ok: false, detail: explain('auth') });
         return finish();
       }
+      const empty = json?.empty || res.status === 404;
       checks.push({
         label: 'Token',
         ok: res.ok || res.status === 404,
-        detail: res.ok
-          ? `Accepted. Newest snapshot ${new Date(json?.sync?.at ?? Date.parse(json?.exportedAt ?? '')).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}.`
-          : res.status === 404
-            ? 'Accepted (no snapshot on the NAS yet).'
+        detail: empty
+          ? 'Accepted (no snapshot on the NAS yet).'
+          : res.ok
+            ? `Accepted. Newest snapshot ${new Date(json?.sync?.at ?? Date.parse(json?.exportedAt ?? '')).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}.`
             : `HTTP ${res.status}.`,
       });
     } catch (err) {

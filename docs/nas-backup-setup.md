@@ -27,8 +27,8 @@ them.
 If both devices push before either sees the other's snapshot, the one that
 lands second would leave the NAS with a newest snapshot missing the first's
 work. Each push names the snapshot it was merged from, and the receiver
-(version 3) refuses one that has since been overtaken — HTTP 409, nothing
-written — so that device reads what landed, merges it and pushes that. Against
+(version 3) refuses one that has since been overtaken — nothing written — so
+that device reads what landed, merges it and pushes that. Against
 an older receiver the two snapshots do fork, and the merge falls back to the
 newest snapshot both devices really share (which is why a few are kept, not
 one), so an edit a device had already pushed is not undone. Past even that, the
@@ -63,22 +63,28 @@ web/
 ### Keep the backup folder out of the web
 
 `systema-backups/` sits next to the receiver, inside the `web` share, so the
-web server can serve those files as ordinary static files — the receiver's
-token guards the script, not the folder. Photo names are random ids and
-snapshot names carry microseconds, so nothing is listable or easy to guess,
-and the receiver writes a `.htaccess` deny rule and a blank `index.html` into
-the folder, which is enough on Apache. **On nginx (Web Station's default) add
-a deny rule yourself**, in Web Station → Web Service Portal → your portal →
-Edit → (nginx) custom configuration:
+web server serves its files as ordinary static files — the receiver's token
+guards the script, not the folder. What stands in the way is their names:
+every photo is named by a random id, and every snapshot now carries 64 bits of
+randomness after its timestamp, so neither can be guessed. Listing the folder
+is refused by Web Station, so a name cannot be discovered that way either, and
+the receiver writes a `.htaccess` deny rule and a blank `index.html` into the
+folder (Apache honours the first; nginx ignores it).
+
+That leaves names as the only protection, which is the same thing that
+protects the photos. **For a complete block on nginx**, add a deny rule for
+the path. Web Station's own dialogs (DSM 7) offer no field for it — access
+control profiles are by address, not by path — so it has to go in the nginx
+configuration for the portal that serves `web`:
 
 ```nginx
 location ^~ /systema-backups/ { deny all; }
 ```
 
-Then check it: `https://<yours>.synology.me/systema-backups/` should be
-refused. Without it, anyone who can reach the web server could download a
-snapshot if they learned its name. (Keeping port 443 closed to the internet,
-or reaching the NAS over Tailscale only, limits who that could be.)
+Then check it: `https://<yours>.synology.me/systema-backups/data/` and any
+file under it should be refused. Snapshots written before this (their names
+end in microseconds, with no random tail) age out of the folder within 60
+pushes, or 90 days for the daily ones.
 
 ## One-time DSM setup (~10 minutes)
 
@@ -136,8 +142,11 @@ Version 3 adds two things:
   the token. The app re-tries the header once a day, so updating the receiver
   is enough; nothing needs changing on the phone or the Mac;
 - it refuses a data push whose parent snapshot has been overtaken by another
-  device (HTTP 409, nothing written), so the newest snapshot on the NAS is
-  never one that is missing what another device pushed moments earlier.
+  device (nothing written), so the newest snapshot on the NAS is never one
+  that is missing what another device pushed moments earlier. The refusal is
+  an ordinary 200 carrying a flag, because DSM's nginx replaces the body of an
+  error reply with its own page — and drops the CORS headers with it, which
+  would leave the app unable to read the answer at all.
 
 It also keeps two snapshots pushed in the same second, never serves a
 half-written file, and keeps a daily snapshot for 90 days. To update, copy the
