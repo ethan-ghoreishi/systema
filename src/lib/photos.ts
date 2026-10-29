@@ -112,12 +112,40 @@ export async function addPhoto(file: Blob, target: PhotoTarget): Promise<string>
   return (await addPhotos([file], target))[0];
 }
 
+/** The hex digits of a photo id, which its reference is a prefix of. */
+const hex = (id: string) => id.replace(/-/g, '').toLowerCase();
+
 /**
  * A short, stable name for a photo — the same on every device and in every
  * prompt, whatever it's attached to: 'P-3f9a1c'.
  */
 export function photoRef(id: string): string {
-  return `P-${id.replace(/-/g, '').slice(0, 6)}`;
+  return `P-${hex(id).slice(0, 6)}`;
+}
+
+/**
+ * References for a set of photos: six hex digits as always, lengthened only
+ * for ids that would otherwise share one. Six digits is 16 million values, so
+ * two of a few hundred photos collide now and then — and a repeated reference
+ * would put one photo where the other belongs in a journal. A longer
+ * reference is still a prefix of the id, so every reference already written
+ * keeps resolving (see journal.ts).
+ *
+ * ponytail: twelve digits for a clash, not "until unique" — two ids sharing
+ * 48 bits needs millions of photos. Loop the prefix length if that day comes.
+ */
+export function photoRefs(ids: string[]): Map<string, string> {
+  const counts = new Map<string, number>();
+  for (const id of ids) {
+    const short = hex(id).slice(0, 6);
+    counts.set(short, (counts.get(short) ?? 0) + 1);
+  }
+  return new Map(
+    ids.map((id) => {
+      const h = hex(id);
+      return [id, `P-${counts.get(h.slice(0, 6))! > 1 ? h.slice(0, 12) : h.slice(0, 6)}`];
+    }),
+  );
 }
 
 /** Capture order: when taken where known, else when added. */
@@ -128,13 +156,17 @@ export function photoTime(p: Pick<Photo, 'takenAt' | 'createdAt'>): number {
 /**
  * Delete photos and record a tombstone for each, so the deletion reaches other
  * devices (sync never infers a photo deletion from absence: it may be the only
- * copy). Call inside a transaction that includes db.photos and db.kv.
+ * copy). `only` narrows which of the matches go — a moment's photos are
+ * indexed under the stop it was linked to as well, and must not go with that
+ * stop. Call inside a transaction that includes db.photos and db.kv.
  */
 export async function deletePhotosWhere(
   index: 'id' | 'tripId' | 'stopId' | 'expenseId' | 'momentId',
   value: string,
+  only?: (photo: Photo) => boolean,
 ): Promise<void> {
-  const ids = (await db.photos.where(index).equals(value).primaryKeys()) as string[];
+  const match = db.photos.where(index).equals(value);
+  const ids = (await (only ? match.filter(only) : match).primaryKeys()) as string[];
   if (!ids.length) return;
   const at = Date.now();
   await db.kv.bulkPut(ids.map((id) => ({ key: `${TOMBSTONE}${id}`, value: at })));

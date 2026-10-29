@@ -16,15 +16,26 @@ backs up: that is a **partly backed up** state, shown as such. A failure of the
 receiver itself (token, address, unreachable) pushes and replaces nothing; it
 retries on the next change, reconnect, or app open.
 
-How two devices combine: each keeps the last snapshot it agreed with the NAS,
-so changes merge three ways. Edits to different things combine. The same thing
-edited on both keeps the newer edit, and the other appears in **Settings →
-Edits made on two devices** for you to choose. A deletion applies unless the
-other device edited that record meanwhile (then the edit wins). Photos only
-leave through an explicit delete — never because a snapshot lacks them.
+How two devices combine: each keeps the last few snapshots it agreed with the
+NAS, so changes merge three ways. Edits to different things combine. The same
+thing edited on both keeps the newer edit, and the other appears in
+**Settings → Edits made on two devices** for you to choose. A deletion applies
+unless the other device edited that record meanwhile (then the edit wins).
+Photos only leave through an explicit delete — never because a snapshot lacks
+them.
+
+If both devices push before either sees the other's snapshot, neither snapshot
+descends from the other. The merge then falls back to the newest snapshot the
+two devices really share — which is why a few are kept, not one — so an edit a
+device had already pushed is not undone by the other's older view of it. Past
+that (one device unsynced for a very long time), the difference is listed to
+review rather than applied quietly, and nothing is deleted.
 
 No credentials live in the app or this repo: the app stores only the receiver
-URL and a token you choose, on-device.
+URL and a token you choose, on-device. The token is sent in the
+`X-Systema-Token` request header, so it does not appear in the NAS's web
+access log; a receiver older than version 3 reads it from `?token=` instead,
+and the app falls back to that by itself when it meets one.
 
 ## What runs on the NAS
 
@@ -38,6 +49,26 @@ web/
     data/                   <- JSON snapshots (newest 60, plus one per day for 90 days)
     photos/                 <- one file per photo, by id
 ```
+
+### Keep the backup folder out of the web
+
+`systema-backups/` sits next to the receiver, inside the `web` share, so the
+web server can serve those files as ordinary static files — the receiver's
+token guards the script, not the folder. Photo names are random ids and
+snapshot names carry microseconds, so nothing is listable or easy to guess,
+and the receiver writes a `.htaccess` deny rule and a blank `index.html` into
+the folder, which is enough on Apache. **On nginx (Web Station's default) add
+a deny rule yourself**, in Web Station → Web Service Portal → your portal →
+Edit → (nginx) custom configuration:
+
+```nginx
+location ^~ /systema-backups/ { deny all; }
+```
+
+Then check it: `https://<yours>.synology.me/systema-backups/` should be
+refused. Without it, anyone who can reach the web server could download a
+snapshot if they learned its name. (Keeping port 443 closed to the internet,
+or reaching the NAS over Tailscale only, limits who that could be.)
 
 ## One-time DSM setup (~10 minutes)
 
@@ -73,7 +104,7 @@ size, and names any that are missing; photos this device still holds are
 queued to upload again — it changes nothing else.
 
 **Updating the receiver (recommended):** the app works with the original
-`systema-backup.php` and the previous one. The current version (2) also
+`systema-backup.php` and every version since. The current version (3) also
 
 - reports every stored photo's size **and SHA-256**, so the app verifies a
   photo landed intact before counting it — and replaces a damaged copy, but
@@ -86,6 +117,11 @@ queued to upload again — it changes nothing else.
 - answers a size probe and reports its upload limit and whether
   `display_errors` is on, for **Test connection**;
 - reports an upload over PHP's limit as HTTP 413 with the limit.
+
+Version 3 adds one thing: it reads the token from the `X-Systema-Token`
+header, so it stays out of the NAS's access log. The app tries the header
+first and falls back to `?token=` on its own, so an un-updated receiver keeps
+working — it just keeps logging the token.
 
 It also keeps two snapshots pushed in the same second, never serves a
 half-written file, and keeps a daily snapshot for 90 days. To update, copy the

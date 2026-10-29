@@ -284,14 +284,23 @@ tests/
 
 - The app is the ledger. Your data lives in IndexedDB on the device and exports
   to CSV (per-trip or all-trips) in the master-sheet column format when you
-  reconcile. Nothing is sent to a third party.
+  reconcile. **No trip data is sent anywhere** except the NAS you host. Two
+  third parties are contacted, neither with anything of yours: `frankfurter.dev`
+  for the day's ECB rate (it is told a currency pair) and
+  `tile.openstreetmap.org` for map tiles on the Stops map (it is told which map
+  squares you look at, which implies the city). The app calls no AI API.
 - The app stores only the NAS receiver URL and its token, on this device. No
   other secrets, no accounts, no API keys.
 - **Sync between devices (iPhone + Mac):** each device syncs through the NAS
-  and keeps the last snapshot it agreed on, so changes merge three ways
+  and keeps the last few snapshots it agreed on, so changes merge three ways
   instead of "last device wins": edits to different things combine; the same
   thing edited on both keeps the newer edit and lists the other in Settings to
   choose from; a deletion applies unless the other device edited the record.
+  Two devices that push at the same moment produce snapshots neither of which
+  descends from the other — the merge then uses the newest snapshot both
+  really share, so an edit one of them had already pushed is not undone. If
+  even that is too far back, the difference is listed to review rather than
+  applied quietly, and nothing is deleted.
   Each photo uploads on its own and counts as backed up only once its size and
   SHA-256 are verified; one that keeps failing is listed with its reason and
   retried with a growing wait, while the data and every other photo still back
@@ -302,8 +311,10 @@ tests/
   on the previous version keeps syncing safely: every new field is optional,
   and a snapshot without the newer tables deletes nothing.
 - **Backup files:** Settings → Download full backup gives a ZIP — the data
-  plus every photo as a normal image file — built without holding the photos in
-  memory. Restore checks every checksum and shows what would be added before
+  plus every photo as a normal image file — built one photo at a time, so the
+  size of the library doesn't decide whether it works (ZIP64 past 4 GB), and a
+  photo the device momentarily can't read is retried instead of failing the
+  whole backup. Restore checks every checksum and shows what would be added before
   writing; it only ever adds what the device lacks. Older .json backups and NAS
   snapshot files restore too (a snapshot's photos are fetched from the NAS).
   One opt-in box, off by default, also fills fields a record here has left
@@ -313,7 +324,14 @@ tests/
   refused token and an upload size limit. **Check NAS copy** verifies the NAS
   snapshot and that every photo it lists is on the NAS at the right size, names
   the missing ones, and queues any this device holds to upload again. The token
-  never appears in a message, log or backup. See
+  is sent in a request header, not in the URL, so it stays out of the NAS's
+  access log (a receiver older than version 3 still takes it in the URL — the
+  app notices and falls back); it never appears in a message, a stored
+  diagnostic or a backup, and the Settings field keeps it hidden until you
+  tap Show. The receiver's folder sits in the web root, so it also writes a
+  deny rule and a blank index into it — on nginx (Web Station's default) add
+  the one-line rule in the setup guide, or the snapshots are downloadable
+  without the token by anyone who can reach the web server. See
   [`docs/nas-backup-setup.md`](docs/nas-backup-setup.md).
 - No paid hosting, no metered AI, no paid backend. If a feature would need
   ongoing payment, it isn't built — a free alternative is used or it's flagged.

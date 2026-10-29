@@ -501,3 +501,120 @@ test('Settings shows nothing left to send after a sync it did not start', async 
   await sync(phone); // as the automatic sync does: nothing on the page started it
   await expect(unsynced).toHaveText('0');
 });
+
+// Two devices that push from the same snapshot make siblings: neither push
+// descends from the other. A device's own newest base then holds its own
+// edits, and reading "unchanged here since my base" as "the other device
+// changed it" silently reverted the edit it had just pushed.
+test('an edit pushed by one device survives a sibling push by the other', async ({
+  makeContext,
+}) => {
+  const nas = new FakeNas();
+  const phone = await device(makeContext, nas);
+  const mac = await device(makeContext, nas);
+  const { trip, stop } = await seedTrip(phone);
+  await sync(phone);
+  await sync(mac);
+  const shared = JSON.stringify(nas.latest());
+
+  // The phone edits an existing record and pushes.
+  await app(phone, (m, id) => m.updateTrip(id, { planText: 'Phone plan' }), trip);
+  await sync(phone);
+
+  // The Mac never sees that push: it edits the same records from the snapshot
+  // both devices agreed on, and pushes a sibling.
+  nas.latestOverride = { status: 200, body: shared };
+  await app(
+    mac,
+    async (m, ids) => {
+      await m.updateTrip(ids.trip, { nameManual: 'Mac name' });
+      await m.updateStop(ids.stop, { notes: 'Mac notes' });
+    },
+    { trip, stop },
+  );
+  await sync(mac);
+  nas.latestOverride = null;
+
+  for (let i = 0; i < 2; i += 1) {
+    await sync(phone);
+    await sync(mac);
+  }
+  for (const page of [phone, mac]) {
+    const s = await state(page);
+    expect(s.trips[0].planText).toBe('Phone plan'); // not reverted
+    expect(s.trips[0].nameManual).toBe('Mac name');
+    expect(s.stops[0].notes).toBe('Mac notes');
+    expect(s.conflicts).toEqual([]); // the shared ancestor merges both cleanly
+  }
+  expect(nas.latest().trips[0]).toMatchObject({
+    planText: 'Phone plan',
+    nameManual: 'Mac name',
+  });
+});
+
+test('a fork too deep to reconcile is reported, never applied silently', async ({
+  makeContext,
+}) => {
+  const nas = new FakeNas();
+  const phone = await device(makeContext, nas);
+  const mac = await device(makeContext, nas);
+  const { trip } = await seedTrip(phone);
+  await sync(phone);
+  await sync(mac);
+  const shared = JSON.stringify(nas.latest());
+
+  // Enough pushes that the snapshot both devices agreed on is no longer among
+  // the bases the phone keeps.
+  for (let i = 0; i < 5; i += 1) {
+    await app(phone, (m, a) => m.updateTrip(a.trip, { planText: `Phone plan ${a.i}` }), {
+      trip,
+      i,
+    });
+    await sync(phone);
+  }
+
+  nas.latestOverride = { status: 200, body: shared };
+  await app(mac, (m, id) => m.updateTrip(id, { planText: 'Mac plan' }), trip);
+  await sync(mac);
+  nas.latestOverride = null;
+
+  await sync(phone);
+  const s = await state(phone);
+  // Whichever value is in place, the other is on the review list.
+  expect(s.conflicts).toHaveLength(1);
+  expect(Object.keys(s.conflicts[0].fields)).toEqual(['planText']);
+  expect(
+    [s.conflicts[0].fields.planText.kept, s.conflicts[0].fields.planText.other].sort(),
+  ).toEqual(['Mac plan', 'Phone plan 4']);
+});
+
+test('the token travels in a header, and falls back for an older receiver', async ({
+  makeContext,
+}) => {
+  const nas = new FakeNas();
+  const phone = await device(makeContext, nas);
+  const urls: string[] = [];
+  phone.on('request', (r) => urls.push(r.url()));
+  await seedTrip(phone);
+  expect(await sync(phone)).toMatchObject({ ok: true });
+  expect(urls.some((u) => u.includes('systema-backup.php'))).toBe(true);
+  expect(urls.filter((u) => u.includes('token='))).toEqual([]);
+  expect(nas.tokenInUrl).toBe(0);
+  expect(nas.dataPosts).toBe(1);
+
+  // A NAS still running the previous receiver only reads ?token=: the app
+  // notices once and keeps syncing.
+  const old = new FakeNas();
+  old.version = 2;
+  const mac = await device(makeContext, old);
+  await seedTrip(mac);
+  expect(await sync(mac)).toMatchObject({ ok: true });
+  expect(old.dataPosts).toBe(1);
+  expect(old.tokenInUrl).toBeGreaterThan(0);
+  // Remembered, so later syncs don't try the header again.
+  const before = old.tokenInUrl;
+  await app(mac, (m) => m.db.trips.toCollection().modify({ planText: 'Later' }));
+  expect(await sync(mac)).toMatchObject({ ok: true });
+  expect(old.dataPosts).toBe(2);
+  expect(old.tokenInUrl).toBeGreaterThan(before);
+});

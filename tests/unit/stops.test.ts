@@ -182,6 +182,53 @@ describe('newStopCandidates', () => {
     const existing = [stop({ name: 'kastellet' })];
     expect(newStopCandidates(md, existing).map((s) => s.name)).toEqual(['Superkilen']);
   });
+
+  // Two cities can each have a Duomo. Matching on the name alone made the
+  // second city's one look like it was already there, and it never arrived.
+  const twoCities = [
+    '# Bologna',
+    '## Route',
+    '### Duomo',
+    'Anchor: the west front',
+    '### Archiginnasio',
+    'x',
+    '# Florence',
+    '## Route',
+    '### Duomo',
+    'Anchor: Brunelleschi’s dome',
+  ].join('\n');
+  const legs = new Map([
+    ['bologna', 'c1'],
+    ['florence', 'c2'],
+  ]);
+
+  it("imports a city's stop whose name another city already uses", () => {
+    const existing = [stop({ id: 's1', name: 'Duomo', cityId: 'c1' })];
+    const fresh = newStopCandidates(twoCities, existing, ['Bologna', 'Florence'], legs);
+    expect(fresh.map((c) => [c.name, c.city])).toEqual([
+      ['Archiginnasio', 'Bologna'],
+      ['Duomo', 'Florence'],
+    ]);
+  });
+
+  it('still matches by name alone when either side has no city', () => {
+    // A stop added before the trip had legs, or a single-city plan.
+    const existing = [stop({ id: 's1', name: 'Duomo', cityId: null })];
+    expect(
+      newStopCandidates(twoCities, existing, ['Bologna', 'Florence'], legs).map((c) => c.name),
+    ).toEqual(['Archiginnasio']);
+  });
+
+  it('fills a visit anchor from the plan into the stop in that same city', () => {
+    const existing = [
+      stop({ id: 's1', name: 'Duomo', cityId: 'c1' }),
+      stop({ id: 's2', name: 'Duomo', cityId: 'c2' }),
+    ];
+    expect(guideBackfill(twoCities, existing, ['Bologna', 'Florence'], legs)).toEqual([
+      { id: 's1', guide: { anchor: 'the west front' } },
+      { id: 's2', guide: { anchor: 'Brunelleschi’s dome' } },
+    ]);
+  });
 });
 
 describe('visit anchors', () => {

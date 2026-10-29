@@ -154,10 +154,32 @@ export async function applyStopoverScenario(
   await recomputeTripDerived(tripId);
 }
 
+/** How many of a trip's records point at one leg (for the delete confirmation). */
+export async function cityReferences(
+  id: string,
+): Promise<{ stops: number; expenses: number; moments: number }> {
+  const [stops, expenses, moments] = await Promise.all([
+    db.stops.where('cityId').equals(id).count(),
+    db.expenses.where('cityId').equals(id).count(),
+    db.moments.where('cityId').equals(id).count(),
+  ]);
+  return { stops, expenses, moments };
+}
+
+/**
+ * Delete a leg. Stops, expenses and moments that pointed at it are detached
+ * rather than left pointing at a leg that no longer exists — they keep their
+ * own content and show as unassigned, and the detachment syncs like any edit.
+ */
 export async function deleteCity(id: string): Promise<void> {
   const city = await db.cities.get(id);
   const hadDates = city ? await legsHaveDates(city.tripId) : false;
-  await db.cities.delete(id);
+  await db.transaction('rw', [db.cities, db.stops, db.expenses, db.moments], async () => {
+    await db.stops.where('cityId').equals(id).modify({ cityId: null });
+    await db.expenses.where('cityId').equals(id).modify({ cityId: null });
+    await db.moments.where('cityId').equals(id).modify({ cityId: null });
+    await db.cities.delete(id);
+  });
   if (city) await recomputeTripDerived(city.tripId, hadDates);
 }
 

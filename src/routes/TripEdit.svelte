@@ -15,6 +15,7 @@
   import {
     addCity,
     applyStopoverScenario,
+    cityReferences,
     deleteCity,
     deleteTrip,
     moveCity,
@@ -206,6 +207,25 @@
   /** Back to the trip screen you came from (its Plan after creating a trip). */
   function done() {
     router.back(`/trip/${id}/plan`, inTrip(id));
+  }
+
+  /** Remove a leg, saying first what loses its leg (nothing is deleted with it). */
+  async function removeLeg(c: City) {
+    const { stops, expenses, moments } = await cityReferences(c.id);
+    const attached = [
+      stops && `${stops} stop(s)`,
+      expenses && `${expenses} expense(s)`,
+      moments && `${moments} moment(s)`,
+    ].filter(Boolean);
+    if (
+      confirm(
+        `Remove the ${c.name || 'unnamed'} leg? Its arrival, departure and overnight details go with it.` +
+          (attached.length
+            ? ` ${attached.join(', ')} stay, listed as unassigned rather than under this leg.`
+            : ''),
+      )
+    )
+      await deleteCity(c.id);
   }
 
   async function removeTrip() {
@@ -467,14 +487,7 @@
                 <button
                   class="icon-btn icon-btn--sm"
                   aria-label="Remove leg"
-                  onclick={() => {
-                    if (
-                      confirm(
-                        `Remove the ${c.name || 'unnamed'} leg? Its arrival, departure and overnight details go with it.`,
-                      )
-                    )
-                      void deleteCity(c.id);
-                  }}
+                  onclick={() => void removeLeg(c)}
                 >
                   <Icon name="trash" size={18} />
                 </button>

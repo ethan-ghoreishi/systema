@@ -4,7 +4,9 @@ import {
   buildJournalingPrompt,
   photoManifest,
   blankFieldPatch,
+  descendsFrom,
   JOURNAL_PROMPT,
+  type Backup,
   type PackPhoto,
 } from '../../src/lib/export';
 import type { City, Expense, Moment, Stop, Trip } from '../../src/lib/db';
@@ -225,5 +227,31 @@ describe('blankFieldPatch', () => {
   it('proposes nothing when the backup itself has nothing to add', () => {
     expect(blankFieldPatch({ journalText: 'here' }, { journalText: '' })).toEqual({});
     expect(blankFieldPatch({ journalText: '' }, { journalText: '' })).toEqual({});
+  });
+});
+
+describe('descendsFrom', () => {
+  const snap = (id: string, history: string[] = []): Backup =>
+    ({
+      sync: { id, device: 'd', deviceName: 'Phone', at: 1, history },
+    }) as unknown as Backup;
+
+  it('recognises the same snapshot and a descendant of it', () => {
+    expect(descendsFrom(snap('a'), snap('a'))).toBe(true);
+    expect(descendsFrom(snap('a'), snap('c', ['a', 'b']))).toBe(true);
+  });
+
+  // Two devices pushing from one snapshot: neither push descends from the
+  // other, so neither may be read as having everything the other has.
+  it('rejects a sibling snapshot and a lineage-less one', () => {
+    expect(descendsFrom(snap('s1', ['s0']), snap('s2', ['s0']))).toBe(false);
+    expect(descendsFrom(snap('a'), null)).toBe(false);
+    expect(descendsFrom(snap('a'), {} as Backup)).toBe(false);
+    expect(descendsFrom({} as Backup, snap('a'))).toBe(false);
+  });
+
+  it('accepts the identical object, for a backup with no lineage at all', () => {
+    const legacy = {} as Backup;
+    expect(descendsFrom(legacy, legacy)).toBe(true);
   });
 });

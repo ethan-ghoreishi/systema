@@ -11,7 +11,13 @@
 
 export interface ZipEntry {
   name: string;
-  data: Blob;
+  /**
+   * The bytes, or a function returning them — called once, when this entry's
+   * turn comes, so a caller with thousands of entries never holds them all.
+   * It is called again if reading the bytes fails, which WebKit does
+   * transiently for a stored photo (see readPhotoBlob).
+   */
+  data: Blob | (() => Promise<Blob>);
 }
 
 const MAX32 = 0xffffffff;
@@ -75,6 +81,22 @@ function dosTime(d: Date): [number, number] {
 }
 
 /**
+ * One entry's bytes with their CRC. A read that fails is retried on freshly
+ * obtained bytes: WebKit has failed to read a stored photo and then read it
+ * fine moments later, and one such blip must not fail a whole backup.
+ */
+async function checksummed(entry: ZipEntry): Promise<{ data: Blob; crc: number }> {
+  for (let attempt = 0; ; attempt += 1) {
+    const data = typeof entry.data === 'function' ? await entry.data() : entry.data;
+    try {
+      return { data, crc: await crc32(data) };
+    } catch (err) {
+      if (typeof entry.data !== 'function' || attempt >= 2) throw err;
+    }
+  }
+}
+
+/**
  * Build a ZIP. `onProgress(done, total)` reports entries checksummed.
  * `force64` writes ZIP64 records regardless of size (for tests).
  */
@@ -90,8 +112,8 @@ export async function zip(
 
   for (const [i, entry] of entries.entries()) {
     const name = enc.encode(entry.name);
-    const size = entry.data.size;
-    const crc = await crc32(entry.data);
+    const { data, crc } = await checksummed(entry);
+    const size = data.size;
     const big = !!opts.force64 || size >= MAX32 || offset >= MAX32;
     const version = big ? 45 : 20;
 
@@ -131,7 +153,7 @@ export async function zip(
       .raw(name);
     if (big) cd.u16(0x0001).u16(24).u64(size).u64(size).u64(offset);
 
-    parts.push(local.buf, entry.data);
+    parts.push(local.buf, data);
     central.push(cd.buf);
     offset += local.buf.length + size;
     opts.onProgress?.(i + 1, entries.length);

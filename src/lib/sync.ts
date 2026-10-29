@@ -14,7 +14,9 @@ import type { City, Expense, KeyValue, Moment, Photo, Stop, Trip } from './db';
  *
  * Remote deletions are only inferred when the remote snapshot descends from
  * this device's base (lineage). With no base or unknown lineage the merge is
- * a union and never deletes. Photos are union-only: a photo leaves only via an
+ * a union and never deletes, and a field that differs is a conflict rather
+ * than a quiet overwrite — the base can't be trusted to tell the two sides
+ * apart (see mergeFields). Photos are union-only: a photo leaves only via an
  * explicit tombstone (`deleted-photo:<id>` kv row), never because a snapshot
  * lacks it — it may be the only copy.
  *
@@ -79,6 +81,15 @@ export function same(a: unknown, b: unknown): boolean {
   return canonical(a) === canonical(b);
 }
 
+/**
+ * A field counts as blank when there is nothing in it: absent, null, an empty
+ * string or an empty list. Taking the other side's value can then never
+ * displace information — which is what makes it safe both when a merge can't
+ * attribute a difference (mergeFields) and on a restore (blankFieldPatch).
+ */
+export const blank = (v: unknown): boolean =>
+  v === undefined || v === null || v === '' || (Array.isArray(v) && v.length === 0);
+
 function byKey(rows: Row[] | undefined, key: string): Map<string, Row> {
   return new Map((rows ?? []).map((r) => [r[key] as string, r]));
 }
@@ -92,16 +103,29 @@ export interface FieldConflict {
   keptLocal: boolean;
 }
 
-/** Field-level three-way merge of one record changed on both sides. */
+/**
+ * Field-level three-way merge of one record changed on both sides.
+ *
+ * `descends` says whether the remote side is known to include the base. When
+ * it isn't (two devices pushed from the same snapshot, so neither push is an
+ * ancestor of the other), the base may already hold *this* device's edits,
+ * which the remote never saw: "unchanged here since the base, so take the
+ * remote value" would then revert them silently. That rule is dropped, and
+ * such a field becomes a reviewable conflict instead.
+ */
 function mergeFields(
   table: SyncTable,
   b: Row | undefined,
   l: Row,
   r: Row,
+  descends: boolean,
 ): { row: Row; conflict: FieldConflict | null } {
   const lt = Number(l.updatedAt ?? 0);
   const rt = Number(r.updatedAt ?? 0);
   const localWins = lt >= rt;
+  // A difference is only attributable to a side with a base the remote is
+  // known to descend from.
+  const attributable = !!b && descends;
   const row: Row = {};
   const fields: FieldConflict['fields'] = {};
   for (const k of new Set([...Object.keys(l), ...Object.keys(r)])) {
@@ -109,8 +133,11 @@ function mergeFields(
     const [lv, rv, bv] = [l[k], r[k], b?.[k]];
     let v: unknown;
     if (same(lv, rv)) v = lv;
-    else if (b && same(lv, bv)) v = rv;
+    else if (attributable && same(lv, bv)) v = rv;
     else if (b && same(rv, bv)) v = lv;
+    // Unattributable, and one side simply has nothing there: take what there
+    // is. Nothing is displaced, so there is nothing to review either.
+    else if (!attributable && blank(lv) !== blank(rv)) v = blank(lv) ? rv : lv;
     else {
       v = localWins ? lv : rv;
       if (!QUIET.has(k)) fields[k] = { kept: v, other: localWins ? rv : lv };
@@ -119,9 +146,10 @@ function mergeFields(
   }
   const t = Math.max(lt, rt);
   if (t) row.updatedAt = t;
-  const conflict = Object.keys(fields).length
-    ? { table, recordId: String(l[keyOf(table)]), fields, keptLocal: localWins }
-    : null;
+  const conflict =
+    Object.keys(fields).length && table !== 'kv'
+      ? { table, recordId: String(l[keyOf(table)]), fields, keptLocal: localWins }
+      : null;
   return { row, conflict };
 }
 
@@ -163,7 +191,7 @@ export function mergeRecords(
       } else if (same(l, r)) {
         out.push(Number(r.updatedAt ?? 0) > Number(l.updatedAt ?? 0) ? r : l);
       } else {
-        const { row, conflict } = mergeFields(table, b, l, r);
+        const { row, conflict } = mergeFields(table, b, l, r, descends);
         out.push(row);
         if (conflict) conflicts.push(conflict);
       }

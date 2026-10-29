@@ -14,6 +14,7 @@
     checklistProgress,
     importStopsFromPlan,
     newStopCandidates,
+    cityIds,
   } from '../../lib/stops';
   import { addPhotos, deletePhoto, downloadPhoto, photoTime } from '../../lib/photos';
   import { instantToWall } from '../../lib/tz';
@@ -117,6 +118,7 @@
           trip.planText,
           stops,
           cities.map((c) => c.name),
+          cityIds(cities),
         )
       : [],
   );
@@ -153,7 +155,15 @@
   let newStopName = $state('');
   async function addStopNow() {
     if (!newStopName.trim()) return;
-    await addStop(trip.id, newStopName);
+    // A new stop is appended, so in a multi-city trip it joins the leg the
+    // list ends in; otherwise it would land under "Other" for good. The leg
+    // can be changed on the stop itself.
+    const cityId = !multiCity
+      ? null
+      : stops.length
+        ? (stops[stops.length - 1].cityId ?? null)
+        : (cities[0]?.id ?? null);
+    await addStop(trip.id, newStopName, cityId);
     newStopName = '';
   }
   async function extractNow() {
@@ -193,6 +203,12 @@
     void updateStop(selected.id, { name: nameDraft.trim() || 'Untitled stop' })
       .then(flashSaved)
       .catch(failed);
+  }
+
+  function saveCity(cityId: string | null) {
+    if (!selected) return;
+    saveError = '';
+    void updateStop(selected.id, { cityId }).then(flashSaved).catch(failed);
   }
 
   function saveNotes() {
@@ -242,7 +258,14 @@
   }
 
   async function removeStop() {
-    if (selected && confirm(`Delete stop “${selected.name}”? Its photos go with it.`)) {
+    if (!selected) return;
+    const linked = moments.filter((m) => m.stopId === selected.id).length;
+    if (
+      confirm(
+        `Delete stop “${selected.name}”? Its photos go with it.` +
+          (linked ? ` ${linked} off-plan moment(s) linked to it stay, with their photos.` : ''),
+      )
+    ) {
       const id = selected.id;
       backToList();
       await deleteStop(id);
@@ -271,6 +294,23 @@
       <input type="checkbox" checked={selected.visited} onchange={() => toggleVisited(selected)} />
       <span>Visited</span>
     </label>
+
+    {#if multiCity}
+      <div>
+        <label class="label" for="stop-city">Leg</label>
+        <select
+          id="stop-city"
+          class="field"
+          value={selected.cityId && cityNameById.has(selected.cityId) ? selected.cityId : ''}
+          onchange={(e) => saveCity((e.currentTarget as HTMLSelectElement).value || null)}
+        >
+          {#each cities as c (c.id)}
+            <option value={c.id}>{c.name || 'Unnamed leg'}</option>
+          {/each}
+          <option value="">Unassigned</option>
+        </select>
+      </div>
+    {/if}
 
     {#if hasGuide(selected.guide) || editingGuide}
       <section class="card anchor" aria-label="Visit anchor">

@@ -31,9 +31,15 @@ export async function updateStop(id: string, patch: Partial<Stop>): Promise<void
   await db.stops.update(id, patch);
 }
 
+/**
+ * Delete a stop and the photos taken at it. An off-plan moment linked to it is
+ * its own record: it stays, with its link cleared, and keeps its own photos —
+ * those are indexed under this stop too, so they are explicitly spared.
+ */
 export async function deleteStop(id: string): Promise<void> {
-  await db.transaction('rw', db.stops, db.photos, db.kv, async () => {
-    await deletePhotosWhere('stopId', id);
+  await db.transaction('rw', db.stops, db.photos, db.kv, db.moments, async () => {
+    await deletePhotosWhere('stopId', id, (p) => !p.momentId);
+    await db.moments.where('stopId').equals(id).modify({ stopId: null });
     await db.stops.delete(id);
   });
 }
@@ -96,6 +102,11 @@ export interface Progress {
 
 export function checklistProgress(stop: Stop): Progress {
   return { done: stop.checklist.filter((c) => c.done).length, total: stop.checklist.length };
+}
+
+/** A trip's legs by name, for matching a plan's `# <City>` blocks to them. */
+export function cityIds(cities: City[]): Map<string, string> {
+  return new Map(cities.map((c) => [c.name.trim().toLowerCase(), c.id]));
 }
 
 export interface StopCandidate {
@@ -328,15 +339,30 @@ export function extractStopsFromPlan(
   return candidates.filter((c) => c.name.length > 0);
 }
 
-/** Candidates not already present as stops (case-insensitive name match). */
+const key = (name: string) => name.trim().toLowerCase();
+
+/**
+ * Whether a plan candidate is the stop already in the list. Same name, and —
+ * when both sides say which city they are in — the same city: two cities can
+ * each have a Duomo, and neither should swallow the other. Either side not
+ * knowing its city falls back to the name alone, so single-city trips and
+ * stops added before cities existed keep matching as they did.
+ */
+function isSameStop(c: StopCandidate, stop: Stop, cityIdByName: Map<string, string>): boolean {
+  if (key(stop.name) !== key(c.name)) return false;
+  const want = c.city ? cityIdByName.get(key(c.city)) : undefined;
+  return !want || !stop.cityId || stop.cityId === want;
+}
+
+/** Candidates not already present as stops (by name, within their own city). */
 export function newStopCandidates(
   planText: string,
   existing: Stop[],
   knownCities: string[] = [],
+  cityIdByName: Map<string, string> = new Map(),
 ): StopCandidate[] {
-  const have = new Set(existing.map((s) => s.name.trim().toLowerCase()));
   return extractStopsFromPlan(planText, knownCities).filter(
-    (c) => !have.has(c.name.trim().toLowerCase()),
+    (c) => !existing.some((s) => isSameStop(c, s, cityIdByName)),
   );
 }
 
@@ -344,11 +370,15 @@ export function newStopCandidates(
  * Stops already in the list whose visit anchor the plan now fills in: only
  * empty guide fields are filled — never a word the traveller wrote.
  */
-export function guideBackfill(planText: string, existing: Stop[], knownCities: string[] = []) {
-  const byName = new Map(existing.map((s) => [s.name.trim().toLowerCase(), s]));
+export function guideBackfill(
+  planText: string,
+  existing: Stop[],
+  knownCities: string[] = [],
+  cityIdByName: Map<string, string> = new Map(),
+) {
   const out: { id: string; guide: StopGuide }[] = [];
   for (const c of extractStopsFromPlan(planText, knownCities)) {
-    const stop = byName.get(c.name.trim().toLowerCase());
+    const stop = existing.find((s) => isSameStop(c, s, cityIdByName));
     if (!stop || !c.guide) continue;
     const have = stop.guide ?? {};
     const merged: StopGuide = { ...have };
@@ -377,18 +407,18 @@ export async function importStopsFromPlan(
   cities: City[] = [],
 ): Promise<number> {
   const names = cities.map((c) => c.name);
-  const fresh = newStopCandidates(planText, existing, names);
-  const backfill = guideBackfill(planText, existing, names);
+  const cityIdByName = cityIds(cities);
+  const fresh = newStopCandidates(planText, existing, names, cityIdByName);
+  const backfill = guideBackfill(planText, existing, names, cityIdByName);
   for (const b of backfill) await db.stops.update(b.id, { guide: b.guide });
   if (fresh.length === 0) return 0;
 
-  const cityIdByName = new Map(cities.map((c) => [c.name.trim().toLowerCase(), c.id]));
   const base = await db.stops.where('tripId').equals(tripId).count();
   const now = Date.now();
   const rows: Stop[] = fresh.map((c, i) => ({
     id: newId(),
     tripId,
-    cityId: c.city ? (cityIdByName.get(c.city.trim().toLowerCase()) ?? null) : null,
+    cityId: c.city ? (cityIdByName.get(key(c.city)) ?? null) : null,
     name: c.name,
     notes: c.notes,
     checklist: c.checklist.map((item) => ({ id: newId(), text: item.text, done: item.done })),

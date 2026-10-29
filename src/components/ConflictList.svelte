@@ -28,18 +28,19 @@
   <div class="card" id="conflicts">
     <h2 class="section-title">Edits made on two devices</h2>
     <p class="hint">
-      The same thing was changed on two devices before they synced. The newer edit is in place; the
-      other is kept here until you choose. Nothing was discarded.
+      The same thing was changed on two devices before they synced, and the two changes couldn't be
+      combined. What the device that saved last had is in place; the other version is kept here
+      until you choose, so neither is lost. Changes to different things, and to different parts of
+      the same thing, were combined without asking.
     </p>
     {#each conflicts as c (c.key)}
       <div class="conflict">
         <span class="conflict-label">{c.label}</span>
         {#each Object.entries(c.fields) as [field, v] (field)}
           <span class="hint">
-            {fieldLabel(field)}: {c.keptDevice}’s edit is in place ({new Date(c.at).toLocaleString(
-              'en-GB',
-              { dateStyle: 'medium', timeStyle: 'short' },
-            )})
+            {fieldLabel(field)}: {c.keptDevice}’s version is in place ({new Date(
+              c.at,
+            ).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })})
           </span>
           <details class="pack-details">
             <summary>{c.otherDevice}’s version</summary>
