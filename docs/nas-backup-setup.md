@@ -63,22 +63,28 @@ web/
 ### Keep the backup folder out of the web
 
 `systema-backups/` sits next to the receiver, inside the `web` share, so the
-web server can serve those files as ordinary static files — the receiver's
-token guards the script, not the folder. Photo names are random ids and
-snapshot names carry microseconds, so nothing is listable or easy to guess,
-and the receiver writes a `.htaccess` deny rule and a blank `index.html` into
-the folder, which is enough on Apache. **On nginx (Web Station's default) add
-a deny rule yourself**, in Web Station → Web Service Portal → your portal →
-Edit → (nginx) custom configuration:
+web server serves its files as ordinary static files — the receiver's token
+guards the script, not the folder. What stands in the way is their names:
+every photo is named by a random id, and every snapshot now carries 64 bits of
+randomness after its timestamp, so neither can be guessed. Listing the folder
+is refused by Web Station, so a name cannot be discovered that way either, and
+the receiver writes a `.htaccess` deny rule and a blank `index.html` into the
+folder (Apache honours the first; nginx ignores it).
+
+That leaves names as the only protection, which is the same thing that
+protects the photos. **For a complete block on nginx**, add a deny rule for
+the path. Web Station's own dialogs (DSM 7) offer no field for it — access
+control profiles are by address, not by path — so it has to go in the nginx
+configuration for the portal that serves `web`:
 
 ```nginx
 location ^~ /systema-backups/ { deny all; }
 ```
 
-Then check it: `https://<yours>.synology.me/systema-backups/` should be
-refused. Without it, anyone who can reach the web server could download a
-snapshot if they learned its name. (Keeping port 443 closed to the internet,
-or reaching the NAS over Tailscale only, limits who that could be.)
+Then check it: `https://<yours>.synology.me/systema-backups/data/` and any
+file under it should be refused. Snapshots written before this (their names
+end in microseconds, with no random tail) age out of the folder within 60
+pushes, or 90 days for the daily ones.
 
 ## One-time DSM setup (~10 minutes)
 

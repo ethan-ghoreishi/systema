@@ -275,9 +275,15 @@ if ($kind === 'data') {
     }
   }
   // Microseconds keep two devices pushing in the same second from overwriting
-  // each other; names still sort chronologically.
+  // each other; names still sort chronologically. The random tail is what
+  // keeps a snapshot from being fetched by anyone who can reach the web
+  // server: this folder sits in the web root, so its files are served as
+  // ordinary static files, and only their names stand between a snapshot and
+  // whoever asks for it (photos have always been named by random id). Listing
+  // the folder is refused, so a name cannot be discovered that way.
   $micro = (int) (fmod(microtime(true), 1) * 1000000);
-  $file = $BASE . '/data/systema-data-' . date('Ymd-His') . sprintf('-%06d', $micro) . '.json';
+  $file = $BASE . '/data/systema-data-' . date('Ymd-His') . sprintf('-%06d', $micro)
+    . '-' . bin2hex(random_bytes(8)) . '.json';
   if (!write_atomic($file, $body)) {
     $release();
     reply(500, ['ok' => false, 'error' => 'write failed']);

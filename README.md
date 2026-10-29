@@ -338,11 +338,13 @@ tests/
   app notices, falls back, and re-tries the header once a day so updating the
   receiver is enough to stop it); it never appears in a message, a stored
   diagnostic or a backup, and the Settings field keeps it hidden until you
-  tap Show. The receiver's folder sits in the web root, so it also writes a
-  deny rule and a blank index into it — on nginx (Web Station's default) add
-  the one-line rule in the setup guide, or the snapshots are downloadable
-  without the token by anyone who can reach the web server. See
-  [`docs/nas-backup-setup.md`](docs/nas-backup-setup.md).
+  tap Show. The receiver's backup folder sits in the web root, so its files are
+  served as ordinary static files, with only their names in the way: photos
+  have always been named by random id, and snapshots now carry one too, while
+  listing the folder is refused. The receiver also writes a deny rule and a
+  blank index into the folder, which Apache honours and nginx does not — for a
+  complete block on nginx (Web Station's default) add the one-line rule in the
+  setup guide. See [`docs/nas-backup-setup.md`](docs/nas-backup-setup.md).
 - No paid hosting, no metered AI, no paid backend. If a feature would need
   ongoing payment, it isn't built — a free alternative is used or it's flagged.
 
