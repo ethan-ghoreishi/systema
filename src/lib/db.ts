@@ -182,6 +182,12 @@ export interface Stop {
   guide?: StopGuide;
   /** When it was ticked visited (ms); absent on stops ticked by older versions. */
   visitedAt?: number;
+  /**
+   * The zone its times are read in, kept here only when the leg that held it
+   * is deleted — otherwise the leg's `tz` answers, and a correction there
+   * still reaches this stop.
+   */
+  tz?: string;
   order: number;
   createdAt: number;
   updatedAt?: number;
@@ -200,6 +206,8 @@ export interface Moment {
   /** When it happened (ms). */
   at: number;
   stopId: string | null;
+  /** The zone `at` is read in, kept only when its leg is deleted (see Stop.tz). */
+  tz?: string;
   createdAt: number;
   updatedAt?: number;
 }

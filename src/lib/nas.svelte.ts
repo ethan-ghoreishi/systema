@@ -3,7 +3,7 @@ import { db, type Photo, type Trip } from './db';
 import { newId } from './ids';
 import { settingsStore } from './settings.svelte';
 import { photoExt, sha256Hex } from './photos';
-import { buildDataBackup, descendsFrom, toRecords, type Backup } from './export';
+import { buildDataBackup, descendsFrom, mergeClocks, toRecords, type Backup } from './export';
 import { validateBackup } from './backup-validation';
 import {
   CONFLICT,
@@ -69,6 +69,13 @@ const BASE_KEY = 'local:syncBase'; // the last snapshot this device agreed with 
 // merging against one of those keeps both devices' edits (see baseFor).
 const PREV_BASES_KEY = 'local:syncBasesPrev';
 const PREV_BASES = 3;
+// How much of every device's work this device holds: raised by its own pushes
+// and by every snapshot it merges in. It is what tells a device returning
+// after a long absence that the NAS copy already includes everything it had,
+// so deletions made while it was away still apply (see descendsFrom).
+const CLOCK_KEY = 'local:syncClock';
+/** `parent` for a push that expects the NAS to hold no snapshot at all. */
+const NO_SNAPSHOT = 'none';
 const SYNCED_AT_KEY = 'local:lastSyncAt';
 const FILE_BACKUP_KEY = 'local:lastFileBackupAt';
 const DEVICE_KEY = 'local:device';
@@ -142,7 +149,17 @@ export interface ConnectionTest {
 interface Auth {
   url: string;
   header: boolean;
+  /** When that was last established. Only a "in the URL" answer ages. */
+  at: number;
 }
+
+/**
+ * How long the app goes on putting the token in the URL for a receiver that
+ * refused the header, before trying the header again. Without this, updating
+ * the receiver would never take effect on a device that had already met the
+ * old one, and the token would stay in that NAS's access log for good.
+ */
+const URL_TOKEN_RECHECK_MS = 24 * 3_600_000;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const online = () => typeof navigator === 'undefined' || navigator.onLine;
@@ -262,6 +279,8 @@ class NasBackup {
 
   private timer: ReturnType<typeof setTimeout> | null = null;
   private initialised = false;
+  /** The last push was refused because another device pushed first. */
+  private pushedStale = false;
 
   get configured(): boolean {
     return settingsStore.current.nasUrl.trim() !== '';
@@ -383,16 +402,20 @@ class NasBackup {
 
   private async tokenInHeader(): Promise<boolean> {
     const url = receiverUrl(settingsStore.current.nasUrl);
-    if (this.auth?.url === url) return this.auth.header;
-    const stored = (await db.kv.get(AUTH_KEY))?.value as Auth | undefined;
-    this.auth = stored?.url === url ? stored : { url, header: true };
-    return this.auth.header;
+    const cached =
+      this.auth?.url === url ? this.auth : ((await db.kv.get(AUTH_KEY))?.value as Auth | undefined);
+    if (cached?.url !== url) return true; // nothing known: the header first
+    this.auth = cached;
+    return cached.header || Date.now() - (cached.at ?? 0) > URL_TOKEN_RECHECK_MS;
   }
 
   private async setTokenInHeader(header: boolean): Promise<void> {
     const url = receiverUrl(settingsStore.current.nasUrl);
-    if (this.auth?.url === url && this.auth.header === header) return;
-    this.auth = { url, header };
+    const cur = this.auth?.url === url ? this.auth : undefined;
+    const unchanged =
+      cur?.header === header && (header || Date.now() - (cur.at ?? 0) < URL_TOKEN_RECHECK_MS);
+    if (unchanged) return;
+    this.auth = { url, header, at: Date.now() };
     await db.kv.put({ key: AUTH_KEY, value: this.auth }).catch(() => {});
   }
 
@@ -414,7 +437,8 @@ class NasBackup {
    * sending it, which looks exactly like no connection. Either way the request
    * is sent once more with the token in the URL; only when *that* works is the
    * receiver known to be an older one, so a NAS that is merely asleep never
-   * puts the token back in URLs.
+   * puts the token back in URLs — and that answer is re-tested once a day, so
+   * updating the receiver takes effect without touching the device.
    */
   private async fetchSigned(
     kind: string,
@@ -433,7 +457,10 @@ class NasBackup {
     if (!(await this.tokenInHeader())) return send(false);
     try {
       const res = await send(true);
-      if (res.status !== 403) return res;
+      if (res.status !== 403) {
+        await this.setTokenInHeader(true);
+        return res;
+      }
     } catch {
       // Blocked, or no connection: tell them apart by trying the URL.
     }
@@ -473,6 +500,9 @@ class NasBackup {
     const res = await this.request('POST', kind, extra, body);
     const json = (await res.json().catch(() => null)) as any;
     const sent = typeof body === 'string' ? body.length : body.byteLength;
+    // Not a failure: the receiver refused a push because another device had
+    // already pushed. Nothing was written; the caller merges again.
+    if (res.status === 409 && json?.stale) return json;
     const failure = classifyReply(res.status, json, sent);
     if (failure)
       throw new NasError(
@@ -740,6 +770,16 @@ class NasBackup {
     return typeof last === 'number' && Math.abs(at - last) < 60_000 ? remote : null;
   }
 
+  /** How much of every device's work this device holds (see CLOCK_KEY). */
+  private async clock(): Promise<Record<string, number>> {
+    return ((await db.kv.get(CLOCK_KEY))?.value as Record<string, number> | undefined) ?? {};
+  }
+
+  private async setClock(clock: Record<string, number>): Promise<void> {
+    if (same(await this.clock(), clock)) return;
+    await db.kv.put({ key: CLOCK_KEY, value: clock });
+  }
+
   /** The snapshots this device has agreed with the NAS, newest first. */
   private async baseChain(): Promise<Backup[]> {
     const [cur, prev] = await db.kv.bulkGet([BASE_KEY, PREV_BASES_KEY]);
@@ -822,18 +862,28 @@ class NasBackup {
     if (!this.configured) return { ok: false, message: 'Set the receiver URL and token first.' };
     if (!online()) return { ok: false, message: explain('offline') };
     const busy = { ok: false, message: 'A sync is already running.' };
+    // A push refused because another device pushed first costs one more pass:
+    // read what landed, merge it in, push that. Bounded to one, so two devices
+    // saving constantly still finish.
+    const run = async (): Promise<SyncOutcome> => {
+      const first = await this.syncOnce();
+      // Each pass reports only its own push, so the second one's outcome is
+      // the honest account of what happened.
+      return this.pushedStale ? this.syncOnce() : first;
+    };
     // One sync at a time, across tabs too (a Mac may have several open).
     if (typeof navigator !== 'undefined' && navigator.locks)
       return navigator.locks.request('systema-nas-sync', { ifAvailable: true }, (lock) =>
-        lock ? this.syncOnce() : busy,
+        lock ? run() : busy,
       );
-    return this.syncOnce();
+    return run();
   }
 
   private async syncOnce(): Promise<SyncOutcome> {
     if (this.running) return { ok: false, message: 'A sync is already running.' };
     this.running = true;
     this.lastError = '';
+    this.pushedStale = false;
     let outcome: SyncOutcome;
     let kind: FailureKind | undefined;
     try {
@@ -873,6 +923,9 @@ class NasBackup {
             })),
           );
           await fixDerivedDates();
+          // This device now holds everything the NAS copy did.
+          if (remote?.sync?.clock)
+            await this.setClock(mergeClocks(await this.clock(), remote.sync.clock));
           if (remote) await this.rememberBase(remote);
           return { changes, conflicts: result.conflicts.length };
         },
@@ -886,17 +939,31 @@ class NasBackup {
         ? countDifferences(records, toRecords(remote), true) > 0
         : records.trips.length + records.kv.length > 0;
       if (ahead) {
+        const clock = mergeClocks(await this.clock(), remote?.sync?.clock);
+        clock[device.id] = (clock[device.id] ?? 0) + 1;
         snapshot.sync = {
           id: newId(),
           device: device.id,
           deviceName: device.name,
           at: Date.now(),
           history: remote?.sync ? [...remote.sync.history, remote.sync.id].slice(-HISTORY_CAP) : [],
+          clock,
         };
-        await this.post('data', '', JSON.stringify(snapshot));
-        this.lastDataAt = Date.now();
-        await this.rememberBase(snapshot);
-        await db.kv.put({ key: LAST_PUSH_KEY, value: this.lastDataAt });
+        // Say which snapshot this was merged from. A receiver from version 3
+        // on refuses the push if the NAS has moved on since — otherwise this
+        // snapshot would become the newest while missing what the other
+        // device just pushed, and nothing would ever go looking for it.
+        const parent = `&parent=${encodeURIComponent(remote?.sync?.id ?? NO_SNAPSHOT)}`;
+        const reply = await this.post('data', parent, JSON.stringify(snapshot));
+        if (reply?.stale) {
+          // Another device pushed first. Nothing was written; merge again.
+          this.pushedStale = true;
+        } else {
+          this.lastDataAt = Date.now();
+          await this.setClock(clock);
+          await this.rememberBase(snapshot);
+          await db.kv.put({ key: LAST_PUSH_KEY, value: this.lastDataAt });
+        }
       }
       this.lastSyncAt = Date.now();
       await db.kv.put({ key: SYNCED_AT_KEY, value: this.lastSyncAt });
@@ -907,7 +974,8 @@ class NasBackup {
         changes && `${plural(changes, 'change')} from the NAS`,
         photos.fetched && `${plural(photos.fetched, 'photo')} downloaded`,
         up.uploaded && `${plural(up.uploaded, 'photo')} uploaded`,
-        ahead && 'your changes sent',
+        ahead && !this.pushedStale && 'your changes sent',
+        this.pushedStale && 'another device pushed first, merging again',
         conflicts && `${plural(conflicts, 'edit')} made on two devices to review`,
         photos.unavailable &&
           `${plural(photos.unavailable, 'photo')} not on the NAS yet (still on the device that took them)`,

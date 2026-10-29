@@ -18,6 +18,7 @@
   } from '../../lib/stops';
   import { addPhotos, deletePhoto, downloadPhoto, photoTime } from '../../lib/photos';
   import { instantToWall } from '../../lib/tz';
+  import { zoneOf } from '../../lib/moments';
   import { nasBackup } from '../../lib/nas.svelte';
   import PhotoPicker from '../PhotoPicker.svelte';
   import MomentCapture from '../MomentCapture.svelte';
@@ -102,8 +103,7 @@
   });
 
   function momentTime(m: Moment): string {
-    const tz = cities.find((c) => c.id === m.cityId)?.tz;
-    return instantToWall(m.at, tz).slice(11, 16);
+    return instantToWall(m.at, zoneOf(m, cities)).slice(11, 16);
   }
 
   // Detail selection via the route: #/trip/:id/stops/:stopId

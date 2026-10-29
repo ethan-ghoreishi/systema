@@ -510,6 +510,9 @@ test('an edit pushed by one device survives a sibling push by the other', async 
   makeContext,
 }) => {
   const nas = new FakeNas();
+  // An un-updated receiver can't refuse the second push, so the two snapshots
+  // really do fork and the merge has to reconcile them from a shared base.
+  nas.version = 2;
   const phone = await device(makeContext, nas);
   const mac = await device(makeContext, nas);
   const { trip, stop } = await seedTrip(phone);
@@ -556,6 +559,7 @@ test('a fork too deep to reconcile is reported, never applied silently', async (
   makeContext,
 }) => {
   const nas = new FakeNas();
+  nas.version = 2; // the version 3 receiver refuses the push that forks
   const phone = await device(makeContext, nas);
   const mac = await device(makeContext, nas);
   const { trip } = await seedTrip(phone);
@@ -617,4 +621,77 @@ test('the token travels in a header, and falls back for an older receiver', asyn
   expect(await sync(mac)).toMatchObject({ ok: true });
   expect(old.dataPosts).toBe(2);
   expect(old.tokenInUrl).toBeGreaterThan(before);
+});
+
+// The receiver keeps the newest snapshot from ever being one that is missing
+// another device's work: a push whose parent has been superseded is refused,
+// and the device merges what landed and pushes that instead.
+test('the receiver refuses a push that would hide another device’s', async ({ makeContext }) => {
+  const nas = new FakeNas();
+  const phone = await device(makeContext, nas);
+  const mac = await device(makeContext, nas);
+  const { trip } = await seedTrip(phone);
+  await sync(phone);
+  await sync(mac);
+  const shared = JSON.stringify(nas.latest());
+
+  await app(phone, (m, id) => m.updateTrip(id, { planText: 'Phone plan' }), trip);
+  await sync(phone);
+
+  // The Mac is still looking at the snapshot both agreed on.
+  nas.latestOverride = { status: 200, body: shared };
+  await app(mac, (m, id) => m.updateTrip(id, { nameManual: 'Mac name' }), trip);
+  expect((await sync(mac)).message).toContain('another device pushed first');
+  expect(nas.staleRefusals).toBeGreaterThan(0);
+  // Nothing was written, so the newest snapshot still has the phone's edit.
+  expect(nas.latest().trips[0].planText).toBe('Phone plan');
+
+  nas.latestOverride = null;
+  await sync(mac);
+  await sync(phone);
+  expect(nas.latest().trips[0]).toMatchObject({
+    planText: 'Phone plan',
+    nameManual: 'Mac name',
+  });
+  for (const page of [phone, mac]) {
+    const s = await state(page);
+    expect(s.trips[0]).toMatchObject({ planText: 'Phone plan', nameManual: 'Mac name' });
+    expect(s.conflicts).toEqual([]);
+  }
+});
+
+// A device away for longer than the snapshot history can remember must not
+// bring back what was deleted while it was away.
+test('a device back after a long absence does not resurrect deleted records', async ({
+  makeContext,
+}) => {
+  const nas = new FakeNas();
+  const phone = await device(makeContext, nas);
+  const mac = await device(makeContext, nas);
+  const { trip, stop } = await seedTrip(phone);
+  await sync(phone);
+  await sync(mac);
+
+  // The phone goes away. The Mac deletes the stop and keeps working, long
+  // enough that the phone's last snapshot is no longer in any history list.
+  await app(mac, (m, id) => m.deleteStop(id), stop);
+  for (let i = 0; i < 6; i += 1) {
+    await app(mac, (m, a) => m.updateTrip(a.trip, { planText: `Mac plan ${a.i}` }), { trip, i });
+    await sync(mac);
+  }
+  await app(mac, async (m) => {
+    // Nothing in the newest snapshot's history names what the phone last saw.
+    const base = (await m.db.kv.get('local:syncBase')).value;
+    base.sync.history = [];
+    await m.db.kv.put({ key: 'local:syncBase', value: base });
+  });
+  const latest = nas.latest();
+  latest.sync.history = [];
+  nas.files.set([...nas.files.keys()].sort().at(-1)!, JSON.stringify(latest));
+
+  await sync(phone);
+  expect((await state(phone)).stops).toEqual([]);
+  await sync(mac);
+  expect((await state(mac)).stops).toEqual([]);
+  expect(nas.latest().stops).toEqual([]);
 });

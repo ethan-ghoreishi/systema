@@ -598,6 +598,47 @@ test('deleting a leg detaches what pointed at it instead of orphaning it', async
   expect(result.keptStop).toBe(true);
 });
 
+// A moment's time is an instant; what makes it "14:30" is the zone of the leg
+// it happened in. Delete the leg and that zone has to survive, or the same
+// afternoon starts reading an hour out.
+test('deleting a leg keeps the time its moments and visits are read in', async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const [{ db }, trips, { addStop, toggleVisited }, { addMoment, zoneOf }, { instantToWall }] =
+      await Promise.all(
+        [
+          '/src/lib/db.ts',
+          '/src/lib/trips.ts',
+          '/src/lib/stops.ts',
+          '/src/lib/moments.ts',
+          '/src/lib/tz.ts',
+        ].map((p) => import(/* @vite-ignore */ p)),
+      );
+    const tripId = sessionStorage.getItem('testTrip')!;
+    const cityId = await trips.addCity(tripId, 'Rome', 'EUR', { tz: 'Europe/Rome' });
+    const at = Date.parse('2026-06-15T12:30:00Z'); // 14:30 in Rome, 13:30 in London
+    const momentId = await addMoment({ tripId, cityId, title: 'Portico concert', at });
+    const stopId = await addStop(tripId, 'Pantheon', cityId);
+    await toggleVisited(await db.stops.get(stopId));
+    await db.stops.update(stopId, { visitedAt: at });
+
+    const shown = async () => {
+      const cities = await db.cities.toArray();
+      const m = await db.moments.get(momentId);
+      const s = await db.stops.get(stopId);
+      return {
+        moment: instantToWall(m.at, zoneOf(m, cities)).slice(11, 16),
+        stop: instantToWall(s.visitedAt, zoneOf(s, cities)).slice(11, 16),
+      };
+    };
+    const before = await shown();
+    await trips.deleteCity(cityId);
+    return { before, after: await shown(), tz: (await db.moments.get(momentId)).tz };
+  });
+  expect(result.before).toEqual({ moment: '14:30', stop: '14:30' });
+  expect(result.after).toEqual(result.before);
+  expect(result.tz).toBe('Europe/Rome');
+});
+
 test('a backup whose only missing record is a leg still restores', async ({ page }) => {
   const result = await page.evaluate(async () => {
     const [{ db }, { addCity, deleteCity }, exp] = await Promise.all(

@@ -24,12 +24,22 @@ unless the other device edited that record meanwhile (then the edit wins).
 Photos only leave through an explicit delete — never because a snapshot lacks
 them.
 
-If both devices push before either sees the other's snapshot, neither snapshot
-descends from the other. The merge then falls back to the newest snapshot the
-two devices really share — which is why a few are kept, not one — so an edit a
-device had already pushed is not undone by the other's older view of it. Past
-that (one device unsynced for a very long time), the difference is listed to
-review rather than applied quietly, and nothing is deleted.
+If both devices push before either sees the other's snapshot, the one that
+lands second would leave the NAS with a newest snapshot missing the first's
+work. Each push names the snapshot it was merged from, and the receiver
+(version 3) refuses one that has since been overtaken — HTTP 409, nothing
+written — so that device reads what landed, merges it and pushes that. Against
+an older receiver the two snapshots do fork, and the merge falls back to the
+newest snapshot both devices really share (which is why a few are kept, not
+one), so an edit a device had already pushed is not undone. Past even that, the
+difference is listed to review rather than applied quietly, and nothing is
+deleted.
+
+Each snapshot also carries a counter per device, saying how much of that
+device's work it includes. It is what lets a phone that has been away for
+months be recognised as behind rather than ahead, so records deleted while it
+was gone are not carried back in. The list of recent snapshot ids does the same
+job but only remembers its last 200, which a long absence outruns.
 
 No credentials live in the app or this repo: the app stores only the receiver
 URL and a token you choose, on-device. The token is sent in the
@@ -118,10 +128,16 @@ queued to upload again — it changes nothing else.
   `display_errors` is on, for **Test connection**;
 - reports an upload over PHP's limit as HTTP 413 with the limit.
 
-Version 3 adds one thing: it reads the token from the `X-Systema-Token`
-header, so it stays out of the NAS's access log. The app tries the header
-first and falls back to `?token=` on its own, so an un-updated receiver keeps
-working — it just keeps logging the token.
+Version 3 adds two things:
+
+- it reads the token from the `X-Systema-Token` header, so it stays out of the
+  NAS's access log. The app tries the header first and falls back to `?token=`
+  on its own, so an un-updated receiver keeps working — it just keeps logging
+  the token. The app re-tries the header once a day, so updating the receiver
+  is enough; nothing needs changing on the phone or the Mac;
+- it refuses a data push whose parent snapshot has been overtaken by another
+  device (HTTP 409, nothing written), so the newest snapshot on the NAS is
+  never one that is missing what another device pushed moments earlier.
 
 It also keeps two snapshots pushed in the same second, never serves a
 half-written file, and keeps a daily snapshot for 90 days. To update, copy the

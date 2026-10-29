@@ -81,15 +81,6 @@ export function same(a: unknown, b: unknown): boolean {
   return canonical(a) === canonical(b);
 }
 
-/**
- * A field counts as blank when there is nothing in it: absent, null, an empty
- * string or an empty list. Taking the other side's value can then never
- * displace information — which is what makes it safe both when a merge can't
- * attribute a difference (mergeFields) and on a restore (blankFieldPatch).
- */
-export const blank = (v: unknown): boolean =>
-  v === undefined || v === null || v === '' || (Array.isArray(v) && v.length === 0);
-
 function byKey(rows: Row[] | undefined, key: string): Map<string, Row> {
   return new Map((rows ?? []).map((r) => [r[key] as string, r]));
 }
@@ -111,7 +102,8 @@ export interface FieldConflict {
  * ancestor of the other), the base may already hold *this* device's edits,
  * which the remote never saw: "unchanged here since the base, so take the
  * remote value" would then revert them silently. That rule is dropped, and
- * such a field becomes a reviewable conflict instead.
+ * such a field becomes a reviewable conflict instead — including when one
+ * side cleared it, since a clear is an edit like any other.
  */
 function mergeFields(
   table: SyncTable,
@@ -135,9 +127,12 @@ function mergeFields(
     if (same(lv, rv)) v = lv;
     else if (attributable && same(lv, bv)) v = rv;
     else if (b && same(rv, bv)) v = lv;
-    // Unattributable, and one side simply has nothing there: take what there
-    // is. Nothing is displaced, so there is nothing to review either.
-    else if (!attributable && blank(lv) !== blank(rv)) v = blank(lv) ? rv : lv;
+    // Unattributable, and one side has no such field at all: take the value
+    // from the side that has one. Nothing is displaced, so there is nothing to
+    // review. Only a missing field counts — an empty string, null or empty
+    // list is a value someone chose, and replacing it needs asking.
+    else if (!attributable && (lv === undefined) !== (rv === undefined))
+      v = lv === undefined ? rv : lv;
     else {
       v = localWins ? lv : rv;
       if (!QUIET.has(k)) fields[k] = { kept: v, other: localWins ? rv : lv };

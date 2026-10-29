@@ -342,16 +342,28 @@ export function extractStopsFromPlan(
 const key = (name: string) => name.trim().toLowerCase();
 
 /**
- * Whether a plan candidate is the stop already in the list. Same name, and —
- * when both sides say which city they are in — the same city: two cities can
- * each have a Duomo, and neither should swallow the other. Either side not
- * knowing its city falls back to the name alone, so single-city trips and
- * stops added before cities existed keep matching as they did.
+ * The stop already in the list that a plan candidate is, if any. Same name,
+ * and — where both sides say which city they are in — the same city: two
+ * cities can each have a Duomo, and neither should swallow the other. A stop
+ * that doesn't say which city it is in (added before the trip had legs, or on
+ * a single-city trip) can stand for a candidate from any city, but only for
+ * one of them: `taken` carries the stops already spoken for, so a lone
+ * unassigned "Duomo" no longer makes both cities' Duomos look present.
  */
-function isSameStop(c: StopCandidate, stop: Stop, cityIdByName: Map<string, string>): boolean {
-  if (key(stop.name) !== key(c.name)) return false;
+function matchStop(
+  c: StopCandidate,
+  existing: Stop[],
+  cityIdByName: Map<string, string>,
+  taken: Set<string>,
+): Stop | undefined {
   const want = c.city ? cityIdByName.get(key(c.city)) : undefined;
-  return !want || !stop.cityId || stop.cityId === want;
+  const named = existing.filter((s) => !taken.has(s.id) && key(s.name) === key(c.name));
+  // The stop in the candidate's own city first; only then one with no city.
+  return (
+    named.find((s) => !!want && s.cityId === want) ??
+    named.find((s) => !want || !s.cityId) ??
+    undefined
+  );
 }
 
 /** Candidates not already present as stops (by name, within their own city). */
@@ -361,9 +373,12 @@ export function newStopCandidates(
   knownCities: string[] = [],
   cityIdByName: Map<string, string> = new Map(),
 ): StopCandidate[] {
-  return extractStopsFromPlan(planText, knownCities).filter(
-    (c) => !existing.some((s) => isSameStop(c, s, cityIdByName)),
-  );
+  const taken = new Set<string>();
+  return extractStopsFromPlan(planText, knownCities).filter((c) => {
+    const match = matchStop(c, existing, cityIdByName, taken);
+    if (match) taken.add(match.id);
+    return !match;
+  });
 }
 
 /**
@@ -377,8 +392,10 @@ export function guideBackfill(
   cityIdByName: Map<string, string> = new Map(),
 ) {
   const out: { id: string; guide: StopGuide }[] = [];
+  const taken = new Set<string>();
   for (const c of extractStopsFromPlan(planText, knownCities)) {
-    const stop = existing.find((s) => isSameStop(c, s, cityIdByName));
+    const stop = matchStop(c, existing, cityIdByName, taken);
+    if (stop) taken.add(stop.id);
     if (!stop || !c.guide) continue;
     const have = stop.guide ?? {};
     const merged: StopGuide = { ...have };
