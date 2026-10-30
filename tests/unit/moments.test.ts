@@ -93,6 +93,18 @@ describe('visitTimeline', () => {
     expect(names(visitTimeline(stops, moments, cities))).toEqual(['a', '*loose', 'b', '*at-b']);
   });
 
+  // Whichever was written first, a stop and the moments that are part of it
+  // stay together.
+  it('never puts an unlinked moment between a stop and its own moment', () => {
+    const planned = { ...stop('planned', 'blq', 0), visited: false };
+    const at = moment('at-planned', 'blq', 100, 'planned');
+    const loose = moment('loose', 'blq', 900);
+    const rows = (ms: (typeof at)[]) =>
+      names(visitTimeline([planned], ms, cities, { visitedOnly: false }));
+    expect(rows([at, loose])).toEqual(['planned', '*at-planned', '*loose']);
+    expect(rows([loose, at])).toEqual(['planned', '*at-planned', '*loose']);
+  });
+
   it('falls back to time when the linked stop is not in the list', () => {
     const stops = [stop('a', 'blq', 0, 100), stop('b', 'blq', 1, 300)];
     const orphan = moment('gone', 'blq', 200, 'deleted-stop');

@@ -120,6 +120,9 @@ export function visitTimeline(
     out.forEach((it, i) => {
       if (it.kind === 'moment' && it.at <= m.at && !atAStop(it.moment)) idx = Math.max(idx, i);
     });
+    // Never land between a stop and the moments that are part of it.
+    while (out[idx + 1]?.kind === 'moment' && atAStop((out[idx + 1] as { moment: Moment }).moment))
+      idx += 1;
     out.splice(idx + 1, 0, { kind: 'moment', moment: m, at: m.at });
   }
   return out;
