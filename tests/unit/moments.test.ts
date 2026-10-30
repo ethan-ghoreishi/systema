@@ -85,6 +85,14 @@ describe('visitTimeline', () => {
     expect(names(visitTimeline(stops, moments, cities))).toEqual(['a', '*first', '*second', 'b']);
   });
 
+  // A moment at its stop is out of time order by design; it must not drag a
+  // later unlinked one along with it.
+  it('does not let a moment at a stop displace a later one', () => {
+    const stops = [stop('a', 'blq', 0, 100), stop('b', 'blq', 1, 300)];
+    const moments = [moment('at-b', 'blq', 150, 'b'), moment('loose', 'blq', 200)];
+    expect(names(visitTimeline(stops, moments, cities))).toEqual(['a', '*loose', 'b', '*at-b']);
+  });
+
   it('falls back to time when the linked stop is not in the list', () => {
     const stops = [stop('a', 'blq', 0, 100), stop('b', 'blq', 1, 300)];
     const orphan = moment('gone', 'blq', 200, 'deleted-stop');
@@ -98,11 +106,13 @@ describe('visitTimeline', () => {
       { ...stop('planned', 'blq', 1), visited: false },
     ];
     const moments = [moment('linked', 'blq', 50, 'planned'), moment('loose', 'blq', 900)];
+    // 'loose' follows the last stop with a visit time; 'planned' has none, so
+    // it anchors nothing — only the moment that is part of it.
     expect(names(visitTimeline(stops, moments, cities, { visitedOnly: false }))).toEqual([
       'a',
+      '*loose',
       'planned',
       '*linked',
-      '*loose',
     ]);
     // The pack keeps only visited stops, so the linked one falls back to time.
     expect(names(visitTimeline(stops, moments, cities))).toEqual(['*linked', 'a', '*loose']);

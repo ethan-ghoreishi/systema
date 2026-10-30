@@ -57,6 +57,8 @@ function snapshot(): Backup {
         checklist: [],
         visited: true,
         visitedAt: 5,
+        tz: 'Europe/Rome',
+        legName: 'Rome',
         guide: { anchor: 'Anatomical theatre', lookFor: ['coats of arms'] },
         order: 0,
         createdAt: 1,
@@ -95,6 +97,7 @@ function snapshot(): Backup {
         at: 9,
         stopId: null,
         tz: 'Europe/Rome',
+        legName: 'Rome',
         lat: 44.4938,
         lng: 11.3426,
         createdAt: 9,
@@ -151,6 +154,7 @@ describe('mixed-version sync', () => {
       lat: 44.4938,
       lng: 11.3426,
       tz: 'Europe/Rome',
+      legName: 'Rome',
     });
   });
 

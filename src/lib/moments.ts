@@ -82,9 +82,13 @@ export function visitTimeline(
     .sort((a, b) => a.order - b.order)
     .map((stop) => ({ kind: 'stop', stop, at: stop.visitedAt }));
 
+  // A moment sitting at its stop is out of time order by design, so it never
+  // decides where a later one goes.
+  const atAStop = (m: Moment) =>
+    !!m.stopId && out.some((it) => it.kind === 'stop' && it.stop.id === m.stopId);
   for (const m of [...moments].sort((a, b) => a.at - b.at)) {
     // Part of a planned stop: with it, after anything already placed there.
-    const linked = m.stopId
+    const linked = atAStop(m)
       ? out.findIndex((it) => it.kind === 'stop' && it.stop.id === m.stopId)
       : -1;
     if (linked >= 0) {
@@ -114,7 +118,7 @@ export function visitTimeline(
     }
     // Moments keep their own time order.
     out.forEach((it, i) => {
-      if (it.kind === 'moment' && it.at <= m.at) idx = Math.max(idx, i);
+      if (it.kind === 'moment' && it.at <= m.at && !atAStop(it.moment)) idx = Math.max(idx, i);
     });
     out.splice(idx + 1, 0, { kind: 'moment', moment: m, at: m.at });
   }

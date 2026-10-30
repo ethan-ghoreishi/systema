@@ -347,7 +347,9 @@ export function tripRhythm(
         days: tripDays(trip, legs),
         planned: mine.length,
         visited,
-        offPlan: moments.filter((m) => m.tripId === trip.id).length,
+        // Only what happened away from a planned stop: a moment that is part
+        // of one happened inside the plan, not off it.
+        offPlan: moments.filter((m) => m.tripId === trip.id && !m.stopId).length,
         rides: spent.filter((e) => RIDES.has(e.subcategory)).length,
         departures: deps.length,
         slackMin: deps.length

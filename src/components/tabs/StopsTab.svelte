@@ -53,14 +53,24 @@
   const allPhotos = $derived($photosQ ?? []);
 
   const cityNameById = $derived(new Map(cities.map((c) => [c.id, c.name])));
-  /** A record's group: its leg, or null — unassigned, or a leg since deleted. */
-  const keyOf = (cityId: string | null | undefined) =>
-    cityId && cityNameById.has(cityId) ? cityId : null;
-  // Sub-headers appear as soon as there is more than one group, so a record
-  // left over from a deleted leg is never shown as part of the leg that
-  // remains. One group (the usual single-city trip) needs no headers.
-  const grouped = $derived(new Set([...stops, ...moments].map((r) => keyOf(r.cityId))).size > 1);
-  const groupLabel = (key: string | null) => (key && cityNameById.get(key)) || 'Unassigned';
+  const GONE = 'gone:';
+  /**
+   * A record's group: its leg; the leg it kept the name of when that leg was
+   * deleted; or nothing. The middle one is what stops a leftover from a
+   * deleted leg reading as one of the legs that remain.
+   */
+  const keyOf = (r: { cityId: string | null; legName?: string }) =>
+    r.cityId && cityNameById.has(r.cityId) ? r.cityId : r.legName ? GONE + r.legName : null;
+  // Headers for two legs or more, as before — and for a trip holding anything
+  // left over from a deleted leg, whatever it has left. A one-leg trip whose
+  // stops were never put on a leg stays the plain list it has always been.
+  const grouped = $derived(
+    cities.length >= 2 || [...stops, ...moments].some((r) => r.legName && !r.cityId),
+  );
+  const groupLabel = (key: string | null) =>
+    key?.startsWith(GONE)
+      ? `${key.slice(GONE.length)} · leg deleted`
+      : (key && cityNameById.get(key)) || 'Unassigned';
 
   type StopRow =
     | { kind: 'header'; label: string }
@@ -76,7 +86,7 @@
     // Runs of consecutive stops in one leg, as the list already orders them.
     const runs: { key: string | null; stops: Stop[] }[] = [];
     for (const stop of stops) {
-      const key = keyOf(stop.cityId);
+      const key = keyOf(stop);
       const last = runs[runs.length - 1];
       if (last && last.key === key) last.stops.push(stop);
       else runs.push({ key, stops: [stop] });
@@ -86,8 +96,7 @@
     const lastRun = new Map(runs.map((r, i) => [r.key, i]));
     const rows: StopRow[] = [];
     runs.forEach((run, i) => {
-      const mine =
-        lastRun.get(run.key) === i ? moments.filter((m) => keyOf(m.cityId) === run.key) : [];
+      const mine = lastRun.get(run.key) === i ? moments.filter((m) => keyOf(m) === run.key) : [];
       if (grouped) rows.push({ kind: 'header', label: groupLabel(run.key) });
       for (const it of visitTimeline(run.stops, mine, cities, { visitedOnly: false }))
         rows.push(
@@ -98,9 +107,9 @@
     });
     // Groups with moments but no stops at all still have their place.
     const shown = new Set(runs.map((r) => r.key));
-    for (const key of [...cities.map((c) => c.id), null]) {
-      if (shown.has(key)) continue;
-      const mine = moments.filter((m) => keyOf(m.cityId) === key);
+    const rest = [...new Set(moments.map(keyOf))].filter((k) => !shown.has(k));
+    for (const key of rest) {
+      const mine = moments.filter((m) => keyOf(m) === key);
       if (!mine.length) continue;
       if (grouped) rows.push({ kind: 'header', label: groupLabel(key) });
       rows.push(...mine.map((moment) => ({ kind: 'moment' as const, moment })));
@@ -269,7 +278,7 @@
     if (
       confirm(
         `Delete stop “${selected.name}”? Its photos go with it.` +
-          (linked ? ` ${linked} off-plan moment(s) linked to it stay, with their photos.` : ''),
+          (linked ? ` ${linked} moment(s) that are part of it stay, with their photos.` : ''),
       )
     ) {
       const id = selected.id;

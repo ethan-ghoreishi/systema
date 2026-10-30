@@ -93,7 +93,7 @@ test('live NAS: two devices, concurrent pushes, deletion and a clear', async ({ 
         stopId: a.stop,
       });
       await m.placeMoment(id, { lat: 41.9009, lng: 12.4833 });
-      await m.db.moments.update(id, { tz: 'Europe/Rome' });
+      await m.db.moments.update(id, { tz: 'Europe/Rome', legName: 'Rome' });
       return id;
     },
     { trip, stop },
@@ -106,6 +106,7 @@ test('live NAS: two devices, concurrent pushes, deletion and a clear', async ({ 
     lat: 41.9009,
     lng: 12.4833,
     tz: 'Europe/Rome',
+    legName: 'Rome',
   });
   // Taken off the map, it stays off — the other device does not put it back.
   await app(phone, (m, id) => m.placeMoment(id, null), moment);

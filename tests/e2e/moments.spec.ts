@@ -303,16 +303,24 @@ test('a moment keeps its stop, its place and its own time when the leg goes', as
     await deleteCity(id);
   }, rome);
   await page.getByRole('tab', { name: 'List' }).click();
-  // Groups follow the list's own order, so Rome's records keep their place —
-  // under a header of their own, never read as Dubai's.
+  // Rome's records keep their place under a header that still names Rome —
+  // never read as Dubai's, and never silently merged into its list.
   expect(await rowText(page)).toEqual([
-    '# Unassigned',
+    '# Rome · leg deleted',
     'Rome Stop []',
     'The guide stopped mid-sentence [at Rome Stop · 15:45]',
     'Rain, and a doorway [off-plan · 13:00]',
     '# Dubai',
     'Dubai Stop []',
   ]);
+
+  expect(
+    await page.evaluate(async () => {
+      const { db } = await import(/* @vite-ignore */ '/src/lib/db.ts');
+      const s = (await db.stops.toArray()).find((r: { name: string }) => r.name === 'Rome Stop');
+      return { cityId: s.cityId, legName: s.legName };
+    }),
+  ).toEqual({ cityId: null, legName: 'Rome' });
 
   // 6. And the time it is read and edited in is still Rome's.
   await page.getByText('The guide stopped mid-sentence').click();
