@@ -159,8 +159,16 @@ describe('buildTripPack', () => {
   });
 
   it('names the stop a linked moment belongs to, in the visit order', () => {
+    // The leg carries its own zone, so the stamp doesn't follow the machine's.
     const cities: City[] = [
-      { id: 'c', tripId: 't', name: 'Copenhagen', currency: 'DKK', order: 0 },
+      {
+        id: 'c',
+        tripId: 't',
+        name: 'Copenhagen',
+        currency: 'DKK',
+        order: 0,
+        tz: 'Europe/Copenhagen',
+      },
     ];
     const at = Date.UTC(2026, 5, 27, 12, 0);
     const visited = stop({ cityId: 'c', visitedAt: Date.UTC(2026, 5, 27, 10, 0) });
@@ -178,7 +186,7 @@ describe('buildTripPack', () => {
     ];
     const md = pack({ cities, stops: [visited], moments, photos: [] });
     expect(md).toContain(
-      `2. Sat 27 Jun, 13:00, at ${visited.name}: The guide stopped mid-sentence`,
+      `2. Sat 27 Jun, 14:00, at ${visited.name}: The guide stopped mid-sentence`,
     );
     expect(md).not.toContain('off-plan: The guide stopped');
   });
