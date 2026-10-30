@@ -105,7 +105,7 @@ export function validateBackup(value: unknown): asserts value is Backup {
         (c: unknown) => object(c) && strings(c, 'id text') && typeof c.done === 'boolean',
       ) &&
       optionalNumbers(r, 'visitedAt') &&
-      optional(r, 'tz', 'string') &&
+      optional(r, 'tz legName', 'string') &&
       (r.guide === undefined ||
         (object(r.guide) &&
           optional(r.guide, 'anchor minimum stretch exit', 'string') &&
@@ -136,7 +136,9 @@ export function validateBackup(value: unknown): asserts value is Backup {
       (r) =>
         strings(r, 'tripId title note') &&
         numbers(r, 'at createdAt') &&
-        optional(r, 'tz', 'string') &&
+        optional(r, 'tz legName', 'string') &&
+        coord(r.lat, 90) &&
+        coord(r.lng, 180) &&
         (r.cityId === null || typeof r.cityId === 'string') &&
         (r.stopId === null || typeof r.stopId === 'string'),
     );

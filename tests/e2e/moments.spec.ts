@@ -1,3 +1,4 @@
+import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 
 // Off-plan moments, library imports in capture order, and journal photos by
@@ -172,4 +173,193 @@ test('a moment whose photo could not be stored is not duplicated when saved agai
     return { moments: await db.moments.count(), photos: await db.photos.count() };
   });
   expect(counts).toEqual({ moments: 1, photos: 1 });
+});
+
+/**
+ * The whole of the iPhone report, on one two-city trip: what a moment's link
+ * to a stop means, where it sits in the list, what time it shows while being
+ * read and while being edited, where it goes on the map — and that none of it
+ * changes when the leg it happened in is deleted.
+ *
+ * The device is in London; Rome is an hour ahead and Dubai four. The date is
+ * after the UK's October change, so no clock moves during the test.
+ */
+async function romeAndDubai(page: Page): Promise<{ trip: string; rome: string }> {
+  await page.route('https://tile.openstreetmap.org/**', (r) => r.abort());
+  await page.goto('/');
+  return page.evaluate(async () => {
+    const [{ createTrip, addCity }, { addStop }] = await Promise.all(
+      ['/src/lib/trips.ts', '/src/lib/stops.ts'].map((p) => import(/* @vite-ignore */ p)),
+    );
+    const trip = await createTrip('custom');
+    const rome = await addCity(trip, 'Rome', 'EUR', {
+      arrival: '2026-10-29T09:00',
+      departure: '2026-10-29T19:00',
+      tz: 'Europe/Rome',
+    });
+    const dubai = await addCity(trip, 'Dubai', 'AED', {
+      arrival: '2026-10-30T05:00',
+      departure: '2026-10-31T05:00',
+      tz: 'Asia/Dubai',
+      sleep: 'hotel',
+    });
+    await addStop(trip, 'Rome Stop', rome);
+    await addStop(trip, 'Dubai Stop', dubai);
+    return { trip, rome };
+  });
+}
+
+const rowText = (page: Page) =>
+  page
+    .locator('.stop-city-head, .stop-row')
+    .evaluateAll((els) =>
+      els.map((el) =>
+        el.classList.contains('stop-city-head')
+          ? `# ${el.textContent?.trim()}`
+          : `${el.querySelector('.stop-name')?.textContent?.trim()} [${el
+              .querySelector('.stop-meta')
+              ?.textContent?.trim()}]`,
+      ),
+    );
+
+test('a moment keeps its stop, its place and its own time when the leg goes', async ({
+  makeContext,
+}) => {
+  const context = await makeContext({ timezoneId: 'Europe/London' });
+  const page = context.pages()[0] ?? (await context.newPage());
+  await page.clock.setFixedTime(new Date('2026-10-29T12:00:00Z'));
+  const { trip, rome } = await romeAndDubai(page);
+  await page.goto(`/#/trip/${trip}/stops`);
+
+  // 1. A moment that is part of a planned stop, at 15:30 Rome time.
+  await page.getByRole('button', { name: 'What happened?' }).click();
+  const sheet = page.locator('dialog.modal[open]');
+  await sheet.getByRole('button', { name: 'Rome' }).click();
+  await sheet.getByLabel('Place or event').fill('The guide stopped mid-sentence');
+  await sheet.getByRole('button', { name: 'change' }).click();
+  await sheet.getByLabel('When').fill('2026-10-29T15:30');
+  await sheet.getByLabel('Part of a planned stop?').selectOption({ label: 'Rome Stop' });
+  await sheet.getByRole('button', { name: 'Save' }).click();
+  await expect(sheet).toHaveCount(0);
+
+  // It reads as part of that stop, and sits with it — not after Dubai's stops.
+  expect(await rowText(page)).toEqual([
+    '# Rome',
+    'Rome Stop []',
+    'The guide stopped mid-sentence [at Rome Stop · 15:30]',
+    '# Dubai',
+    'Dubai Stop []',
+  ]);
+
+  // 2. Opening it shows the same time the list does, and editing keeps it.
+  await page.getByText('The guide stopped mid-sentence').click();
+  await expect(sheet.getByText('At · 15:30')).toBeVisible();
+  await sheet.getByRole('button', { name: 'change' }).click();
+  await expect(sheet.getByLabel('When')).toHaveValue('2026-10-29T15:30');
+  await sheet.getByLabel('When').fill('2026-10-29T15:45');
+  await sheet.getByRole('button', { name: 'Save' }).click();
+  await expect(sheet).toHaveCount(0);
+  await expect(page.locator('.moment-row .stop-meta')).toContainText('15:45');
+  await page.getByText('The guide stopped mid-sentence').click();
+  await expect(sheet.getByText('At · 15:45')).toBeVisible();
+  await sheet.getByRole('button', { name: 'Cancel' }).click();
+
+  // 3. A moment of its own goes on the map; one at a stop shows at its pin.
+  await page.getByRole('button', { name: 'What happened?' }).click();
+  await sheet.getByRole('button', { name: 'Rome' }).click();
+  await sheet.getByLabel('Place or event').fill('Rain, and a doorway');
+  await sheet.getByRole('button', { name: 'Save' }).click();
+  await expect(sheet).toHaveCount(0);
+
+  await page.getByRole('tab', { name: 'Map' }).click();
+  const unplaced = page.locator('.map-unplaced-row');
+  await expect(unplaced).toHaveCount(2); // Rome Stop and the loose moment
+  await expect(unplaced).toContainText(['Rome Stop', 'Rain, and a doorway']);
+  await unplaced
+    .filter({ hasText: 'Rain, and a doorway' })
+    .getByRole('button', { name: 'Place on map' })
+    .click();
+  await page.locator('.map-canvas').click({ position: { x: 120, y: 120 } });
+  await expect(page.locator('.map-pin--moment')).toHaveCount(1);
+  await expect(unplaced).toHaveCount(1);
+
+  // 4. A pin can be taken off the map again.
+  await page.locator('.map-pin--moment').click();
+  await page.getByRole('button', { name: 'Remove from map' }).click();
+  await expect(page.locator('.map-pin--moment')).toHaveCount(0);
+  await expect(unplaced).toHaveCount(2);
+  const stored = await page.evaluate(async () => {
+    const { db } = await import(/* @vite-ignore */ '/src/lib/db.ts');
+    const m = (await db.moments.toArray()).find((r: { title: string }) =>
+      r.title.startsWith('Rain'),
+    );
+    return { hasLat: 'lat' in m, lat: m.lat };
+  });
+  expect(stored).toEqual({ hasLat: false, lat: undefined });
+
+  // 5. The leg goes. Its records stay, and stop being shown as Dubai's.
+  await page.evaluate(async (id) => {
+    const { deleteCity } = await import(/* @vite-ignore */ '/src/lib/trips.ts');
+    await deleteCity(id);
+  }, rome);
+  await page.getByRole('tab', { name: 'List' }).click();
+  // Rome's records keep their place under a header that still names Rome —
+  // never read as Dubai's, and never silently merged into its list.
+  expect(await rowText(page)).toEqual([
+    '# Rome · leg deleted',
+    'Rome Stop []',
+    'The guide stopped mid-sentence [at Rome Stop · 15:45]',
+    'Rain, and a doorway [off-plan · 13:00]',
+    '# Dubai',
+    'Dubai Stop []',
+  ]);
+
+  expect(
+    await page.evaluate(async () => {
+      const { db } = await import(/* @vite-ignore */ '/src/lib/db.ts');
+      const s = (await db.stops.toArray()).find((r: { name: string }) => r.name === 'Rome Stop');
+      return { cityId: s.cityId, legName: s.legName };
+    }),
+  ).toEqual({ cityId: null, legName: 'Rome' });
+
+  // 6. And the time it is read and edited in is still Rome's.
+  await page.getByText('The guide stopped mid-sentence').click();
+  await expect(sheet.getByText('At · 15:45')).toBeVisible();
+  await sheet.getByRole('button', { name: 'change' }).click();
+  await sheet.getByLabel('When').fill('2026-10-29T16:05');
+  await sheet.getByRole('button', { name: 'Save' }).click();
+  await expect(sheet).toHaveCount(0);
+  await expect(page.locator('.moment-row').first().locator('.stop-meta')).toContainText('16:05');
+  await page.getByText('The guide stopped mid-sentence').click();
+  await expect(sheet.getByText('At · 16:05')).toBeVisible();
+  await sheet.getByRole('button', { name: 'Cancel' }).click();
+
+  // 7. A detached record can be put back on a leg.
+  await page.getByRole('button', { name: 'Rome Stop', exact: true }).click();
+  await page.getByLabel('Leg').selectOption({ label: 'Dubai' });
+  await page.getByRole('button', { name: 'Done' }).click();
+  await expect(page.locator('.stop-city-head')).toHaveCount(2);
+});
+
+test('a moment on the map survives a backup round trip', async ({ page }) => {
+  await page.goto('/');
+  const result = await page.evaluate(async () => {
+    const [{ db }, { createTrip, addCity }, { addMoment, placeMoment }, exp] = await Promise.all(
+      ['/src/lib/db.ts', '/src/lib/trips.ts', '/src/lib/moments.ts', '/src/lib/export.ts'].map(
+        (p) => import(/* @vite-ignore */ p),
+      ),
+    );
+    const trip = await createTrip('custom');
+    const city = await addCity(trip, 'Rome', 'EUR', { tz: 'Europe/Rome' });
+    const id = await addMoment({ tripId: trip, cityId: city, title: 'Rain, and a doorway' });
+    await placeMoment(id, { lat: 41.9009, lng: 12.4833 });
+    const saved = new Blob([await (await exp.buildZipBackup()).arrayBuffer()]);
+    const { backup, files } = await exp.readBackupFile(saved);
+    await placeMoment(id, null);
+    await db.moments.delete(id);
+    await exp.importBackup(backup, files);
+    const back = await db.moments.get(id);
+    return { lat: back.lat, lng: back.lng, title: back.title };
+  });
+  expect(result).toEqual({ lat: 41.9009, lng: 12.4833, title: 'Rain, and a doorway' });
 });

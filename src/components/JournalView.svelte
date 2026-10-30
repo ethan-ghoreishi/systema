@@ -57,7 +57,10 @@
     return p.stopId ? (stopNameById[p.stopId] ?? '') : '';
   }
 
-  const mappedStops = $derived(stops.filter((s) => s.lat != null && s.lng != null));
+  // Anything with a place on it: a moment of its own can be the only pin.
+  const mapped = $derived(
+    [...stops, ...($momentsQ ?? [])].filter((r) => r.lat != null && r.lng != null),
+  );
 </script>
 
 <div class="journal">
@@ -72,10 +75,16 @@
     </div>
   </div>
 
-  {#if mappedStops.length}
+  {#if mapped.length}
     <div class="journal-map">
       <span class="section-title">The route</span>
-      <StopsMap {stops} {cities} readonly memoryKey={`journal:${trip.id}:map-city`} />
+      <StopsMap
+        {stops}
+        moments={$momentsQ ?? []}
+        {cities}
+        readonly
+        memoryKey={`journal:${trip.id}:map-city`}
+      />
     </div>
   {/if}
 

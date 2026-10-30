@@ -1305,7 +1305,7 @@ class NasBackup {
         ok: false,
         detail: reached
           ? `The server answered, but not as the receiver this app may read: ${shown(base)} is a page without the receiver's CORS headers — the address isn't the receiver's (it should end in /systema-backup.php), or something in front of PHP strips them.`
-          : "No connection: wrong address, a port closed from this network, the NAS off, or a certificate this device doesn't trust. Open the address in Safari — a certificate warning there means the certificate. (Browsers don't tell an app which it is.)",
+          : "No connection: wrong address, a port closed from this network, the NAS off, a certificate this device doesn't trust, or — for an address on your own network — Chrome's local-network permission refused. Open the address in Safari — a certificate warning there means the certificate. (Browsers don't tell an app which it is.)",
       });
       return finish();
     }

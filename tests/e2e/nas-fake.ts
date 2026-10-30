@@ -200,6 +200,7 @@ export async function device(
       '/src/lib/stops.ts',
       '/src/lib/photos.ts',
       '/src/lib/expenses.ts',
+      '/src/lib/moments.ts',
       '/src/lib/export.ts',
       '/src/lib/nas.svelte.ts',
       '/src/lib/settings.svelte.ts',

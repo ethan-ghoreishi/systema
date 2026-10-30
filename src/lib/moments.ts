@@ -61,20 +61,46 @@ export type TimelineItem =
   | { kind: 'moment'; moment: Moment; at: number };
 
 /**
- * What happened, in the order it happened: visited stops in route order, with
- * each moment placed after the last stop visited before it. Stops ticked by
- * older versions have no visit time; a moment then goes after its own city's
- * stops. Pure.
+ * What happened, in the order it happened: stops in route order, with each
+ * moment placed where it belongs — at the stop it is part of, else after the
+ * last stop visited before it. Stops ticked by older versions have no visit
+ * time; a moment then goes after its own city's stops. Pure.
+ *
+ * `visitedOnly` (the default) keeps the trip pack to places actually visited;
+ * the Stops list passes false, so the same rule orders the list you tick.
  */
-export function visitTimeline(stops: Stop[], moments: Moment[], cities: City[]): TimelineItem[] {
+export function visitTimeline(
+  stops: Stop[],
+  moments: Moment[],
+  cities: City[],
+  { visitedOnly = true }: { visitedOnly?: boolean } = {},
+): TimelineItem[] {
   const cityRank = new Map([...cities].sort((a, b) => a.order - b.order).map((c, i) => [c.id, i]));
   const rank = (cityId: string | null) => cityRank.get(cityId ?? '') ?? Infinity;
   const out: TimelineItem[] = [...stops]
-    .filter((s) => s.visited)
+    .filter((s) => !visitedOnly || s.visited)
     .sort((a, b) => a.order - b.order)
     .map((stop) => ({ kind: 'stop', stop, at: stop.visitedAt }));
 
+  // A moment sitting at its stop is out of time order by design, so it never
+  // decides where a later one goes.
+  const atAStop = (m: Moment) =>
+    !!m.stopId && out.some((it) => it.kind === 'stop' && it.stop.id === m.stopId);
   for (const m of [...moments].sort((a, b) => a.at - b.at)) {
+    // Part of a planned stop: with it, after anything already placed there.
+    const linked = atAStop(m)
+      ? out.findIndex((it) => it.kind === 'stop' && it.stop.id === m.stopId)
+      : -1;
+    if (linked >= 0) {
+      let at = linked;
+      while (
+        out[at + 1]?.kind === 'moment' &&
+        (out[at + 1] as { moment: Moment }).moment.stopId === m.stopId
+      )
+        at += 1;
+      out.splice(at + 1, 0, { kind: 'moment', moment: m, at: m.at });
+      continue;
+    }
     let idx = -1;
     let afterTimedStop = false;
     out.forEach((it, i) => {
@@ -92,9 +118,92 @@ export function visitTimeline(stops: Stop[], moments: Moment[], cities: City[]):
     }
     // Moments keep their own time order.
     out.forEach((it, i) => {
-      if (it.kind === 'moment' && it.at <= m.at) idx = Math.max(idx, i);
+      if (it.kind === 'moment' && it.at <= m.at && !atAStop(it.moment)) idx = Math.max(idx, i);
     });
+    // Never land between a stop and the moments that are part of it.
+    while (out[idx + 1]?.kind === 'moment' && atAStop((out[idx + 1] as { moment: Moment }).moment))
+      idx += 1;
     out.splice(idx + 1, 0, { kind: 'moment', moment: m, at: m.at });
   }
   return out;
+}
+
+/** Prefix of the group key for records kept from a leg that was deleted. */
+export const GONE = 'gone:';
+
+/**
+ * The group a record belongs to in the Stops list: its leg; the leg whose
+ * name it kept when that leg was deleted; or nothing.
+ */
+export function groupKey(
+  record: { cityId: string | null; legName?: string },
+  cities: Pick<City, 'id'>[],
+): string | null {
+  if (record.cityId && cities.some((c) => c.id === record.cityId)) return record.cityId;
+  return record.legName ? GONE + record.legName : null;
+}
+
+/**
+ * The Stops list: runs of consecutive stops in one group, as the list already
+ * orders them, each with the moments that belong to it — one that is part of
+ * a planned stop joins the run holding that stop, wherever that is; the rest
+ * join their own group's last run. Groups with only moments come after.
+ * Within a run, `visitTimeline` decides the order. Pure.
+ */
+export function stopGroups(
+  stops: Stop[],
+  moments: Moment[],
+  cities: City[],
+): { key: string | null; items: TimelineItem[] }[] {
+  const runs: { key: string | null; stops: Stop[] }[] = [];
+  for (const stop of stops) {
+    const key = groupKey(stop, cities);
+    const last = runs[runs.length - 1];
+    if (last && last.key === key) last.stops.push(stop);
+    else runs.push({ key, stops: [stop] });
+  }
+  // A group returned to later holds its loose moments once, at the end.
+  const lastRun = new Map(runs.map((r, i) => [r.key, i]));
+  const runOf = (m: Moment) => {
+    const atStop = m.stopId ? runs.findIndex((r) => r.stops.some((s) => s.id === m.stopId)) : -1;
+    return atStop >= 0 ? atStop : (lastRun.get(groupKey(m, cities)) ?? -1);
+  };
+  const out = runs.map((run, i) => ({
+    key: run.key,
+    items: visitTimeline(
+      run.stops,
+      moments.filter((m) => runOf(m) === i),
+      cities,
+      { visitedOnly: false },
+    ),
+  }));
+  // Groups with no stops of their own still have their place.
+  const loose = moments.filter((m) => runOf(m) < 0);
+  for (const key of [...new Set(loose.map((m) => groupKey(m, cities)))])
+    out.push({
+      key,
+      items: loose
+        .filter((m) => groupKey(m, cities) === key)
+        .sort((a, b) => a.at - b.at)
+        .map((moment) => ({ kind: 'moment' as const, moment, at: moment.at })),
+    });
+  return out;
+}
+
+/**
+ * Put a moment on the map, or take it off again (`null`). Removing deletes
+ * the fields rather than storing a blank, so an older device still reads the
+ * record and a merge sees the absence for what it is.
+ */
+export async function placeMoment(
+  id: string,
+  pos: { lat: number; lng: number } | null,
+): Promise<void> {
+  await db.moments.update(id, (m) => {
+    if (pos) Object.assign(m, pos);
+    else {
+      delete m.lat;
+      delete m.lng;
+    }
+  });
 }

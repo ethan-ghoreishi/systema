@@ -188,6 +188,11 @@ export interface Stop {
    * still reaches this stop.
    */
   tz?: string;
+  /**
+   * The name of that deleted leg, kept for the same reason: so the record
+   * reads as the Rome stop it is, not as one of the legs that remain.
+   */
+  legName?: string;
   order: number;
   createdAt: number;
   updatedAt?: number;
@@ -208,6 +213,14 @@ export interface Moment {
   stopId: string | null;
   /** The zone `at` is read in, kept only when its leg is deleted (see Stop.tz). */
   tz?: string;
+  /** The name of that deleted leg, kept for the same reason (see Stop.legName). */
+  legName?: string;
+  /**
+   * Where it happened, when it is a place of its own. A moment linked to a
+   * stop shows at that stop's pin instead and carries none.
+   */
+  lat?: number;
+  lng?: number;
   createdAt: number;
   updatedAt?: number;
 }

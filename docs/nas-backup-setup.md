@@ -227,6 +227,44 @@ sticking point:
 Until Tailscale is set up, use the manual fallback below (it needs no HTTPS at
 all).
 
+## On your own wifi, without Tailscale
+
+A laptop at home doesn't need Tailscale to reach the NAS — but it does need an
+`https://` address with a certificate the browser trusts, and the NAS's LAN IP
+has none. DSM already serves one: QuickConnect gives the NAS a
+`https://<your-id>.direct.quickconnect.to` name with a real Let's Encrypt
+certificate that Synology renews by itself, and nginx presents that certificate
+on the LAN IP as soon as a request asks for that name. What is missing is only
+the name's address: public DNS points it at your home's public IP, which most
+UK ISPs refuse inbound (and few routers loop back from inside).
+
+So point the name at the NAS on this machine, and nothing else changes:
+
+```sh
+echo "192.168.0.20 <your-id>.direct.quickconnect.to" | sudo tee -a /etc/hosts
+```
+
+Then use `https://<your-id>.direct.quickconnect.to/systema-backup.php` as the
+receiver URL in Settings. Measured on this NAS (2026-10-30): a valid
+certificate, the receiver's CORS headers intact, `{"ok":true,…,"version":3}`,
+in both Chromium and WebKit from the live GitHub Pages origin.
+
+- **Nothing on the NAS changes**, and the Tailscale `.ts.net` route is
+  untouched — it is a different name, so the iPhone carries on as it is.
+- **Undo** by deleting that line from `/etc/hosts`.
+- **Chrome asks once.** A page on `https://…github.io` reaching an address on
+  your own network needs Chrome's local-network permission; allow it when
+  asked. Refused, the request fails exactly like no connection at all, which is
+  what Test connection then reports. Safari does not ask.
+- It is a **home-wifi** route: away from home that name no longer resolves to
+  the NAS while the line is there. It doesn't reach it from outside anyway.
+
+The same line works for a `synology.me` DDNS name with a Let's Encrypt
+certificate, if you have one. It does **not** work for the LAN IP on its own
+(`https://192.168.0.20/…`): DSM's default certificate is issued for the name
+`synology`, so every browser refuses it until that device is told to make an
+exception, one browser at a time.
+
 ## Zero-setup fallback (works today, manual)
 
 Until the receiver is up — or any time you want a belt-and-braces copy:

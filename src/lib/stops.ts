@@ -32,6 +32,24 @@ export async function updateStop(id: string, patch: Partial<Stop>): Promise<void
 }
 
 /**
+ * Put a stop on the map, or take it off again (`null`). Removing deletes the
+ * fields rather than storing a blank, so an older device still reads the
+ * record and a merge sees the absence for what it is.
+ */
+export async function placeStop(
+  id: string,
+  pos: { lat: number; lng: number } | null,
+): Promise<void> {
+  await db.stops.update(id, (s) => {
+    if (pos) Object.assign(s, pos);
+    else {
+      delete s.lat;
+      delete s.lng;
+    }
+  });
+}
+
+/**
  * Delete a stop and the photos taken at it. An off-plan moment linked to it is
  * its own record: it stays, with its link cleared, and keeps its own photos —
  * those are indexed under this stop too, so they are explicitly spared.

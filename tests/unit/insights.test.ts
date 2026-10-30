@@ -178,6 +178,17 @@ describe('compareCities', () => {
         stopId: null,
         createdAt: 1,
       },
+      // Part of a planned stop: it happened inside the plan, not off it.
+      {
+        id: 'm2',
+        tripId: 'x',
+        cityId: 'blq',
+        title: 'The guide stopped mid-sentence',
+        note: '',
+        at: 2,
+        stopId: 'a',
+        createdAt: 2,
+      },
     ]);
     expect(r).toMatchObject({
       planned: 3,

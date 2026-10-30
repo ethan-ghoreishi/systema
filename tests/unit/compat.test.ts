@@ -57,6 +57,8 @@ function snapshot(): Backup {
         checklist: [],
         visited: true,
         visitedAt: 5,
+        tz: 'Europe/Rome',
+        legName: 'Rome',
         guide: { anchor: 'Anatomical theatre', lookFor: ['coats of arms'] },
         order: 0,
         createdAt: 1,
@@ -94,6 +96,10 @@ function snapshot(): Backup {
         note: 'Stumbled into it',
         at: 9,
         stopId: null,
+        tz: 'Europe/Rome',
+        legName: 'Rome',
+        lat: 44.4938,
+        lng: 11.3426,
         createdAt: 9,
       },
     ],
@@ -134,6 +140,52 @@ describe('mixed-version sync', () => {
       exit: { throughTicket: 'outbound' },
     });
     expect(merged.stops[0]).toMatchObject({ guide: { anchor: 'Anatomical theatre' } });
+  });
+
+  it("carries a moment's own place and kept zone through a merge", () => {
+    const s = snapshot();
+    const base = { ...s, kv: [], photosMeta: s.photosMeta! } as unknown as SyncRecords;
+    const local = JSON.parse(JSON.stringify(base));
+    local.moments[0].title = 'Portico concert, second set';
+    local.moments[0].updatedAt = 99;
+    const { merged } = mergeRecords(base, local, base, true);
+    expect(merged.moments![0]).toMatchObject({
+      title: 'Portico concert, second set',
+      lat: 44.4938,
+      lng: 11.3426,
+      tz: 'Europe/Rome',
+      legName: 'Rome',
+    });
+  });
+
+  // Taking a pin off the map deletes the fields rather than storing a blank:
+  // the previous version's validator only accepts a number or nothing at all,
+  // and a null would stop the iPhone syncing until it updated.
+  it('a record taken off the map still passes the previous validator', () => {
+    const s = snapshot();
+    delete s.stops[0].lat;
+    delete s.stops[0].lng;
+    delete s.moments![0].lat;
+    delete s.moments![0].lng;
+    expect(() => validateBackup(s)).not.toThrow();
+    expect(() => oldValidate(s)).not.toThrow();
+    const blanked = snapshot();
+    (blanked.stops[0] as Record<string, unknown>).lat = null;
+    expect(() => validateBackup(blanked)).toThrow();
+  });
+
+  // With a base both sides descend from, removing a pin is attributable: the
+  // other device's coordinates must not flow back in.
+  it('removing a pin survives a merge against a device that still has it', () => {
+    const s = snapshot();
+    const base = { ...s, kv: [], photosMeta: s.photosMeta! } as unknown as SyncRecords;
+    const unplaced = JSON.parse(JSON.stringify(base));
+    delete unplaced.stops[0].lat;
+    delete unplaced.stops[0].lng;
+    unplaced.stops[0].updatedAt = 99;
+    const { merged } = mergeRecords(base, unplaced, base, true);
+    expect(merged.stops[0].lat).toBeUndefined();
+    expect(merged.stops[0].lng).toBeUndefined();
   });
 
   it("an older device's snapshot (no moments key) deletes no moments", () => {
