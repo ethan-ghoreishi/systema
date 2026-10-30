@@ -174,7 +174,8 @@ export async function cityReferences(
  * A stop's visit time and a moment's time are instants, read in the zone of
  * the leg they happened in. That leg is about to go, so each one that has a
  * time keeps the zone on itself: an afternoon in Rome goes on reading as the
- * afternoon it was, not an hour earlier in London.
+ * afternoon it was, not an hour earlier in London. This leg's zone replaces
+ * any kept earlier — a record moved here since belongs to this one.
  */
 export async function deleteCity(id: string): Promise<void> {
   const city = await db.cities.get(id);
@@ -186,7 +187,7 @@ export async function deleteCity(id: string): Promise<void> {
       .equals(id)
       .modify((s) => {
         s.cityId = null;
-        if (tz && s.visitedAt != null && !s.tz) s.tz = tz;
+        if (tz && s.visitedAt != null) s.tz = tz;
       });
     await db.expenses.where('cityId').equals(id).modify({ cityId: null });
     await db.moments
@@ -194,7 +195,7 @@ export async function deleteCity(id: string): Promise<void> {
       .equals(id)
       .modify((m) => {
         m.cityId = null;
-        if (tz && !m.tz) m.tz = tz;
+        if (tz) m.tz = tz;
       });
     await db.cities.delete(id);
   });

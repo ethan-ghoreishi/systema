@@ -18,7 +18,7 @@
   } from '../../lib/stops';
   import { addPhotos, deletePhoto, downloadPhoto, photoTime } from '../../lib/photos';
   import { instantToWall } from '../../lib/tz';
-  import { zoneOf } from '../../lib/moments';
+  import { visitTimeline, zoneOf } from '../../lib/moments';
   import { nasBackup } from '../../lib/nas.svelte';
   import PhotoPicker from '../PhotoPicker.svelte';
   import MomentCapture from '../MomentCapture.svelte';
@@ -52,55 +52,63 @@
   const cities = $derived($citiesQ ?? []);
   const allPhotos = $derived($photosQ ?? []);
 
-  // Multi-city trips group their stops under city sub-headers.
-  const multiCity = $derived(cities.length >= 2);
   const cityNameById = $derived(new Map(cities.map((c) => [c.id, c.name])));
+  /** A record's group: its leg, or null — unassigned, or a leg since deleted. */
+  const keyOf = (cityId: string | null | undefined) =>
+    cityId && cityNameById.has(cityId) ? cityId : null;
+  // Sub-headers appear as soon as there is more than one group, so a record
+  // left over from a deleted leg is never shown as part of the leg that
+  // remains. One group (the usual single-city trip) needs no headers.
+  const grouped = $derived(new Set([...stops, ...moments].map((r) => keyOf(r.cityId))).size > 1);
+  const groupLabel = (key: string | null) => (key && cityNameById.get(key)) || 'Unassigned';
 
   type StopRow =
     | { kind: 'header'; label: string }
     | { kind: 'stop'; stop: Stop; index: number }
     | { kind: 'moment'; moment: Moment };
-  /** Planned stops grouped by city, each city's off-plan moments after its stops. */
+  /**
+   * The list: stops in their own order, grouped by leg, with each moment where
+   * it belongs — at the stop it is part of, else after the last stop visited
+   * before it (see visitTimeline, which also orders the trip pack).
+   */
   const stopRows = $derived.by<StopRow[]>(() => {
-    const momentsFor = (key: string | null) =>
-      moments
-        .filter(
-          (m) => (m.cityId ?? null) === key || (key === null && !cityNameById.has(m.cityId ?? '')),
-        )
-        .map((moment) => ({ kind: 'moment' as const, moment }));
-    if (!multiCity) {
-      const rows: StopRow[] = stops.map((stop, index) => ({ kind: 'stop', stop, index }));
-      if (moments.length)
-        rows.push(
-          { kind: 'header', label: 'Off the plan' },
-          ...moments.map((moment) => ({ kind: 'moment' as const, moment })),
-        );
-      return rows;
+    const indexOf = new Map(stops.map((s, i) => [s.id, i]));
+    // Runs of consecutive stops in one leg, as the list already orders them.
+    const runs: { key: string | null; stops: Stop[] }[] = [];
+    for (const stop of stops) {
+      const key = keyOf(stop.cityId);
+      const last = runs[runs.length - 1];
+      if (last && last.key === key) last.stops.push(stop);
+      else runs.push({ key, stops: [stop] });
     }
+    // A leg's moments go with its last run, so a leg returned to later never
+    // shows them twice.
+    const lastRun = new Map(runs.map((r, i) => [r.key, i]));
     const rows: StopRow[] = [];
-    let lastKey: string | null | undefined = undefined;
-    const closeGroup = () => {
-      if (lastKey !== undefined) rows.push(...momentsFor(lastKey));
-    };
-    stops.forEach((stop, index) => {
-      const key = stop.cityId && cityNameById.has(stop.cityId) ? stop.cityId : null;
-      if (key !== lastKey) {
-        closeGroup();
-        rows.push({ kind: 'header', label: (key && cityNameById.get(key)) || 'Other' });
-        lastKey = key;
-      }
-      rows.push({ kind: 'stop', stop, index });
+    runs.forEach((run, i) => {
+      const mine =
+        lastRun.get(run.key) === i ? moments.filter((m) => keyOf(m.cityId) === run.key) : [];
+      if (grouped) rows.push({ kind: 'header', label: groupLabel(run.key) });
+      for (const it of visitTimeline(run.stops, mine, cities, { visitedOnly: false }))
+        rows.push(
+          it.kind === 'stop'
+            ? { kind: 'stop', stop: it.stop, index: indexOf.get(it.stop.id)! }
+            : { kind: 'moment', moment: it.moment },
+        );
     });
-    closeGroup();
-    // Cities with moments but no stops yet.
-    const shownKeys = new Set(
-      stops.map((s) => (s.cityId && cityNameById.has(s.cityId) ? s.cityId : null)),
-    );
-    for (const c of cities)
-      if (!shownKeys.has(c.id) && moments.some((m) => m.cityId === c.id))
-        rows.push({ kind: 'header', label: c.name }, ...momentsFor(c.id));
+    // Groups with moments but no stops at all still have their place.
+    const shown = new Set(runs.map((r) => r.key));
+    for (const key of [...cities.map((c) => c.id), null]) {
+      if (shown.has(key)) continue;
+      const mine = moments.filter((m) => keyOf(m.cityId) === key);
+      if (!mine.length) continue;
+      if (grouped) rows.push({ kind: 'header', label: groupLabel(key) });
+      rows.push(...mine.map((moment) => ({ kind: 'moment' as const, moment })));
+    }
     return rows;
   });
+
+  const stopNameById = $derived(new Map(stops.map((s) => [s.id, s.name])));
 
   function momentTime(m: Moment): string {
     return instantToWall(m.at, zoneOf(m, cities)).slice(11, 16);
@@ -155,14 +163,12 @@
   let newStopName = $state('');
   async function addStopNow() {
     if (!newStopName.trim()) return;
-    // A new stop is appended, so in a multi-city trip it joins the leg the
-    // list ends in; otherwise it would land under "Other" for good. The leg
-    // can be changed on the stop itself.
-    const cityId = !multiCity
-      ? null
-      : stops.length
-        ? (stops[stops.length - 1].cityId ?? null)
-        : (cities[0]?.id ?? null);
+    // A new stop is appended, so it joins the leg the list ends in — or the
+    // first leg when there are no stops yet. Without legs it is unassigned.
+    // The leg can be changed on the stop itself.
+    const cityId = stops.length
+      ? (stops[stops.length - 1].cityId ?? null)
+      : (cities[0]?.id ?? null);
     await addStop(trip.id, newStopName, cityId);
     newStopName = '';
   }
@@ -237,7 +243,7 @@
   // ---- detail: photos + checklist ----
   async function onPhotos(files: File[]) {
     if (!selected) return;
-    const tz = cities.find((c) => c.id === selected.cityId)?.tz;
+    const tz = zoneOf(selected, cities);
     await addPhotos(files, { tripId: trip.id, stopId: selected.id, kind: 'stop', tz });
     flashSaved();
   }
@@ -295,7 +301,7 @@
       <span>Visited</span>
     </label>
 
-    {#if multiCity}
+    {#if cities.length > 0}
       <div>
         <label class="label" for="stop-city">Leg</label>
         <select
@@ -449,7 +455,7 @@
 {:else}
   <!-- List / Map -->
   <div class="stops">
-    {#if stops.length > 0}
+    {#if stops.length > 0 || moments.length > 0}
       <div class="segmented stops-toggle" role="tablist" aria-label="List or map">
         <button
           class="segment"
@@ -468,8 +474,14 @@
       </div>
     {/if}
 
-    {#if stopView === 'map' && stops.length > 0}
-      <StopsMap {stops} {cities} onOpen={openStop} memoryKey={`stops:${trip.id}:map-city`} />
+    {#if stopView === 'map' && (stops.length > 0 || moments.length > 0)}
+      <StopsMap
+        {stops}
+        {moments}
+        {cities}
+        onOpen={openStop}
+        memoryKey={`stops:${trip.id}:map-city`}
+      />
     {:else}
       {#if extractable.length > 0}
         <button class="btn btn--ghost" onclick={extractNow}>
@@ -490,7 +502,7 @@
         <button class="icon-btn" type="submit" aria-label="Add stop"><Icon name="plus" /></button>
       </form>
 
-      {#if stops.length}
+      {#if stopRows.length}
         <div class="stop-list">
           {#each stopRows as row, ri (row.kind === 'stop' ? row.stop.id : row.kind === 'moment' ? `m-${row.moment.id}` : `h-${ri}-${row.label}`)}
             {#if row.kind === 'header'}
@@ -503,7 +515,11 @@
                 <button class="stop-open" onclick={() => (editingMoment = m)}>
                   <span class="stop-name">{m.title}</span>
                   <span class="stop-meta"
-                    >off-plan · {momentTime(m)}{n ? ` · ${n} photo${n > 1 ? 's' : ''}` : ''}</span
+                    >{m.stopId && stopNameById.get(m.stopId)
+                      ? `at ${stopNameById.get(m.stopId)}`
+                      : 'off-plan'} · {momentTime(m)}{n
+                      ? ` · ${n} photo${n > 1 ? 's' : ''}`
+                      : ''}</span
                   >
                 </button>
               </div>

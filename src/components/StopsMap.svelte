@@ -2,8 +2,9 @@
   import { onMount, onDestroy, untrack } from 'svelte';
   import L from 'leaflet';
   import 'leaflet/dist/leaflet.css';
-  import type { City, Stop } from '../lib/db';
-  import { updateStop } from '../lib/stops';
+  import type { City, Moment, Stop } from '../lib/db';
+  import { placeStop } from '../lib/stops';
+  import { placeMoment } from '../lib/moments';
   import { activeLegId } from '../lib/trip-shape';
   import { recall, remember } from '../lib/ui-memory';
 
@@ -12,19 +13,24 @@
    * numbered markers in walking order, joined by a walking line — within a
    * city only. A multi-city trip picks the city (defaulting to the one you're
    * in); "Transfers" shows the cities themselves, joined by straight dashed
-   * lines that are clearly not routes. Markers drag to fine-tune; stops
-   * without coordinates queue below — tap one, then tap the map to place it.
+   * lines that are clearly not routes. Markers drag to fine-tune, and a
+   * marker's own popup takes it off the map again; stops without coordinates
+   * queue below — tap one, then tap the map to place it. A moment that is part
+   * of a planned stop shows at that stop's pin; one that is its own place gets
+   * a pin of its own, off the walking line.
    * In the journal (readonly) the map stays still until you tap to explore,
    * so it never traps the page's scroll.
    */
   let {
     stops,
+    moments = [],
     cities = [],
     onOpen,
     readonly = false,
     memoryKey,
   }: {
     stops: Stop[];
+    moments?: Moment[];
     cities?: City[];
     onOpen?: (stop: Stop) => void;
     readonly?: boolean;
@@ -38,19 +44,25 @@
   let mapEl: HTMLDivElement;
   let map: L.Map | null = null;
   let layer: L.LayerGroup | null = null;
-  let placingId = $state<string | null>(null);
+  let placing = $state<{ kind: 'stop' | 'moment'; id: string; name: string } | null>(null);
   let exploring = $state(untrack(() => !readonly));
   let fittedFor = '';
 
-  // The cities that have stops, in leg order, plus "Other" for unassigned ones.
+  /** Moments that are places of their own — one part of a stop shows at its pin. */
+  const ownPlace = $derived(
+    moments.filter((m) => !m.stopId || !stops.some((s) => s.id === m.stopId)),
+  );
+
+  // The legs that have something to show, in leg order, plus the unassigned.
   const groups = $derived.by(() => {
     const known = new Set(cities.map((c) => c.id));
+    const here = [...stops, ...ownPlace] as { cityId: string | null }[];
     const out = [...cities]
       .sort((a, b) => a.order - b.order)
-      .filter((c) => stops.some((s) => s.cityId === c.id))
+      .filter((c) => here.some((r) => r.cityId === c.id))
       .map((c) => ({ key: c.id, label: c.name }));
-    if (stops.some((s) => !s.cityId || !known.has(s.cityId)))
-      out.push({ key: OTHER, label: 'Other' });
+    if (here.some((r) => !r.cityId || !known.has(r.cityId)))
+      out.push({ key: OTHER, label: 'Unassigned' });
     return out;
   });
   const multi = $derived(groups.length > 1);
@@ -75,21 +87,34 @@
     if (memoryKey) remember(memoryKey, key);
   }
 
-  const inCity = (s: Stop, key: string | null) => {
+  const inCity = (r: { cityId: string | null }, key: string | null) => {
     if (key === null) return true;
-    if (key === OTHER) return !s.cityId || !cities.some((c) => c.id === s.cityId);
-    return s.cityId === key;
+    if (key === OTHER) return !r.cityId || !cities.some((c) => c.id === r.cityId);
+    return r.cityId === key;
   };
   /** The stops on screen, in walking order, numbered within their city. */
   const shown = $derived(selected === TRANSFERS ? [] : stops.filter((s) => inCity(s, selected)));
-  const unplaced = $derived(shown.filter((s) => s.lat == null || s.lng == null));
+  const shownMoments = $derived(
+    selected === TRANSFERS ? [] : ownPlace.filter((m) => inCity(m, selected)),
+  );
+  /** Moments that are part of a planned stop: they show at that stop's pin. */
+  const momentsAt = (stopId: string) =>
+    moments.filter((m) => m.stopId === stopId && !ownPlace.includes(m));
+  const unplaced = $derived([
+    ...shown
+      .filter((s) => s.lat == null || s.lng == null)
+      .map((s) => ({ kind: 'stop' as const, id: s.id, name: s.name, stop: s })),
+    ...shownMoments
+      .filter((m) => m.lat == null || m.lng == null)
+      .map((m) => ({ kind: 'moment' as const, id: m.id, name: m.title, stop: undefined })),
+  ]);
 
   function markerIcon(label: string, visited: boolean, kind = 'map-pin'): L.DivIcon {
     return L.divIcon({
       className: '',
       html: `<div class="${kind}${visited ? ' map-pin--visited' : ''}">${escapeHtml(label)}</div>`,
-      iconSize: kind === 'map-pin' ? [30, 30] : undefined,
-      iconAnchor: kind === 'map-pin' ? [15, 15] : undefined,
+      iconSize: kind.startsWith('map-pin') ? [30, 30] : undefined,
+      iconAnchor: kind.startsWith('map-pin') ? [15, 15] : undefined,
       popupAnchor: [0, -14],
     });
   }
@@ -111,6 +136,42 @@
         pts.reduce((a, s) => a + s.lng!, 0) / pts.length,
       ];
     return c.base?.lat != null && c.base?.lng != null ? [c.base.lat, c.base.lng] : null;
+  }
+
+  /** A marker's popup: what it is, and the ways to act on it. */
+  function popup(
+    title: string,
+    body: string[],
+    onRemove: () => void,
+    link?: { href: string; label: string },
+  ): HTMLElement {
+    const el = document.createElement('div');
+    const h = document.createElement('strong');
+    h.textContent = title;
+    el.append(h);
+    for (const line of body) {
+      const p = document.createElement('div');
+      p.className = 'hint';
+      p.textContent = line;
+      el.append(p);
+    }
+    if (link) {
+      const a = document.createElement('a');
+      a.href = link.href;
+      a.textContent = link.label;
+      el.append(document.createElement('br'), a);
+    }
+    if (!readonly) {
+      const b = document.createElement('button');
+      b.className = 'link-btn map-remove';
+      b.textContent = 'Remove from map';
+      b.onclick = () => {
+        map?.closePopup();
+        onRemove();
+      };
+      el.append(document.createElement('br'), b);
+    }
+    return el;
   }
 
   function redraw() {
@@ -139,21 +200,44 @@
           draggable: !readonly,
           title: s.name,
         });
-        const link = readonly
-          ? ''
-          : `<br/><a href="#/trip/${s.tripId}/stops/${s.id}">Open stop</a>`;
-        m.bindPopup(`<strong>${i + 1}. ${escapeHtml(s.name)}</strong>${link}`);
+        m.bindPopup(
+          popup(
+            `${i + 1}. ${s.name}`,
+            momentsAt(s.id).map((mo) => `Moment: ${mo.title}`),
+            () => void placeStop(s.id, null),
+            readonly ? undefined : { href: `#/trip/${s.tripId}/stops/${s.id}`, label: 'Open stop' },
+          ),
+        );
         if (!readonly) {
           m.on('dragend', () => {
             const p = m.getLatLng();
-            void updateStop(s.id, { lat: round6(p.lat), lng: round6(p.lng) });
+            void placeStop(s.id, { lat: round6(p.lat), lng: round6(p.lng) });
           });
         }
         layer!.addLayer(m);
       });
-      // A walking line only within one city.
+      // A walking line only within one city, and only through planned stops.
       if (points.length > 1)
         layer.addLayer(L.polyline(points, { className: 'map-route', weight: 3, dashArray: '6 8' }));
+
+      // Moments of their own: off the line, and never numbered with the stops.
+      for (const mo of shownMoments) {
+        if (mo.lat == null || mo.lng == null) continue;
+        const pos: L.LatLngExpression = [mo.lat, mo.lng];
+        points.push(pos);
+        const marker = L.marker(pos, {
+          icon: markerIcon('', false, 'map-pin map-pin--moment'),
+          draggable: !readonly,
+          title: mo.title,
+        });
+        marker.bindPopup(popup(mo.title, ['Off the plan'], () => void placeMoment(mo.id, null)));
+        if (!readonly)
+          marker.on('dragend', () => {
+            const p = marker.getLatLng();
+            void placeMoment(mo.id, { lat: round6(p.lat), lng: round6(p.lng) });
+          });
+        layer!.addLayer(marker);
+      }
     }
 
     // Refit when the city (or view) changes — not when a stop is dragged.
@@ -166,10 +250,11 @@
   }
 
   function onMapClick(e: L.LeafletMouseEvent) {
-    if (!placingId) return;
-    const id = placingId;
-    placingId = null;
-    void updateStop(id, { lat: round6(e.latlng.lat), lng: round6(e.latlng.lng) });
+    if (!placing) return;
+    const { kind, id } = placing;
+    placing = null;
+    const pos = { lat: round6(e.latlng.lat), lng: round6(e.latlng.lng) };
+    void (kind === 'stop' ? placeStop(id, pos) : placeMoment(id, pos));
   }
 
   function setInteractive(on: boolean) {
@@ -207,11 +292,13 @@
     map = null;
   });
 
-  // Redraw whenever stops or the chosen city change.
+  // Redraw whenever what is shown, or the chosen city, changes.
   $effect(() => {
     void shown;
+    void shownMoments;
     void selected;
     void stops;
+    void moments;
     redraw();
   });
 
@@ -253,23 +340,29 @@
   {/if}
 
   {#if !readonly && selected !== TRANSFERS}
-    {#if placingId}
-      {@const placing = stops.find((s) => s.id === placingId)}
+    {#if placing}
       <p class="hint hint--ok map-placing">
-        Tap the map to place “{placing?.name}” — or
-        <button class="link-btn" onclick={() => (placingId = null)}>cancel</button>
+        Tap the map to place “{placing.name}” — or
+        <button class="link-btn" onclick={() => (placing = null)}>cancel</button>
       </p>
     {/if}
 
     {#if unplaced.length}
       <div class="map-unplaced">
         <span class="section-title">Not on the map yet</span>
-        {#each unplaced as s (s.id)}
+        {#each unplaced as u (u.id)}
           <div class="map-unplaced-row">
-            <button class="stop-open" onclick={() => onOpen?.(s)}>
-              <span class="stop-name">{s.name}</span>
-            </button>
-            <button class="btn btn--ghost btn--sm" onclick={() => (placingId = s.id)}>
+            {#if u.stop}
+              <button class="stop-open" onclick={() => onOpen?.(u.stop)}>
+                <span class="stop-name">{u.name}</span>
+              </button>
+            {:else}
+              <span class="stop-open"><span class="stop-name">{u.name}</span></span>
+            {/if}
+            <button
+              class="btn btn--ghost btn--sm"
+              onclick={() => (placing = { kind: u.kind, id: u.id, name: u.name })}
+            >
               Place on map
             </button>
           </div>
@@ -277,7 +370,7 @@
       </div>
     {/if}
 
-    {#if stops.length === 0}
+    {#if stops.length === 0 && ownPlace.length === 0}
       <p class="hint">
         No stops yet — add them on the List view or extract them from the plan first.
       </p>

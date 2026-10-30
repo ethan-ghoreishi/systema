@@ -61,20 +61,42 @@ export type TimelineItem =
   | { kind: 'moment'; moment: Moment; at: number };
 
 /**
- * What happened, in the order it happened: visited stops in route order, with
- * each moment placed after the last stop visited before it. Stops ticked by
- * older versions have no visit time; a moment then goes after its own city's
- * stops. Pure.
+ * What happened, in the order it happened: stops in route order, with each
+ * moment placed where it belongs — at the stop it is part of, else after the
+ * last stop visited before it. Stops ticked by older versions have no visit
+ * time; a moment then goes after its own city's stops. Pure.
+ *
+ * `visitedOnly` (the default) keeps the trip pack to places actually visited;
+ * the Stops list passes false, so the same rule orders the list you tick.
  */
-export function visitTimeline(stops: Stop[], moments: Moment[], cities: City[]): TimelineItem[] {
+export function visitTimeline(
+  stops: Stop[],
+  moments: Moment[],
+  cities: City[],
+  { visitedOnly = true }: { visitedOnly?: boolean } = {},
+): TimelineItem[] {
   const cityRank = new Map([...cities].sort((a, b) => a.order - b.order).map((c, i) => [c.id, i]));
   const rank = (cityId: string | null) => cityRank.get(cityId ?? '') ?? Infinity;
   const out: TimelineItem[] = [...stops]
-    .filter((s) => s.visited)
+    .filter((s) => !visitedOnly || s.visited)
     .sort((a, b) => a.order - b.order)
     .map((stop) => ({ kind: 'stop', stop, at: stop.visitedAt }));
 
   for (const m of [...moments].sort((a, b) => a.at - b.at)) {
+    // Part of a planned stop: with it, after anything already placed there.
+    const linked = m.stopId
+      ? out.findIndex((it) => it.kind === 'stop' && it.stop.id === m.stopId)
+      : -1;
+    if (linked >= 0) {
+      let at = linked;
+      while (
+        out[at + 1]?.kind === 'moment' &&
+        (out[at + 1] as { moment: Moment }).moment.stopId === m.stopId
+      )
+        at += 1;
+      out.splice(at + 1, 0, { kind: 'moment', moment: m, at: m.at });
+      continue;
+    }
     let idx = -1;
     let afterTimedStop = false;
     out.forEach((it, i) => {
@@ -97,4 +119,22 @@ export function visitTimeline(stops: Stop[], moments: Moment[], cities: City[]):
     out.splice(idx + 1, 0, { kind: 'moment', moment: m, at: m.at });
   }
   return out;
+}
+
+/**
+ * Put a moment on the map, or take it off again (`null`). Removing deletes
+ * the fields rather than storing a blank, so an older device still reads the
+ * record and a merge sees the absence for what it is.
+ */
+export async function placeMoment(
+  id: string,
+  pos: { lat: number; lng: number } | null,
+): Promise<void> {
+  await db.moments.update(id, (m) => {
+    if (pos) Object.assign(m, pos);
+    else {
+      delete m.lat;
+      delete m.lng;
+    }
+  });
 }

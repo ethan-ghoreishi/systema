@@ -75,7 +75,13 @@
   {#if mappedStops.length}
     <div class="journal-map">
       <span class="section-title">The route</span>
-      <StopsMap {stops} {cities} readonly memoryKey={`journal:${trip.id}:map-city`} />
+      <StopsMap
+        {stops}
+        moments={$momentsQ ?? []}
+        {cities}
+        readonly
+        memoryKey={`journal:${trip.id}:map-city`}
+      />
     </div>
   {/if}
 

@@ -80,7 +80,42 @@ test('live NAS: two devices, concurrent pushes, deletion and a clear', async ({ 
   await sync(mac);
   expect((await state(mac)).stops[0].notes).toBe('');
 
-  // 4. The token never travelled in a URL.
+  // 4. A moment's own place on the map, and its link to a planned stop, reach
+  // the other device whole: both are optional fields this version added.
+  const moment = await app(
+    phone,
+    async (m, a) => {
+      const id = await m.addMoment({
+        tripId: a.trip,
+        cityId: null,
+        title: 'Rain, and a doorway',
+        at: Date.parse('2026-10-29T14:30:00Z'),
+        stopId: a.stop,
+      });
+      await m.placeMoment(id, { lat: 41.9009, lng: 12.4833 });
+      await m.db.moments.update(id, { tz: 'Europe/Rome' });
+      return id;
+    },
+    { trip, stop },
+  );
+  await sync(phone);
+  await sync(mac);
+  expect(await app(mac, (m, id) => m.db.moments.get(id), moment)).toMatchObject({
+    title: 'Rain, and a doorway',
+    stopId: stop,
+    lat: 41.9009,
+    lng: 12.4833,
+    tz: 'Europe/Rome',
+  });
+  // Taken off the map, it stays off — the other device does not put it back.
+  await app(phone, (m, id) => m.placeMoment(id, null), moment);
+  await sync(phone);
+  await sync(mac);
+  const back = await app(mac, (m, id) => m.db.moments.get(id), moment);
+  expect(back.lat).toBeUndefined();
+  expect(back.lng).toBeUndefined();
+
+  // 5. The token never travelled in a URL.
   expect(urls.some((u) => u.includes('systema-backup.php'))).toBe(true);
   expect(urls.filter((u) => u.includes('token='))).toEqual([]);
 });

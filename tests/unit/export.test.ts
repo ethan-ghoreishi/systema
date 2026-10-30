@@ -158,6 +158,31 @@ describe('buildTripPack', () => {
     expect(md).toContain(`[photo: ${photoRef('m1cccc00-0000')}] Copenhagen, Harbour swim,`);
   });
 
+  it('names the stop a linked moment belongs to, in the visit order', () => {
+    const cities: City[] = [
+      { id: 'c', tripId: 't', name: 'Copenhagen', currency: 'DKK', order: 0 },
+    ];
+    const at = Date.UTC(2026, 5, 27, 12, 0);
+    const visited = stop({ cityId: 'c', visitedAt: Date.UTC(2026, 5, 27, 10, 0) });
+    const moments: Moment[] = [
+      {
+        id: 'm',
+        tripId: 't',
+        cityId: 'c',
+        title: 'The guide stopped mid-sentence',
+        note: '',
+        at,
+        stopId: visited.id,
+        createdAt: 0,
+      },
+    ];
+    const md = pack({ cities, stops: [visited], moments, photos: [] });
+    expect(md).toContain(
+      `2. Sat 27 Jun, 13:00, at ${visited.name}: The guide stopped mid-sentence`,
+    );
+    expect(md).not.toContain('off-plan: The guide stopped');
+  });
+
   it('does not use em-dashes', () => {
     expect(pack()).not.toContain('—');
   });

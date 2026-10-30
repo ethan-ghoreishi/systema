@@ -137,6 +137,8 @@ export function validateBackup(value: unknown): asserts value is Backup {
         strings(r, 'tripId title note') &&
         numbers(r, 'at createdAt') &&
         optional(r, 'tz', 'string') &&
+        coord(r.lat, 90) &&
+        coord(r.lng, 180) &&
         (r.cityId === null || typeof r.cityId === 'string') &&
         (r.stopId === null || typeof r.stopId === 'string'),
     );

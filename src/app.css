@@ -1816,6 +1816,20 @@ textarea.field {
   font-weight: 700;
 }
 
+/* A moment is its own place, not a numbered step on the route. */
+.map-pin--moment {
+  width: 18px;
+  height: 18px;
+  margin: 6px;
+  background: var(--paper);
+  border: 3px solid var(--accent);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+.map-remove {
+  margin-top: 4px;
+}
+
 .map-pin--visited {
   background: var(--surface-sunken);
   color: var(--ink-faint);

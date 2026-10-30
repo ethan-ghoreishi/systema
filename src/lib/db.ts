@@ -208,6 +208,12 @@ export interface Moment {
   stopId: string | null;
   /** The zone `at` is read in, kept only when its leg is deleted (see Stop.tz). */
   tz?: string;
+  /**
+   * Where it happened, when it is a place of its own. A moment linked to a
+   * stop shows at that stop's pin instead and carries none.
+   */
+  lat?: number;
+  lng?: number;
   createdAt: number;
   updatedAt?: number;
 }

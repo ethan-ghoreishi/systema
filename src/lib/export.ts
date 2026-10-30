@@ -141,6 +141,7 @@ export function buildTripPack({
     }
   }
 
+  const stopName = new Map(stops.map((s) => [s.id, s.name]));
   const timeline = visitTimeline(stops, moments, cities);
   if (timeline.length) {
     lines.push('## Visit order', '');
@@ -152,7 +153,11 @@ export function buildTripPack({
       } else {
         const c = cityById.get(it.moment.cityId ?? '');
         lines.push(
-          `${i + 1}. ${localStamp(it.at, zoneOf(it.moment, cities))}, off-plan: ${it.moment.title}${c ? ` (${c.name})` : ''}`,
+          `${i + 1}. ${localStamp(it.at, zoneOf(it.moment, cities))}, ${
+            it.moment.stopId && stopName.get(it.moment.stopId)
+              ? `at ${stopName.get(it.moment.stopId)}`
+              : 'off-plan'
+          }: ${it.moment.title}${c ? ` (${c.name})` : ''}`,
         );
       }
     });
@@ -160,7 +165,6 @@ export function buildTripPack({
   }
 
   if (moments.length) {
-    const stopName = new Map(stops.map((s) => [s.id, s.name]));
     lines.push('## Unplanned / serendipitous moments (in visit order)', '');
     for (const it of timeline) {
       if (it.kind !== 'moment') continue;
