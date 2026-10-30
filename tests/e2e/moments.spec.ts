@@ -531,3 +531,49 @@ test('the leg and the stop it is part of are never left disagreeing', async ({ p
   expect(saved[0].leg).not.toBe(rome);
   expect(saved[0].leg).not.toBeNull();
 });
+
+// Two legs deleted, two zones kept: the moment's and the stop's. Making the
+// moment part of that stop hands the stop's zone to the saved record, so the
+// sheet has to read the time in that zone the moment it is picked — or the
+// time you see while typing is not the time that gets listed.
+test('a detached stop hands the sheet its zone, not just the saved record', async ({
+  makeContext,
+}) => {
+  const context = await makeContext({ timezoneId: 'Europe/London' });
+  const page = context.pages()[0] ?? (await context.newPage());
+  await page.goto('/');
+  const trip = await page.evaluate(async () => {
+    const [trips, { addStop, toggleVisited }, { addMoment }, { db }] = await Promise.all(
+      ['/src/lib/trips.ts', '/src/lib/stops.ts', '/src/lib/moments.ts', '/src/lib/db.ts'].map(
+        (p) => import(/* @vite-ignore */ p),
+      ),
+    );
+    const trip = await trips.createTrip('custom');
+    const rome = await trips.addCity(trip, 'Rome', 'EUR', { tz: 'Europe/Rome' });
+    const dubai = await trips.addCity(trip, 'Dubai', 'AED', { tz: 'Asia/Dubai' });
+    const stop = await addStop(trip, 'Dubai Stop', dubai);
+    await toggleVisited(await db.stops.get(stop)); // only a visited stop keeps its zone
+    // 12:30 UTC = 14:30 in Rome, 16:30 in Dubai.
+    await addMoment({
+      tripId: trip,
+      cityId: rome,
+      title: 'A door left open',
+      at: Date.parse('2026-06-15T12:30:00Z'),
+    });
+    await trips.deleteCity(rome);
+    await trips.deleteCity(dubai);
+    return trip;
+  });
+  await page.goto(`/#/trip/${trip}/stops`);
+
+  await page.getByText('A door left open').click();
+  const sheet = page.locator('dialog.modal[open]');
+  await expect(sheet.getByText('At · 14:30')).toBeVisible(); // Rome, its own kept zone
+  await sheet.getByLabel('Part of a planned stop?').selectOption({ label: 'Dubai Stop' });
+  await expect(sheet.getByText('At · 16:30')).toBeVisible(); // now read in the stop's
+  await sheet.getByRole('button', { name: 'Save' }).click();
+  await expect(sheet).toHaveCount(0);
+
+  // What the list shows is what the sheet showed when it was saved.
+  await expect(page.locator('.moment-row .stop-meta')).toContainText('16:30');
+});

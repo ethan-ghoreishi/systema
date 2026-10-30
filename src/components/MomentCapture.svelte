@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
   import type { City, Moment, Stop, Trip } from '../lib/db';
-  import { addMoment, deleteMoment, updateMoment, zoneOf } from '../lib/moments';
+  import { addMoment, alignToStop, deleteMoment, updateMoment, zoneOf } from '../lib/moments';
   import { addPhotos } from '../lib/photos';
   import { activeLegId } from '../lib/trip-shape';
   import { instantToWall, wallToInstant } from '../lib/tz';
@@ -52,10 +52,18 @@
   let saving = $state(false);
   let error = $state('');
 
-  // The zone this moment's time is read in: its leg's, or the one kept on the
-  // record when that leg was deleted — the same answer the list gives, so the
-  // time shown here, the time typed here and the time listed are one time.
-  const tz = $derived(zoneOf({ cityId, tz: moment?.tz }, cities));
+  // The zone this moment's time is read in: its leg's, the one kept on the
+  // record when that leg was deleted, or — once it is part of a stop — the
+  // stop's, by the same rule the save applies. So the time shown here, the
+  // time typed here and the time listed are one time.
+  const tz = $derived.by(() => {
+    const place = { cityId, tz: moment?.tz, legName: moment?.legName };
+    alignToStop(
+      place,
+      stops.find((s) => s.id === stopId),
+    );
+    return zoneOf(place, cities);
+  });
   const wall = $derived(instantToWall(at, tz));
   // The stops that can be part of this leg: its own, and the ones that are on
   // no leg at all — those belong wherever the moment does.
