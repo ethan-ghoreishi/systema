@@ -18,7 +18,7 @@
   } from '../../lib/stops';
   import { addPhotos, deletePhoto, downloadPhoto, photoTime } from '../../lib/photos';
   import { instantToWall } from '../../lib/tz';
-  import { visitTimeline, zoneOf } from '../../lib/moments';
+  import { GONE, stopGroups, zoneOf } from '../../lib/moments';
   import { nasBackup } from '../../lib/nas.svelte';
   import PhotoPicker from '../PhotoPicker.svelte';
   import MomentCapture from '../MomentCapture.svelte';
@@ -53,14 +53,6 @@
   const allPhotos = $derived($photosQ ?? []);
 
   const cityNameById = $derived(new Map(cities.map((c) => [c.id, c.name])));
-  const GONE = 'gone:';
-  /**
-   * A record's group: its leg; the leg it kept the name of when that leg was
-   * deleted; or nothing. The middle one is what stops a leftover from a
-   * deleted leg reading as one of the legs that remain.
-   */
-  const keyOf = (r: { cityId: string | null; legName?: string }) =>
-    r.cityId && cityNameById.has(r.cityId) ? r.cityId : r.legName ? GONE + r.legName : null;
   // Headers for two legs or more, as before — and for a trip holding anything
   // left over from a deleted leg, whatever it has left. A one-leg trip whose
   // stops were never put on a leg stays the plain list it has always been.
@@ -76,43 +68,18 @@
     | { kind: 'header'; label: string }
     | { kind: 'stop'; stop: Stop; index: number }
     | { kind: 'moment'; moment: Moment };
-  /**
-   * The list: stops in their own order, grouped by leg, with each moment where
-   * it belongs — at the stop it is part of, else after the last stop visited
-   * before it (see visitTimeline, which also orders the trip pack).
-   */
+  /** The list, as `stopGroups` orders it, with the move buttons' own indices. */
   const stopRows = $derived.by<StopRow[]>(() => {
     const indexOf = new Map(stops.map((s, i) => [s.id, i]));
-    // Runs of consecutive stops in one leg, as the list already orders them.
-    const runs: { key: string | null; stops: Stop[] }[] = [];
-    for (const stop of stops) {
-      const key = keyOf(stop);
-      const last = runs[runs.length - 1];
-      if (last && last.key === key) last.stops.push(stop);
-      else runs.push({ key, stops: [stop] });
-    }
-    // A leg's moments go with its last run, so a leg returned to later never
-    // shows them twice.
-    const lastRun = new Map(runs.map((r, i) => [r.key, i]));
     const rows: StopRow[] = [];
-    runs.forEach((run, i) => {
-      const mine = lastRun.get(run.key) === i ? moments.filter((m) => keyOf(m) === run.key) : [];
-      if (grouped) rows.push({ kind: 'header', label: groupLabel(run.key) });
-      for (const it of visitTimeline(run.stops, mine, cities, { visitedOnly: false }))
+    for (const group of stopGroups(stops, moments, cities)) {
+      if (grouped) rows.push({ kind: 'header', label: groupLabel(group.key) });
+      for (const it of group.items)
         rows.push(
           it.kind === 'stop'
             ? { kind: 'stop', stop: it.stop, index: indexOf.get(it.stop.id)! }
             : { kind: 'moment', moment: it.moment },
         );
-    });
-    // Groups with moments but no stops at all still have their place.
-    const shown = new Set(runs.map((r) => r.key));
-    const rest = [...new Set(moments.map(keyOf))].filter((k) => !shown.has(k));
-    for (const key of rest) {
-      const mine = moments.filter((m) => keyOf(m) === key);
-      if (!mine.length) continue;
-      if (grouped) rows.push({ kind: 'header', label: groupLabel(key) });
-      rows.push(...mine.map((moment) => ({ kind: 'moment' as const, moment })));
     }
     return rows;
   });

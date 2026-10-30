@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { City, Moment, Stop } from '../../src/lib/db';
-import { visitTimeline } from '../../src/lib/moments';
+import { stopGroups, visitTimeline } from '../../src/lib/moments';
 
 const city = (id: string, order: number): City => ({
   id,
@@ -116,5 +116,54 @@ describe('visitTimeline', () => {
     ]);
     // The pack keeps only visited stops, so the linked one falls back to time.
     expect(names(visitTimeline(stops, moments, cities))).toEqual(['*linked', 'a', '*loose']);
+  });
+});
+
+describe('stopGroups', () => {
+  const blq = city('blq', 0);
+  const bcn = city('bcn', 1);
+  const cities = [blq, bcn];
+  const shape = (gs: ReturnType<typeof stopGroups>) =>
+    gs.map((g) => [
+      g.key,
+      ...g.items.map((i) => (i.kind === 'stop' ? i.stop.id : `*${i.moment.id}`)),
+    ]);
+
+  // A leg can be returned to: Bologna, Barcelona, Bologna again.
+  it('keeps a moment with its stop even in an earlier run of the same leg', () => {
+    const stops = [stop('a', 'blq', 0), stop('b', 'bcn', 1), stop('c', 'blq', 2)];
+    const linked = moment('at-a', 'blq', 500, 'a');
+    const loose = moment('loose', 'blq', 10);
+    expect(shape(stopGroups(stops, [linked, loose], cities))).toEqual([
+      ['blq', 'a', '*at-a'],
+      ['bcn', 'b'],
+      ['blq', 'c', '*loose'],
+    ]);
+  });
+
+  it('gives a leg with moments but no stops a group of its own', () => {
+    const stops = [stop('a', 'blq', 0)];
+    expect(shape(stopGroups(stops, [moment('market', 'bcn', 5)], cities))).toEqual([
+      ['blq', 'a'],
+      ['bcn', '*market'],
+    ]);
+  });
+
+  // What a deleted leg leaves behind groups under the name it kept.
+  it('groups what a deleted leg left behind under that leg', () => {
+    const gone = { ...stop('rome-stop', 'blq', 0), cityId: null, legName: 'Rome' };
+    const stops = [gone, stop('dubai-stop', 'bcn', 1)];
+    const m = { ...moment('rain', null, 5), legName: 'Rome' };
+    expect(shape(stopGroups(stops, [m], [bcn]))).toEqual([
+      ['gone:Rome', 'rome-stop', '*rain'],
+      ['bcn', 'dubai-stop'],
+    ]);
+  });
+
+  it('leaves a record that never had a leg unassigned', () => {
+    const loose = { ...stop('nowhere', 'blq', 0), cityId: null };
+    expect(shape(stopGroups([loose], [moment('m', null, 1)], cities))).toEqual([
+      [null, 'nowhere', '*m'],
+    ]);
   });
 });

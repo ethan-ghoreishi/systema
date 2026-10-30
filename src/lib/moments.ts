@@ -125,6 +125,68 @@ export function visitTimeline(
   return out;
 }
 
+/** Prefix of the group key for records kept from a leg that was deleted. */
+export const GONE = 'gone:';
+
+/**
+ * The group a record belongs to in the Stops list: its leg; the leg whose
+ * name it kept when that leg was deleted; or nothing.
+ */
+export function groupKey(
+  record: { cityId: string | null; legName?: string },
+  cities: Pick<City, 'id'>[],
+): string | null {
+  if (record.cityId && cities.some((c) => c.id === record.cityId)) return record.cityId;
+  return record.legName ? GONE + record.legName : null;
+}
+
+/**
+ * The Stops list: runs of consecutive stops in one group, as the list already
+ * orders them, each with the moments that belong to it — one that is part of
+ * a planned stop joins the run holding that stop, wherever that is; the rest
+ * join their own group's last run. Groups with only moments come after.
+ * Within a run, `visitTimeline` decides the order. Pure.
+ */
+export function stopGroups(
+  stops: Stop[],
+  moments: Moment[],
+  cities: City[],
+): { key: string | null; items: TimelineItem[] }[] {
+  const runs: { key: string | null; stops: Stop[] }[] = [];
+  for (const stop of stops) {
+    const key = groupKey(stop, cities);
+    const last = runs[runs.length - 1];
+    if (last && last.key === key) last.stops.push(stop);
+    else runs.push({ key, stops: [stop] });
+  }
+  // A group returned to later holds its loose moments once, at the end.
+  const lastRun = new Map(runs.map((r, i) => [r.key, i]));
+  const runOf = (m: Moment) => {
+    const atStop = m.stopId ? runs.findIndex((r) => r.stops.some((s) => s.id === m.stopId)) : -1;
+    return atStop >= 0 ? atStop : (lastRun.get(groupKey(m, cities)) ?? -1);
+  };
+  const out = runs.map((run, i) => ({
+    key: run.key,
+    items: visitTimeline(
+      run.stops,
+      moments.filter((m) => runOf(m) === i),
+      cities,
+      { visitedOnly: false },
+    ),
+  }));
+  // Groups with no stops of their own still have their place.
+  const loose = moments.filter((m) => runOf(m) < 0);
+  for (const key of [...new Set(loose.map((m) => groupKey(m, cities)))])
+    out.push({
+      key,
+      items: loose
+        .filter((m) => groupKey(m, cities) === key)
+        .sort((a, b) => a.at - b.at)
+        .map((moment) => ({ kind: 'moment' as const, moment, at: moment.at })),
+    });
+  return out;
+}
+
 /**
  * Put a moment on the map, or take it off again (`null`). Removing deletes
  * the fields rather than storing a blank, so an older device still reads the
