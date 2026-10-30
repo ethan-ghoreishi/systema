@@ -17,24 +17,60 @@ export interface MomentInput {
   stopId?: string | null;
 }
 
+/**
+ * A moment that is part of a planned stop belongs where that stop does, and
+ * its place is that stop's own pin, so it keeps no coordinates. The stop
+ * answers for the leg wherever it knows one: a stop on no leg knows less than
+ * the moment does, so it never empties the moment's own answer — the two are
+ * left differing only where neither contradicts the other. Applied on every
+ * write of either side, so a leg changed on one can't drift from the other.
+ * Pure.
+ */
+export function alignToStop(moment: Moment, stop: Stop | undefined): void {
+  if (!stop) return;
+  if (stop.cityId) moment.cityId = stop.cityId;
+  else if (!moment.cityId) {
+    // Both off the legs: what the stop kept when its leg was deleted.
+    if (stop.tz) moment.tz = stop.tz;
+    if (stop.legName) moment.legName = stop.legName;
+  }
+  delete moment.lat;
+  delete moment.lng;
+}
+
 export async function addMoment(input: MomentInput): Promise<string> {
   const id = newId();
   const now = Date.now();
-  await db.moments.add({
+  const stopId = input.stopId ?? null;
+  const row: Moment = {
     id,
     tripId: input.tripId,
     cityId: input.cityId,
     title: input.title.trim(),
     note: (input.note ?? '').trim(),
     at: input.at ?? now,
-    stopId: input.stopId ?? null,
+    stopId,
     createdAt: now,
-  });
+  };
+  alignToStop(row, stopId ? await db.stops.get(stopId) : undefined);
+  await db.moments.add(row);
   return id;
 }
 
 export async function updateMoment(id: string, patch: Partial<Moment>): Promise<void> {
-  await db.moments.update(id, patch);
+  const stopId = 'stopId' in patch ? (patch.stopId ?? null) : undefined;
+  const stop = stopId ? await db.stops.get(stopId) : undefined;
+  await db.moments.update(id, (m) => {
+    // Taken off the plan, a moment is left without a place rather than
+    // falling back to one it carried before it was part of the stop.
+    const unlinked = stopId === null && !!m.stopId;
+    Object.assign(m, patch);
+    if (unlinked) {
+      delete m.lat;
+      delete m.lng;
+    }
+    alignToStop(m, stop);
+  });
 }
 
 /** Delete a moment and its photos (tombstoned, so the deletion syncs). */
