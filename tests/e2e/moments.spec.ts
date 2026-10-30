@@ -363,3 +363,171 @@ test('a moment on the map survives a backup round trip', async ({ page }) => {
   });
   expect(result).toEqual({ lat: 41.9009, lng: 12.4833, title: 'Rain, and a doorway' });
 });
+
+// A moment that is part of a planned stop is shown at that stop, in that
+// stop's leg — so the leg it says it belongs to has to be the stop's, however
+// either side is edited. Otherwise the same afternoon reads an hour out, and
+// the group it is listed under is not the one it claims.
+test('a stop moved to another leg takes the moments that are part of it', async ({ page }) => {
+  await page.goto('/');
+  const result = await page.evaluate(async () => {
+    const [{ db }, trips, { addStop, updateStop, deleteStop }, moments, { instantToWall }] =
+      await Promise.all(
+        [
+          '/src/lib/db.ts',
+          '/src/lib/trips.ts',
+          '/src/lib/stops.ts',
+          '/src/lib/moments.ts',
+          '/src/lib/tz.ts',
+        ].map((p) => import(/* @vite-ignore */ p)),
+      );
+    const trip = await trips.createTrip('custom');
+    const rome = await trips.addCity(trip, 'Rome', 'EUR', { tz: 'Europe/Rome' });
+    const london = await trips.addCity(trip, 'London', 'GBP', { tz: 'Europe/London' });
+    const stop = await addStop(trip, 'Pantheon', rome);
+    const at = Date.parse('2026-06-15T12:30:00Z'); // 14:30 in Rome, 13:30 in London
+    const id = await moments.addMoment({
+      tripId: trip,
+      cityId: rome,
+      title: 'A busker',
+      at,
+      stopId: stop,
+    });
+
+    const shown = async () => {
+      const cities = await db.cities.toArray();
+      const m = await db.moments.get(id);
+      const s = await db.stops.get(m.stopId ?? stop);
+      return {
+        sameLeg: m.cityId === s.cityId,
+        leg: cities.find((c) => c.id === m.cityId)?.name ?? null,
+        time: instantToWall(m.at, moments.zoneOf(m, cities)).slice(11, 16),
+      };
+    };
+    const inRome = await shown();
+    await updateStop(stop, { cityId: london });
+    const inLondon = await shown();
+    // A stop taken off the legs knows less than the moment does: the moment
+    // keeps the leg it happened in rather than being emptied with it.
+    await updateStop(stop, { cityId: null });
+    const unassigned = await shown();
+    // The stop's own deletion only lets go of the link; the leg stays put.
+    await deleteStop(stop);
+    const m = await db.moments.get(id);
+    return { inRome, inLondon, unassigned, after: { stopId: m.stopId, cityId: m.cityId } };
+  });
+  expect(result.inRome).toEqual({ sameLeg: true, leg: 'Rome', time: '14:30' });
+  expect(result.inLondon).toEqual({ sameLeg: true, leg: 'London', time: '13:30' });
+  expect(result.unassigned.leg).toBe('London');
+  expect(result.after.stopId).toBeNull();
+});
+
+// A moment that is part of a stop is shown at that stop's pin, so it keeps no
+// place of its own — and a place it had before it was part of one never comes
+// back on its own, days later, when the link or the stop goes.
+test('a mapped moment linked to a stop keeps no place of its own', async ({ page }) => {
+  await page.goto('/');
+  const result = await page.evaluate(async () => {
+    const [{ db }, trips, { addStop, deleteStop }, { addMoment, updateMoment, placeMoment }] =
+      await Promise.all(
+        ['/src/lib/db.ts', '/src/lib/trips.ts', '/src/lib/stops.ts', '/src/lib/moments.ts'].map(
+          (p) => import(/* @vite-ignore */ p),
+        ),
+      );
+    const trip = await trips.createTrip('custom');
+    const city = await trips.addCity(trip, 'Rome', 'EUR', { tz: 'Europe/Rome' });
+    const stop = await addStop(trip, 'Pantheon', city);
+    const id = await addMoment({ tripId: trip, cityId: city, title: 'Rain, and a doorway' });
+    await placeMoment(id, { lat: 41.9009, lng: 12.4833 });
+    const place = async () => {
+      const m = await db.moments.get(id);
+      return { stopId: m.stopId, lat: m.lat ?? null, lng: m.lng ?? null };
+    };
+    const own = await place();
+    await updateMoment(id, { stopId: stop });
+    const linked = await place();
+    await updateMoment(id, { stopId: null });
+    const unlinked = await place();
+    // Linked again, then the stop itself goes.
+    await updateMoment(id, { stopId: stop });
+    await placeMoment(id, { lat: 41.9, lng: 12.48 });
+    await deleteStop(stop);
+    const gone = await place();
+    return { own, linked, unlinked, gone };
+  });
+  expect(result.own).toEqual({ stopId: null, lat: 41.9009, lng: 12.4833 });
+  expect(result.linked.lat).toBeNull();
+  expect(result.linked.lng).toBeNull();
+  expect(result.unlinked).toEqual({ stopId: null, lat: null, lng: null });
+  expect(result.gone).toEqual({ stopId: null, lat: null, lng: null });
+});
+
+// The leg chips and the stop picker are two halves of one answer. Changing
+// one used to leave the other reading something it would not save: the stop
+// stayed picked behind a blank select, and the moment saved into a leg its
+// stop was not on.
+test('the leg and the stop it is part of are never left disagreeing', async ({ page }) => {
+  const { trip, rome } = await romeAndDubai(page);
+  // A stop on no leg at all belongs wherever the moment does; and a moment
+  // captured with no leg of its own, to pick a leg's stop from.
+  await page.evaluate(async (t) => {
+    const [{ addStop }, { addMoment }] = await Promise.all(
+      ['/src/lib/stops.ts', '/src/lib/moments.ts'].map((p) => import(/* @vite-ignore */ p)),
+    );
+    await addStop(t, 'Nowhere In Particular');
+    await addMoment({ tripId: t, cityId: null, title: 'A door left open' });
+  }, trip);
+  await page.goto(`/#/trip/${trip}/stops`);
+
+  // 1. Moving to another leg lets go of a stop that is not on it, in plain
+  //    sight — the select reads what it would save.
+  await page.getByRole('button', { name: 'What happened?' }).click();
+  const sheet = page.locator('dialog.modal[open]');
+  const picker = sheet.getByLabel('Part of a planned stop?');
+  await sheet.getByRole('button', { name: 'Rome', exact: true }).click();
+  await sheet.getByLabel('Place or event').fill('A courtyard concert');
+  await picker.selectOption({ label: 'Rome Stop' });
+  await sheet.getByRole('button', { name: 'Dubai', exact: true }).click();
+  await expect(picker).toHaveValue('');
+
+  // 2. A stop on no leg is offered whatever the chip says, and leaves it be.
+  await picker.selectOption({ label: 'Nowhere In Particular' });
+  await expect(sheet.getByRole('button', { name: 'Dubai', exact: true })).toHaveClass(/chip--on/);
+  await sheet.getByRole('button', { name: 'Save' }).click();
+  await expect(sheet).toHaveCount(0);
+
+  // 3. A moment on no leg takes the leg of the stop it is made part of.
+  await page.getByText('A door left open').click();
+  await picker.selectOption({ label: 'Rome Stop' });
+  await expect(sheet.getByRole('button', { name: 'Rome', exact: true })).toHaveClass(/chip--on/);
+  await sheet.getByRole('button', { name: 'Save' }).click();
+  await expect(sheet).toHaveCount(0);
+
+  const saved = await page.evaluate(async () => {
+    const { db } = await import(/* @vite-ignore */ '/src/lib/db.ts');
+    const rows = await db.moments.toArray();
+    const out = [];
+    for (const m of rows.sort((a, b) => a.title.localeCompare(b.title))) {
+      const s = m.stopId ? await db.stops.get(m.stopId) : null;
+      out.push({
+        title: m.title,
+        stop: s?.name ?? null,
+        stopLeg: s?.cityId ?? null,
+        leg: m.cityId,
+      });
+    }
+    return out;
+  });
+  expect(saved).toEqual([
+    {
+      title: 'A courtyard concert',
+      stop: 'Nowhere In Particular',
+      stopLeg: null,
+      leg: saved[0].leg,
+    },
+    { title: 'A door left open', stop: 'Rome Stop', stopLeg: rome, leg: rome },
+  ]);
+  // The first kept the leg its chip showed, which its legless stop never took.
+  expect(saved[0].leg).not.toBe(rome);
+  expect(saved[0].leg).not.toBeNull();
+});

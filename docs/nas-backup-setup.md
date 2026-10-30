@@ -56,7 +56,8 @@ ever writes inside its own `systema-backups/` folder:
 web/
   systema-backup.php        <- the receiver (edit $TOKEN before use)
   systema-backups/
-    data/                   <- JSON snapshots (newest 60, plus one per day for 90 days)
+    data/                   <- JSON snapshots (newest 60, plus the newest of each of
+                               the last 90 days that has one)
     photos/                 <- one file per photo, by id
 ```
 
@@ -82,9 +83,20 @@ location ^~ /systema-backups/ { deny all; }
 ```
 
 Then check it: `https://<yours>.synology.me/systema-backups/data/` and any
-file under it should be refused. Snapshots written before this (their names
-end in microseconds, with no random tail) age out of the folder within 60
-pushes, or 90 days for the daily ones.
+file under it should be refused.
+
+Snapshots written before the random tail keep their older names until they age
+out — and that takes longer than it sounds: the daily copies are the newest of
+each of the last 90 **days that have a snapshot**, not the last 90 calendar
+days, so on a NAS that is synced on some days and not others they can sit
+there for months. Checked live on 2026-10-30, six from months earlier were
+still present, named to the second (`systema-data-YYYYMMDD-HHMMSS.json`) with
+no random tail — a name of that shape is the one thing in the folder that
+could be guessed, and guessing one hands over the ids of every photo it
+lists. If yours still has any, renaming each to the current shape
+(`…-HHMMSS-NNNNNN-<16 hex>.json`) is enough: nothing ever asks for a snapshot
+by name — the app only asks for the newest — so the receiver and every device
+carry on unchanged.
 
 ## One-time DSM setup (~10 minutes)
 
@@ -190,9 +202,10 @@ at the first failure:
 4. **Upload size** — a real upload the size of your largest photo (the
    receiver writes nothing for it) arrives intact.
 
-The token never appears in any message, log or backup file. (It does travel
-in the request URL to your own NAS, so it can appear in that NAS's web server
-access log.)
+The token never appears in any message, log or backup file. Against a
+version 3 receiver it travels in the `X-Systema-Token` header, so it stays out
+of the NAS's own access log too; only against an older receiver does the app
+fall back to putting it in the URL, where that log can pick it up.
 
 ## If `synology.me` won't connect (CGNAT / ISP blocks inbound)
 
@@ -213,13 +226,34 @@ sticking point:
 1. **NAS:** Package Center → install **Tailscale** → sign in.
 2. **iPhone:** install the **Tailscale** app → sign in to the same account →
    turn it on.
-3. On the NAS, enable HTTPS for its Tailscale name (DSM: Tailscale package, or
-   `sudo tailscale cert` / `tailscale serve`), giving something like
-   `https://ds220.tailXXXX.ts.net`. Tailscale issues a real certificate for it.
-4. Put the receiver behind it (Web Station serves it; the `.ts.net` name gets a
-   valid cert automatically via `tailscale serve https / --bg`), so
-   `https://ds220.tailXXXX.ts.net/systema-backup.php` returns
-   `{"ok":true,...}` in the phone's browser.
+3. On the NAS, let Tailscale terminate HTTPS for its own name — a boot-up
+   task in Task Scheduler (run as root) is enough:
+
+   ```sh
+   /var/packages/Tailscale/target/bin/tailscale serve https:443 / http://localhost:80
+   ```
+
+   That is what this NAS runs. Tailscale holds the certificate for
+   `https://ds220.tailXXXX.ts.net` itself and renews it: neither DSM's
+   certificate store nor DSM's TLS is in the path, so a certificate sitting in
+   DSM for that same name (expired or not) decides nothing here.
+
+4. Web Station still serves the request `serve` forwards. On this NAS a Web
+   Station portal for the `.ts.net` name answers on HTTP port 80 — the port
+   `serve` forwards to — so `https://ds220.tailXXXX.ts.net/systema-backup.php`
+   returns `{"ok":true,...}` in the phone's browser. It is DSM's nginx that
+   serves it, which is why the receiver's "an error body is replaced by DSM's
+   own page" rule applies on this route too.
+
+   **Never point `tailscale cert`'s output into `web`.** `tailscale cert
+--cert-file … --key-file …` writes a real TLS **private key**, and anything
+   in `web` is served as a static file to the whole home network and the whole
+   tailnet. Nothing needs those files — `serve` uses its own copy — so if you
+   want them exported at all, write them somewhere outside the web root, e.g.
+   `/volume1/homes/<you>/tailscale-cert/`. (Found live on this NAS on
+   2026-10-30: `http://<nas>/tailscale.key` served the key for the `.ts.net`
+   name, written there by two boot-up tasks.)
+
 5. In systema → **Settings → NAS sync**, use that `.ts.net` URL. Now
    backups and restores work from anywhere the phone has Tailscale on — no
    port-forwarding, no cert warning, no ISP dependency.
@@ -306,3 +340,8 @@ _Restore from a backup file_ — the trip's photos come back from the NAS too.
 - Don't port-forward DSM itself (5000/5001) — only 443 for Web Station.
 - Keep `$TOKEN` out of the repo; it lives in the PHP file on the NAS and in
   the app's on-device settings.
+- Everything in the `web` share is a static file to anyone who can reach the
+  web server — on this setup that is the home network over plain HTTP and
+  every device on the tailnet. Keys, certificates and `.bak` copies of a
+  receiver (which would hand over `$TOKEN` as plain text) have no business
+  there.

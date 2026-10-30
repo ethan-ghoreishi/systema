@@ -57,7 +57,24 @@
   // time shown here, the time typed here and the time listed are one time.
   const tz = $derived(zoneOf({ cityId, tz: moment?.tz }, cities));
   const wall = $derived(instantToWall(at, tz));
-  const cityStops = $derived(stops.filter((s) => !cityId || s.cityId === cityId));
+  // The stops that can be part of this leg: its own, and the ones that are on
+  // no leg at all — those belong wherever the moment does.
+  const onLeg = (s: Stop) => !cityId || !s.cityId || s.cityId === cityId;
+  const cityStops = $derived(stops.filter(onLeg));
+
+  // The two controls can't be left disagreeing: picking a stop that is on a
+  // leg moves the leg with it, and picking a leg that its stop is not on lets
+  // go of that stop, in plain sight — the same rule the saved record keeps.
+  function chooseStop(id: string | null) {
+    stopId = id;
+    const s = stops.find((x) => x.id === id);
+    if (s?.cityId) cityId = s.cityId;
+  }
+  function chooseCity(id: string) {
+    cityId = id;
+    if (stopId && !stops.some((s) => s.id === stopId && (!s.cityId || s.cityId === id)))
+      stopId = null;
+  }
 
   async function save() {
     if (!title.trim()) return;
@@ -113,7 +130,7 @@
       {#if cities.length > 0}
         <div class="chips" role="group" aria-label="City">
           {#each cities as c (c.id)}
-            <button class="chip" class:chip--on={cityId === c.id} onclick={() => (cityId = c.id)}
+            <button class="chip" class:chip--on={cityId === c.id} onclick={() => chooseCity(c.id)}
               >{c.name}</button
             >
           {/each}
@@ -154,8 +171,13 @@
 
       <div>
         <label class="label" for="moment-stop">Part of a planned stop?</label>
-        <select id="moment-stop" class="field" bind:value={stopId}>
-          <option value={null}>No — off the plan</option>
+        <select
+          id="moment-stop"
+          class="field"
+          value={stopId ?? ''}
+          onchange={(e) => chooseStop((e.currentTarget as HTMLSelectElement).value || null)}
+        >
+          <option value="">No — off the plan</option>
           {#each cityStops as s (s.id)}<option value={s.id}>{s.name}</option>{/each}
         </select>
       </div>

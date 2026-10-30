@@ -1,6 +1,7 @@
 import { db, type ChecklistItem, type City, type Stop, type StopGuide } from './db';
 import { newId } from './ids';
 import { cityOfHeading, extractSections, type Section } from './headings';
+import { alignToStop } from './moments';
 import { deletePhotosWhere } from './photos';
 
 /** Stop + checklist mutations over Dexie. */
@@ -28,7 +29,21 @@ export async function addStop(
 }
 
 export async function updateStop(id: string, patch: Partial<Stop>): Promise<void> {
-  await db.stops.update(id, patch);
+  if (!('cityId' in patch)) {
+    await db.stops.update(id, patch);
+    return;
+  }
+  // The moments that are part of this stop move legs with it, so a moment is
+  // never left saying it belongs to one leg while its stop belongs to another.
+  await db.transaction('rw', db.stops, db.moments, async () => {
+    await db.stops.update(id, patch);
+    const stop = await db.stops.get(id);
+    if (stop)
+      await db.moments
+        .where('stopId')
+        .equals(id)
+        .modify((m) => alignToStop(m, stop));
+  });
 }
 
 /**
@@ -57,7 +72,15 @@ export async function placeStop(
 export async function deleteStop(id: string): Promise<void> {
   await db.transaction('rw', db.stops, db.photos, db.kv, db.moments, async () => {
     await deletePhotosWhere('stopId', id, (p) => !p.momentId);
-    await db.moments.where('stopId').equals(id).modify({ stopId: null });
+    // Its place was this stop's pin, which is going: it keeps no stale one.
+    await db.moments
+      .where('stopId')
+      .equals(id)
+      .modify((m) => {
+        m.stopId = null;
+        delete m.lat;
+        delete m.lng;
+      });
     await db.stops.delete(id);
   });
 }

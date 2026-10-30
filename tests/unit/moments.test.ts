@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { City, Moment, Stop } from '../../src/lib/db';
-import { stopGroups, visitTimeline } from '../../src/lib/moments';
+import { alignToStop, stopGroups, visitTimeline } from '../../src/lib/moments';
 
 const city = (id: string, order: number): City => ({
   id,
@@ -36,6 +36,10 @@ const moment = (
   stopId,
   createdAt: at,
 });
+const alignedWith = (s: Stop, m: Moment): Moment => {
+  alignToStop(m, s);
+  return m;
+};
 const names = (items: ReturnType<typeof visitTimeline>) =>
   items.map((i) => (i.kind === 'stop' ? i.stop.id : `*${i.moment.id}`));
 
@@ -177,5 +181,35 @@ describe('stopGroups', () => {
     expect(shape(stopGroups([loose], [moment('m', null, 1)], cities))).toEqual([
       [null, 'nowhere', '*m'],
     ]);
+  });
+});
+
+describe('alignToStop', () => {
+  it("takes the stop's leg, and no place of its own", () => {
+    const m = { ...moment('busker', 'bcn', 10, 'a'), lat: 1, lng: 2 };
+    alignToStop(m, stop('a', 'blq', 0));
+    expect(m.cityId).toBe('blq');
+    expect('lat' in m).toBe(false);
+    expect('lng' in m).toBe(false);
+  });
+
+  it('never empties the leg a moment has for a stop that is on none', () => {
+    const loose = { ...stop('a', '', 0), cityId: null };
+    const m = alignedWith(loose, moment('busker', 'bcn', 10, 'a'));
+    expect(m.cityId).toBe('bcn');
+    // Both off the legs: what the stop kept when its leg was deleted.
+    const gone = { ...stop('a', '', 0), cityId: null, tz: 'Europe/Rome', legName: 'Rome' };
+    const kept = alignedWith(gone, moment('busker', null, 10, 'a'));
+    expect([kept.cityId, kept.tz, kept.legName]).toEqual([null, 'Europe/Rome', 'Rome']);
+    // An unvisited stop from that leg kept no zone: the moment's own stands.
+    const unvisited = { ...stop('a', '', 0), cityId: null, legName: 'Rome' };
+    const own = alignedWith(unvisited, { ...moment('busker', null, 10, 'a'), tz: 'Europe/Rome' });
+    expect([own.cityId, own.tz, own.legName]).toEqual([null, 'Europe/Rome', 'Rome']);
+  });
+
+  it('leaves a moment that is part of nothing alone', () => {
+    const m = { ...moment('busker', 'bcn', 10), lat: 1, lng: 2 };
+    alignToStop(m, undefined);
+    expect([m.cityId, m.lat, m.lng]).toEqual(['bcn', 1, 2]);
   });
 });
