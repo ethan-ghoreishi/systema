@@ -26,7 +26,10 @@ export interface MomentInput {
  * write of either side, so a leg changed on one can't drift from the other.
  * Pure.
  */
-export function alignToStop(moment: Moment, stop: Stop | undefined): void {
+export function alignToStop(
+  moment: Pick<Moment, 'cityId'> & Partial<Moment>,
+  stop: Stop | undefined,
+): void {
   if (!stop) return;
   if (stop.cityId) moment.cityId = stop.cityId;
   else if (!moment.cityId) {
