@@ -637,6 +637,26 @@ export function optionRoute(o: TripOption): string {
   return back && back !== [...o.outRoute].reverse().join(' → ') ? `${out} · back ${back}` : out;
 }
 
+/**
+ * One leg as a row can be judged by: airports, the clock at both ends, the
+ * service, and the change of planes where there is one. The facts that decide
+ * whether a cheap fare is a trip you would actually take.
+ */
+export function optionLeg(o: TripOption, which: 'out' | 'back'): string {
+  const route = which === 'out' ? o.outRoute : o.backRoute;
+  if (!route.length) return '';
+  const dep = which === 'out' ? o.outDep : o.backDep;
+  const arr = which === 'out' ? o.outArr : o.backArr;
+  const day = (which === 'out' ? o.outArrDay : o.backArrDay) ?? 0;
+  const flights = which === 'out' ? o.outFlights : o.backFlights;
+  const bits = [route.join(' → ')];
+  if (dep && arr) bits.push(`${dep}–${arr}${day ? ` +${day}` : ''}`);
+  if (route.length > 2) bits.push(`change at ${route.slice(1, -1).join(', ')}`);
+  else if (route.length === 2) bits.push('direct');
+  if (flights) bits.push(flights);
+  return bits.join(' · ');
+}
+
 // ---- The whole opportunity ----
 
 export interface OpportunityView {

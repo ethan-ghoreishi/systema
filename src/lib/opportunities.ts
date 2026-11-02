@@ -40,6 +40,40 @@ export async function updateOpportunity(id: string, patch: Partial<Opportunity>)
   await db.opportunities.update(id, patch);
 }
 
+/**
+ * Write one option into its opportunity, replacing the one with that id. The
+ * options live in a list on the record, so adding, editing and removing are
+ * all the same write — and a manual option is the same shape as an imported
+ * one, so nothing downstream has to know which it was.
+ */
+export async function putOption(oppId: string, option: TripOption): Promise<void> {
+  await db.transaction('rw', db.opportunities, async () => {
+    const opp = await db.opportunities.get(oppId);
+    if (!opp) return;
+    const options = [...opp.options];
+    const i = options.findIndex((o) => o.id === option.id);
+    if (i < 0) options.push(option);
+    else options[i] = option;
+    await db.opportunities.put({ ...opp, options });
+  });
+}
+
+/**
+ * Drop one option. A trip already chosen from it keeps its own copy of every
+ * fact that mattered (legs, times, airports), so nothing is lost there — but
+ * the record of the decision is, which is why the screen asks first.
+ */
+export async function removeOption(oppId: string, optionId: string): Promise<void> {
+  await db.transaction('rw', db.opportunities, async () => {
+    const opp = await db.opportunities.get(oppId);
+    if (!opp) return;
+    await db.opportunities.put({
+      ...opp,
+      options: opp.options.filter((o) => o.id !== optionId),
+    });
+  });
+}
+
 /** An opportunity goes with its options; a trip chosen from it is untouched. */
 export async function deleteOpportunity(id: string): Promise<void> {
   await db.opportunities.delete(id);

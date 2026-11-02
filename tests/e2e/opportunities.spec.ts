@@ -97,7 +97,8 @@ test('a finder search becomes a compared shortlist, a trip, and a booked coach',
   await page.reload();
 
   // --- The hand-off: paste the table, choose what is worth comparing ---
-  await page.getByRole('button', { name: /Considering a trip/ }).click();
+  await page.getByRole('button', { name: 'Add a finder search' }).click();
+  await page.locator('summary', { hasText: 'Or paste the table' }).click();
   await page.getByLabel('Finder table').fill(`${HEAD}\n${ROWS}`);
   await page.getByRole('button', { name: 'Read the table' }).click();
   await expect(page.getByText('3 trips found')).toBeVisible();
@@ -275,6 +276,86 @@ test('an option whose dates have gone stops asking, and the research is kept', a
   const card = page.locator('.trip-card', { hasText: 'Gdansk' });
   await expect(card).toContainText('dates passed');
   await card.click();
-  await expect(page.getByText('No dates still ahead')).toBeVisible();
+  await expect(page.getByText('Nothing still ahead')).toBeVisible();
   await expect(page.getByText('Bus 210 from the airport')).toBeVisible();
+  // Kept, not dropped: what that trip would have cost is the best guide to
+  // what the next one will cost.
+  await page.locator('summary', { hasText: /dates have gone/ }).click();
+  await expect(page.locator('.opt')).toContainText('STN → GDN');
+});
+
+// The search writes a price map beside its results, with the same first four
+// columns. Reading that as trips made destinations with no flights and no
+// fares — nothing you could act on.
+test('the search’s price map is refused, by name', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Add a finder search' }).click();
+  await page.locator('summary', { hasText: 'Or paste the table' }).click();
+  await page
+    .getByLabel('Finder table')
+    .fill(
+      'City,Country,Out date,Back date,Trip,From £pp,Trip £pp,Fits,Details\n' +
+        'Tirane,Albania,2027-03-05,2027-03-06,Fri→Sat · 1 night,41.0,41.0,True,found',
+    );
+  await page.getByRole('button', { name: 'Read the table' }).click();
+  await expect(page.getByRole('alert')).toContainText('price map');
+  await expect(page.locator('.finder-row')).toHaveCount(0);
+});
+
+// Manual Google Flights research is the way in, not a lesser path: a
+// destination and a way of getting there, typed, compared and chosen.
+test('a destination and an option written by hand go all the way to a trip', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Add a destination' }).click();
+  await page.getByLabel('Where').fill('Valencia');
+  await page.getByLabel('Country').fill('Spain');
+  await page.getByRole('button', { name: 'Add' }).click();
+
+  await expect(page.getByRole('heading', { name: 'Valencia' })).toBeVisible();
+  await page.getByRole('button', { name: 'Add an option' }).click();
+  const form = page.locator('dialog[open] .modal-body');
+  await form.getByLabel('Out on').fill('2027-04-16');
+  await form.getByLabel('Back on').fill('2027-04-18');
+  const fill = async (label: string, i: number, value: string) =>
+    form.getByLabel(label, { exact: true }).nth(i).fill(value);
+  for (const [i, leg] of [
+    { from: 'stn', to: 'vlc', dep: '07:10', arr: '10:45', no: 'Ryanair 3012', fare: '28' },
+    { from: 'vlc', to: 'stn', dep: '19:20', arr: '21:05', no: 'Ryanair 3013', fare: '34' },
+  ].entries()) {
+    await fill('From', i, leg.from);
+    await fill('To', i, leg.to);
+    await fill('Departs', i, leg.dep);
+    await fill('Arrives', i, leg.arr);
+    await fill('Flight number', i, leg.no);
+    await fill('Fare, each (£)', i, leg.fare);
+  }
+  await form.getByLabel('Hotel nights to pay for').fill('2');
+  await page.getByRole('button', { name: 'Save' }).click();
+
+  // Added up from its own parts — fares plus transfers and nights — and said
+  // to be, rather than sinking to the bottom of the list with no figure.
+  const card = page.locator('.opt').first();
+  await expect(card).toContainText('STN → VLC');
+  await expect(card.locator('.opt-total')).not.toContainText('—');
+  await card.locator('summary').first().click();
+  await expect(card).toContainText('added up from what you typed');
+
+  await card.getByRole('button', { name: 'Choose this' }).click();
+  await expect(page.getByText(/Trip created/)).toBeVisible();
+  const trip = await page.evaluate(async () => {
+    const { db } = await import(/* @vite-ignore */ '/src/lib/db.ts');
+    const t = (await db.trips.toArray()).find((x) => x.opportunityId);
+    const legs = await db.cities.where('tripId').equals(t.id).toArray();
+    return { at: t.outbound?.at, hub: t.outbound?.hub, leg: legs[0]?.name, sleep: legs[0]?.sleep };
+  });
+  expect(trip).toMatchObject({
+    at: '2027-04-16T07:10',
+    hub: 'STN',
+    leg: 'Valencia',
+    sleep: 'hotel',
+  });
+
+  // And the research is still a tap away from the trip it became.
+  await page.locator('.opp-chosen').click();
+  await expect(page.getByText(/What you know about Valencia/)).toBeVisible();
 });

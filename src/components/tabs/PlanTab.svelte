@@ -15,6 +15,14 @@
   const citiesQ = liveQuery(() => db.cities.where('tripId').equals(trip.id).sortBy('order'));
   const cities = $derived($citiesQ ?? []);
 
+  // The research this trip came out of. Choosing an option must not make the
+  // alternatives, the dates that lost and what was learned about the place
+  // vanish: they live on the opportunity, one tap away, for as long as it does.
+  const researchQ = liveQuery(async () =>
+    trip.opportunityId ? ((await db.opportunities.get(trip.opportunityId)) ?? null) : null,
+  );
+  const research = $derived($researchQ ?? null);
+
   type Field = 'planText' | 'journalText';
   let editing = $state<Field | null>(null);
   let draft = $state('');
@@ -108,6 +116,14 @@
   {#if trip.status !== 'done'}
     <NextDeparture {trip} {cities} />
     <BeforeYouGo {trip} {cities} />
+  {/if}
+
+  {#if research}
+    <a class="hint plan-research" href={`#/opp/${research.id}`}
+      >What you know about {research.city}{#if research.options.length > 1}, and the
+        {research.options.length - 1} other way{research.options.length === 2 ? '' : 's'} of getting there{/if}
+      →</a
+    >
   {/if}
 
   {#if editing}
