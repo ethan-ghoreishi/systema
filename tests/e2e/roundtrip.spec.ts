@@ -14,6 +14,8 @@ const MODS = [
   '/src/lib/photos.ts',
   '/src/lib/expenses.ts',
   '/src/lib/export.ts',
+  '/src/lib/opportunities.ts',
+  '/src/lib/options.ts',
 ];
 
 async function load(page: Page) {
@@ -22,6 +24,21 @@ async function load(page: Page) {
     const mods = await Promise.all(paths.map((p) => import(/* @vite-ignore */ p)));
     (window as any).m = Object.assign((window as any).m ?? {}, ...mods);
   }, MODS);
+}
+
+/** A destination under consideration, with one option from a finder search. */
+async function seedOpportunity(page: Page): Promise<string> {
+  return page.evaluate(async () => {
+    const m = (window as any).m;
+    const [row] = m.parseFinderCsv(
+      'City,Country,Out date,Back date,Trip,£/usable h,True £pp,Fare £pp,Status,Usable h,Ground,Cities,Overnight,Paid nights,Out,Out flights,Out £pp,Back,Back flights,Back £pp,Out link,Back link,Checked,Notes\n' +
+        'Faro,Portugal,2027-02-12,2027-02-13,Fri→Sat · 1 night,4.99,96.0,34.5,OK,19.2,31h15,FAO 19h,Hotel ×1,1,LTN→FAO 09:25→12:15,Ryanair 5767,19.0,FAO→LTN 19:30→22:20,easyJet 2412,15.5,https://example.test/o,https://example.test/b,2027-01-20 00:46,',
+    );
+    await m.addFinderRows([row]);
+    const opp = await m.db.opportunities.toCollection().first();
+    await m.updateOpportunity(opp.id, { research: 'Próximo bus 16 into town, ~20 min, €2.35.' });
+    return opp.id;
+  });
 }
 
 /** One trip using every new field, plus a moment with a photo. */
@@ -46,10 +63,13 @@ async function seedRich(page: Page): Promise<string> {
       tz: 'Europe/Madrid',
       base: { name: 'Hotel Gòtic', address: 'Carrer de Jaume I', checkIn: '2026-10-16T22:00' },
     });
-    await m.updateTrip(trip, { outbound: { at: '2026-10-16T06:10', hub: 'LGW', ref: 'ABC123' } });
+    await m.updateTrip(trip, {
+      outbound: { at: '2026-10-16T06:10', hub: 'LGW', ref: 'ABC123', checkedIn: true },
+    });
     const stop = await m.addStop(trip, 'Archiginnasio', blq.id);
     await m.updateStop(stop, {
       guide: { anchor: 'Anatomical Theatre', lookFor: ['arms', 'statues', 'canopy'] },
+      bookAhead: 'Timed entry, book a week ahead',
     });
     await m.toggleVisited(await m.db.stops.get(stop));
     await m.addExpense(trip, {
@@ -65,6 +85,7 @@ async function seedRich(page: Page): Promise<string> {
       amountLocal: 0,
       currency: 'GBP',
       fxRate: null,
+      need: 'flight:outbound',
       notes: '',
     });
     await m.addExpense(trip, {
@@ -117,6 +138,7 @@ const snapshot = (page: Page) =>
       stops: clean(await db.stops.toArray()),
       expenses: clean((await db.expenses.toArray()).filter((e: any) => !e.skeleton)),
       moments: clean(await db.moments.toArray()),
+      opportunities: clean(await db.opportunities.toArray()),
       photos: clean(photos),
       photoBytes: await Promise.all(photos.map((p: any) => p.blob.text())),
     };
@@ -135,8 +157,10 @@ test('every new field survives a ZIP backup restored on a fresh device', async (
 }) => {
   await load(page);
   await seedRich(page);
+  await seedOpportunity(page);
   const original = await snapshot(page);
   expect(original.moments).toHaveLength(1);
+  expect(original.opportunities[0].options[0]).toMatchObject({ finderPP: 96, usableH: 19.2 });
   expect(original.photos[0]).toMatchObject({ momentId: original.moments[0].id, kind: 'stop' });
 
   const zip = Buffer.from(
@@ -162,6 +186,7 @@ test('every new field syncs between devices; deleting a moment or a trip reaches
   const phone = await device(makeContext, nas);
   await load(phone);
   const trip = await seedRich(phone);
+  const opp = await seedOpportunity(phone);
   expect((await sync(phone)).ok).toBe(true);
 
   const mac = await device(makeContext, nas);
@@ -195,4 +220,14 @@ test('every new field syncs between devices; deleting a moment or a trip reaches
   await sync(mac);
   const gone = await snapshot(mac);
   expect([gone.trips, gone.cities, gone.stops, gone.moments]).toEqual([[], [], [], []]);
+  // A destination under consideration belongs to no trip, so deleting the trip
+  // leaves it — and what was learned about the place — exactly where it was.
+  expect(gone.opportunities).toHaveLength(1);
+  expect(gone.opportunities[0].research).toContain('Próximo bus');
+
+  // Deleting the idea itself reaches the other device like any other deletion.
+  await mac.evaluate((id) => (window as any).m.deleteOpportunity(id), opp);
+  await sync(mac);
+  await sync(phone);
+  expect((await snapshot(phone)).opportunities).toEqual([]);
 });

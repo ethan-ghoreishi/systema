@@ -1,6 +1,6 @@
 import type { City, Expense, Moment, Stop, Trip } from './db';
 import { realExpenses, tripTotalGBP, categorySummary, type CategoryTotal } from './expenses';
-import { tripDays, tripDisplayName, tripLegs, tripStartIso } from './trip-shape';
+import { tripDays, tripDisplayName, tripHotelNights, tripLegs, tripStartIso } from './trip-shape';
 import { expenseCityId, isShared } from './expense-defaults';
 import { tripDepartures } from './readiness';
 
@@ -293,6 +293,126 @@ export function transitRows(trips: Trip[], cities: City[], expenses: Expense[]):
     }
   }
   return out.sort((a, b) => b.date.localeCompare(a.date) || a.city.localeCompare(b.city));
+}
+
+// ---- What London airports and hotels actually cost ----
+
+/**
+ * London airports as they appear in a transfer's description. The question
+ * "what does getting to Stansted cost?" is answered by the ledger, which has
+ * paid it dozens of times — the airport is named in the row, since no trip
+ * imported from the spending sheet carries a structured departure.
+ */
+const LONDON_HUBS: Record<string, string> = {
+  stansted: 'STN',
+  luton: 'LTN',
+  gatwick: 'LGW',
+  heathrow: 'LHR',
+  southend: 'SEN',
+  'london city': 'LCY',
+};
+
+const UK_TRANSFER = 'Airport Transfer (UK)';
+
+export interface MeasuredCost {
+  /** Middle of what was actually paid, per person, for one journey. */
+  perPerson: number;
+  /** How many real payments that rests on. */
+  samples: number;
+  low: number;
+  high: number;
+}
+
+function median(values: number[]): number {
+  const v = [...values].sort((a, b) => a - b);
+  const i = v.length >> 1;
+  return v.length % 2 ? v[i] : round2((v[i - 1] + v[i]) / 2);
+}
+
+function measured(values: number[]): MeasuredCost | null {
+  if (!values.length) return null;
+  return {
+    perPerson: round2(median(values)),
+    samples: values.length,
+    low: round2(Math.min(...values)),
+    high: round2(Math.max(...values)),
+  };
+}
+
+/**
+ * What one journey to or from each London airport has cost, per person —
+ * keyed by IATA code. A row marked "(Return)" covered both directions, so it
+ * counts as half. Rows that name no airport (a hop to the coach stop) are left
+ * out rather than guessed at; the median keeps a voucher or a taxi from
+ * standing in for the usual fare.
+ */
+export function ukTransferByAirport(
+  trips: Trip[],
+  expenses: Expense[],
+): Record<string, MeasuredCost> {
+  const party = new Map(trips.map((t) => [t.id, Math.max(1, t.partySize || 1)]));
+  const hubOf = new Map(trips.map((t) => [t.id, t.outbound?.hub?.trim().toUpperCase() ?? '']));
+  const byHub: Record<string, number[]> = {};
+  for (const e of realExpenses(expenses)) {
+    if (e.subcategory !== UK_TRANSFER || !e.amountGBP) continue;
+    const text = `${e.description} ${e.notes}`.toLowerCase();
+    const named = Object.entries(LONDON_HUBS).find(([name]) => text.includes(name))?.[1];
+    const hub = named ?? hubOf.get(e.tripId) ?? '';
+    if (!hub) continue;
+    const both = /\(return\)|return\b/i.test(e.description);
+    const perPerson = e.amountGBP / (party.get(e.tripId) ?? 1) / (both ? 2 : 1);
+    (byHub[hub] ??= []).push(perPerson);
+  }
+  const out: Record<string, MeasuredCost> = {};
+  for (const [hub, values] of Object.entries(byHub)) {
+    const m = measured(values);
+    if (m) out[hub] = m;
+  }
+  return out;
+}
+
+/**
+ * What a hotel night has actually cost, for the whole party — the figure a
+ * flat per-night assumption gets most wrong. Nights come from the legs that
+ * slept in a hotel, so a two-night stay divides properly.
+ */
+export function hotelNightCost(
+  trips: Trip[],
+  cities: City[],
+  expenses: Expense[],
+): MeasuredCost | null {
+  const citiesOf = byTrip(cities);
+  const real = realExpenses(expenses);
+  const nightly: number[] = [];
+  for (const trip of trips) {
+    const legs = citiesOf.get(trip.id) ?? [];
+    const nights = tripHotelNights(trip, legs);
+    if (!nights) continue;
+    const paid = real
+      .filter((e) => e.tripId === trip.id && e.category === 'Accommodation' && !e.fxPending)
+      .reduce((a, e) => a + (e.amountGBP || 0), 0);
+    if (paid > 0) nightly.push(paid / nights);
+  }
+  return measured(nightly);
+}
+
+/** Per-person airport transfer abroad, by city, from the visits that logged one. */
+export function destTransferByCity(
+  trips: Trip[],
+  cities: City[],
+  expenses: Expense[],
+  stops: Stop[],
+): Record<string, MeasuredCost> {
+  const { rows } = compareCities(trips, cities, expenses, stops, 'transferPP');
+  const out: Record<string, MeasuredCost> = {};
+  for (const r of rows)
+    out[r.name.toLowerCase()] = {
+      perPerson: r.value,
+      samples: r.visits,
+      low: r.value,
+      high: r.value,
+    };
+  return out;
 }
 
 // ---- Trip rhythm ----

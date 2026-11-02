@@ -72,6 +72,7 @@ export async function seedSkeleton(trip: Trip): Promise<number> {
     category: s.category,
     subcategory: s.subcategory,
     description: s.description,
+    ...(s.need ? { need: s.need } : {}),
     paymentMethod: '',
     amountGBP: 0,
     amountLocal: 0,

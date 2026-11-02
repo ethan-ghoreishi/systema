@@ -11,6 +11,13 @@ export interface SkeletonRow {
   category: string;
   subcategory: string;
   description: string;
+  /**
+   * The thing before the trip this row settles (see needs.ts). Booking fills
+   * this row rather than adding a second one, so the amount is entered once.
+   * Only trip-wide needs can be named here: a city's transfer or hotel is
+   * keyed to a leg that doesn't exist until the legs are added.
+   */
+  need?: string;
 }
 
 export interface TripPreset {
@@ -26,17 +33,29 @@ export interface TripPreset {
 
 // The flight + transfer spine shared by all travel presets.
 const travelSpine: SkeletonRow[] = [
-  { category: 'Transportation', subcategory: 'Flight', description: 'Outbound flight' },
-  { category: 'Transportation', subcategory: 'Flight', description: 'Inbound flight' },
+  {
+    category: 'Transportation',
+    subcategory: 'Flight',
+    description: 'Outbound flight',
+    need: 'flight:outbound',
+  },
+  {
+    category: 'Transportation',
+    subcategory: 'Flight',
+    description: 'Inbound flight',
+    need: 'flight:inbound',
+  },
   {
     category: 'Transportation',
     subcategory: 'Airport Transfer (UK)',
     description: 'Airport transfer (UK) — outbound',
+    need: 'transfer-uk:out',
   },
   {
     category: 'Transportation',
     subcategory: 'Airport Transfer (UK)',
     description: 'Airport transfer (UK) — return',
+    need: 'transfer-uk:back',
   },
   {
     category: 'Transportation',
@@ -99,17 +118,29 @@ export const tripPresets: TripPreset[] = [
       'Two cities in two days on one protected ticket: land by ~11:00, move on that evening or next morning, home after ~18:00, one hotel night.',
     accommodation: true,
     skeleton: [
-      { category: 'Transportation', subcategory: 'Flight', description: 'Outbound flight' },
-      { category: 'Transportation', subcategory: 'Flight', description: 'Inbound flight' },
+      {
+        category: 'Transportation',
+        subcategory: 'Flight',
+        description: 'Outbound flight',
+        need: 'flight:outbound',
+      },
+      {
+        category: 'Transportation',
+        subcategory: 'Flight',
+        description: 'Inbound flight',
+        need: 'flight:inbound',
+      },
       {
         category: 'Transportation',
         subcategory: 'Airport Transfer (UK)',
         description: 'Airport transfer (UK) — outbound',
+        need: 'transfer-uk:out',
       },
       {
         category: 'Transportation',
         subcategory: 'Airport Transfer (UK)',
         description: 'Airport transfer (UK) — return',
+        need: 'transfer-uk:back',
       },
       {
         category: 'Transportation',

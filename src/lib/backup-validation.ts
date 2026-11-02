@@ -29,6 +29,7 @@ export function validateBackup(value: unknown): asserts value is Backup {
     (object(v) &&
       optional(v, 'mode hub terminal number ref notes from transport at tz', 'string') &&
       optionalNumbers(v, 'journeyMin bufferMin contingencyMin prepareMin') &&
+      optional(v, 'checkedIn', 'boolean') &&
       (v.throughTicket === undefined || ['outbound', 'return'].includes(v.throughTicket)));
   if (!object(value) || value.app !== 'systema' || value.version !== 1)
     fail('not a version 1 systema backup');
@@ -59,7 +60,7 @@ export function validateBackup(value: unknown): asserts value is Backup {
       typeof r.accommodation === 'boolean' &&
       ['same-day', 'airport-sleep', 'weekend', 'custom'].includes(r.type) &&
       ['planning', 'active', 'done'].includes(r.status) &&
-      optional(r, 'nameManual journalText coverPhotoId preset', 'string') &&
+      optional(r, 'nameManual journalText coverPhotoId preset opportunityId optionId', 'string') &&
       departPlan(r.outbound) &&
       (r.coverMode === undefined || ['auto', 'map', 'route-card', 'photo'].includes(r.coverMode)) &&
       (r.promptPrefs === undefined ||
@@ -105,7 +106,7 @@ export function validateBackup(value: unknown): asserts value is Backup {
         (c: unknown) => object(c) && strings(c, 'id text') && typeof c.done === 'boolean',
       ) &&
       optionalNumbers(r, 'visitedAt') &&
-      optional(r, 'tz legName', 'string') &&
+      optional(r, 'tz legName bookAhead', 'string') &&
       (r.guide === undefined ||
         (object(r.guide) &&
           optional(r.guide, 'anchor minimum stretch exit', 'string') &&
@@ -125,7 +126,7 @@ export function validateBackup(value: unknown): asserts value is Backup {
       (r.cityId === null || typeof r.cityId === 'string') &&
       typeof r.skeleton === 'boolean' &&
       optional(r, 'fxPending gbpManual shared', 'boolean') &&
-      optional(r, 'fxDate', 'string') &&
+      optional(r, 'fxDate need', 'string') &&
       (r.fxRate === null ||
         (typeof r.fxRate === 'number' && Number.isFinite(r.fxRate) && r.fxRate > 0)),
   );
@@ -142,6 +143,36 @@ export function validateBackup(value: unknown): asserts value is Backup {
         (r.cityId === null || typeof r.cityId === 'string') &&
         (r.stopId === null || typeof r.stopId === 'string'),
     );
+  if (data.opportunities !== undefined) {
+    const option = (v: unknown) =>
+      object(v) &&
+      typeof v.id === 'string' &&
+      !!v.id.trim() &&
+      strings(v, 'outDate backDate') &&
+      ['outRoute', 'backRoute'].every(
+        (k) => Array.isArray(v[k]) && v[k].every((a: unknown) => typeof a === 'string'),
+      ) &&
+      optional(
+        v,
+        'outDep outArr backDep backArr outFlights backFlights cities overnight checked outLink backLink note',
+        'string',
+      ) &&
+      optionalNumbers(
+        v,
+        'outArrDay backArrDay outFarePP backFarePP finderPP usableH groundH paidNights scenario',
+      );
+    rows(
+      'opportunities',
+      'id',
+      (r) =>
+        strings(r, 'city') &&
+        numbers(r, 'createdAt') &&
+        optional(r, 'country research', 'string') &&
+        Array.isArray(r.options) &&
+        r.options.every(option) &&
+        new Set(r.options.map((o: { id: string }) => o.id)).size === r.options.length,
+    );
+  }
   rows('fxRates', 'code', (r) => numbers(r, 'rate fetchedAt') && r.rate > 0 && strings(r, 'date'));
   rows('settings', 'key', (r) => 'value' in r);
   const photoMeta = (r: Record<string, any>) =>

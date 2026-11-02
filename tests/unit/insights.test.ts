@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { compareCities, dataQuality, transitRows, tripRhythm } from '../../src/lib/insights';
+import {
+  compareCities,
+  dataQuality,
+  hotelNightCost,
+  transitRows,
+  tripRhythm,
+  ukTransferByAirport,
+} from '../../src/lib/insights';
 import type { City, Expense, Stop, Trip } from '../../src/lib/db';
 
 function trip(over: Partial<Trip>): Trip {
@@ -197,6 +204,115 @@ describe('compareCities', () => {
       rides: 1,
       departures: 2,
       slackMin: 105,
+    });
+  });
+});
+
+// The question the traveller has re-answered by hand on every trip: what does
+// getting to Stansted cost? No historic trip carries a structured departure,
+// so the airport is read from the transfer's own description — exactly as the
+// ledger writes it.
+describe('what the London airports have cost', () => {
+  const trips = [trip({ id: 'a', partySize: 2 }), trip({ id: 'b', partySize: 2 })];
+  const rows = [
+    exp({
+      tripId: 'a',
+      subcategory: 'Airport Transfer (UK)',
+      description: 'London to Stansted Airport Bus Tickets (Return)',
+      amountGBP: 25.16,
+    }),
+    exp({
+      tripId: 'a',
+      subcategory: 'Airport Transfer (UK)',
+      description: 'Stansted Airport to London Bus Tickets',
+      amountGBP: 11.9,
+    }),
+    exp({
+      tripId: 'b',
+      subcategory: 'Airport Transfer (UK)',
+      description: 'London to Gatwick Airport Train Tickets',
+      amountGBP: 21.4,
+    }),
+    // Names no airport: left out rather than attributed to a guess.
+    exp({
+      tripId: 'b',
+      subcategory: 'Airport Transfer (UK)',
+      description: 'Home to Baker Street Station Underground Tickets',
+      amountGBP: 5.8,
+    }),
+  ];
+
+  it('halves a return, divides by the party, and keeps the airport apart', () => {
+    const by = ukTransferByAirport(trips, rows);
+    // £25.16 return for two = £6.29 each one way; £11.90 one way for two = £5.95.
+    expect(by.STN).toMatchObject({ perPerson: 6.12, samples: 2, low: 5.95, high: 6.29 });
+    expect(by.LGW).toMatchObject({ perPerson: 10.7, samples: 1 });
+    expect(Object.keys(by).sort()).toEqual(['LGW', 'STN']);
+  });
+
+  it('uses the departure airport on the trip when the row names none', () => {
+    const by = ukTransferByAirport(
+      [trip({ id: 'c', partySize: 2, outbound: { hub: 'LTN' } })],
+      [
+        exp({
+          tripId: 'c',
+          subcategory: 'Airport Transfer (UK)',
+          description: 'Coach to the airport',
+          amountGBP: 20.4,
+        }),
+      ],
+    );
+    expect(by.LTN?.perPerson).toBe(10.2);
+  });
+
+  it('takes the middle, so a voucher or a taxi does not become the usual fare', () => {
+    const by = ukTransferByAirport(
+      [trip({ id: 'd', partySize: 2 })],
+      [7.2, 24.6, 25.16].map((amountGBP) =>
+        exp({
+          tripId: 'd',
+          subcategory: 'Airport Transfer (UK)',
+          description: 'London to Luton Airport Train+Shuttle Tickets',
+          amountGBP,
+        }),
+      ),
+    );
+    expect(by.LTN?.perPerson).toBe(12.3);
+  });
+
+  it('has nothing to say with no history, rather than saying zero', () => {
+    expect(ukTransferByAirport(trips, [])).toEqual({});
+    expect(hotelNightCost(trips, [], [])).toBeNull();
+  });
+});
+
+describe('what a hotel night has cost', () => {
+  it('divides the stay by the nights its legs actually slept', () => {
+    const trips = [
+      trip({ id: 'h', partySize: 2, accommodation: true }),
+      trip({ id: 'i', partySize: 2, accommodation: true }),
+    ];
+    const legs = [
+      city({
+        id: 'h1',
+        tripId: 'h',
+        name: 'Cairo',
+        sleep: 'hotel',
+        arrival: '2026-01-14T15:00',
+        departure: '2026-01-16T18:00',
+      }),
+      city({ id: 'i1', tripId: 'i', name: 'Fes', sleep: 'hotel' }),
+    ];
+    const rows = [
+      exp({ tripId: 'h', category: 'Accommodation', subcategory: 'Hotel', amountGBP: 43.2 }),
+      exp({ tripId: 'i', category: 'Accommodation', subcategory: 'Hotel', amountGBP: 27.4 }),
+    ];
+    // Cairo: £43.20 over two nights = £21.60; Fes: £27.40 for one.
+    expect(hotelNightCost(trips, legs, rows)).toMatchObject({
+      perPerson: 24.5,
+      samples: 2,
+      low: 21.6,
+      high: 27.4,
     });
   });
 });

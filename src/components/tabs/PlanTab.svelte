@@ -8,6 +8,7 @@
   import { recall, remember } from '../../lib/ui-memory';
   import JournalView from '../JournalView.svelte';
   import NextDeparture from '../NextDeparture.svelte';
+  import BeforeYouGo from '../BeforeYouGo.svelte';
 
   let { trip }: { trip: Trip } = $props();
 
@@ -106,6 +107,7 @@
 <div class="plan">
   {#if trip.status !== 'done'}
     <NextDeparture {trip} {cities} />
+    <BeforeYouGo {trip} {cities} />
   {/if}
 
   {#if editing}

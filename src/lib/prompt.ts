@@ -153,6 +153,7 @@ const ROUTE_RULES = [
   '  - `Look for:` three concrete things to spot, separated by semicolons',
   '  - `Stretch:` one optional deeper layer, only if calm and ahead of time',
   '  - `Exit rule:` what can be skipped without losing the point',
+  '- Where a place cannot simply be walked into — timed entry, a daily quota, a tour that sells out — add one more labelled line: `Book ahead:` what to book and how far in advance. Leave the line out entirely where nothing needs booking; it is a real obligation, not a precaution.',
   '- Then add 2-4 discovery items as Markdown task lines (`- [ ] ...`): concrete, physical things to find, spot, count, or compare on the spot at that exact place. Specific to the stop, never generic.',
   '- Add one line per stop: `Location: <latitude>, <longitude>` — approximate decimal-degree coordinates, so the app can pin it on the map.',
   '- To show the rhythm of the day, you may put a bold line such as `**Morning**` or `**After the hotel**` between stops — never a heading, and never a city name.',
@@ -525,5 +526,52 @@ export function buildCityPrompt(
     ...ROUTE_RULES,
     '',
     ...QUALITY_BAR,
+  ].join('\n');
+}
+
+/**
+ * The gap-fill prompt for a destination still being compared.
+ *
+ * It asks for the few facts that could actually change which option wins and
+ * that neither the flight finder nor the ledger can supply — the way in from
+ * each airport and what it costs, anything that would waste those dates, and
+ * what has to be booked in advance. The answer is read, not parsed: it is
+ * pasted straight into the destination's research, where it keeps its value
+ * long after any particular fare has gone.
+ */
+export function buildOpportunityPrompt(
+  city: string,
+  country: string | undefined,
+  airports: string[],
+  months: string[],
+  visited: boolean,
+): string {
+  const where = [city, country].filter(Boolean).join(', ');
+  const when = months.length ? months.join(' and ') : 'the next few months';
+  return [
+    'You are a practical travel researcher. Answer briefly and concretely, in plain UK English.',
+    '',
+    `I am deciding whether to make a short trip from London to **${where}** in ${when}. I am not asking you to plan the trip, choose flights or sell me the city — only to fill four gaps that could change whether I go.`,
+    '',
+    '## What I need',
+    '',
+    `1. **Getting in from the airport.** For ${airports.length ? airports.join(', ') : 'the main airport'}: the realistic way into the centre, how long it takes door to door, and what it costs per person, one way, in GBP. If there is a cheap option that is slow and a fast one that is not, say both.`,
+    `2. **Anything that would waste those dates.** Closure days, public holidays, major restoration works, seasonal shutdowns, or anything that would make ${city} a poor use of a short visit in ${when}.`,
+    '3. **What must be booked in advance**, and how far ahead — timed entry, daily quotas, tours that sell out. Only genuine obligations.',
+    `4. **Is it worth it?** Three or four sentences: what makes ${city} structurally distinctive, and who would be disappointed by it.`,
+    '',
+    '## About me',
+    '',
+    '- Based in London; short, intense trips, usually one or two days, hand luggage only.',
+    '- Walking first; public transport both for getting about and as a way of reading the city.',
+    '- Interested in how cities work: architecture, history, religion and civic power, everyday social behaviour.',
+    '- Food must be coeliac-safe gluten-free, preferably vegetarian; grocery meals over restaurants.',
+    visited
+      ? `- I have been to ${city} before, so say what a second visit adds rather than repeating the obvious.`
+      : `- I have not been to ${city}.`,
+    '',
+    'Check current sources for anything changeable. Do not invent fares, opening hours or booking rules; where you are unsure, say so plainly rather than guessing.',
+    '',
+    'Keep the whole answer under 400 words, as Markdown under the four headings above.',
   ].join('\n');
 }

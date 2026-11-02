@@ -159,6 +159,8 @@ export interface StopCandidate {
   lng?: number;
   /** The visit anchor, from labelled lines (Anchor / Minimum visit / Look for / Stretch / Exit rule). */
   guide?: StopGuide;
+  /** What must be booked before arriving, from a `Book ahead:` line. */
+  bookAhead?: string;
   /** City this stop belongs to, from the plan's `# <City>` heading (multi-city). */
   city?: string;
 }
@@ -183,10 +185,12 @@ interface ParsedBody {
   lat?: number;
   lng?: number;
   guide?: StopGuide;
+  /** From a `Book ahead:` line — logistics, so it sits beside the guide. */
+  bookAhead?: string;
 }
 
 const GUIDE_LABEL =
-  /^\s*(?:[-*]\s*)?\**\s*(anchor|minimum(?: viable)? visit|look for|stretch|exit rule)\s*\**\s*:\s*\**\s*(.*?)\s*$/i;
+  /^\s*(?:[-*]\s*)?\**\s*(anchor|minimum(?: viable)? visit|look for|stretch|exit rule|book ahead)\s*\**\s*:\s*\**\s*(.*?)\s*$/i;
 const GUIDE_KEY: Record<string, keyof StopGuide> = {
   anchor: 'anchor',
   'minimum visit': 'minimum',
@@ -207,6 +211,7 @@ function parseBody(body: string): ParsedBody {
   const checklist: { text: string; done: boolean }[] = [];
   const kept: string[] = [];
   const guide: StopGuide = {};
+  let bookAhead: string | undefined;
   let lat: number | undefined;
   let lng: number | undefined;
   // "Look for:" may list its cues on the following bullet lines — indented
@@ -223,9 +228,13 @@ function parseBody(body: string): ParsedBody {
     }
     const label = line.match(GUIDE_LABEL);
     if (label) {
-      const key = GUIDE_KEY[label[1].toLowerCase().replace(/\s+/g, ' ')];
+      const name = label[1].toLowerCase().replace(/\s+/g, ' ');
+      const key = GUIDE_KEY[name];
       const value = label[2].replace(/\*+$/, '').trim();
-      if (key === 'lookFor') {
+      if (name === 'book ahead') {
+        if (value) bookAhead = value;
+        collectingCues = false;
+      } else if (key === 'lookFor') {
         guide.lookFor = value
           .split(';')
           .map((v) => v.trim().replace(/\.$/, ''))
@@ -270,6 +279,7 @@ function parseBody(body: string): ParsedBody {
     lat,
     lng,
     ...(hasGuide ? { guide } : {}),
+    ...(bookAhead ? { bookAhead } : {}),
   };
 }
 
@@ -282,6 +292,7 @@ function toCandidate(name: string, body: string): StopCandidate {
     lat: parsed.lat,
     lng: parsed.lng,
     ...(parsed.guide ? { guide: parsed.guide } : {}),
+    ...(parsed.bookAhead ? { bookAhead: parsed.bookAhead } : {}),
   };
 }
 
@@ -432,23 +443,30 @@ export function guideBackfill(
   knownCities: string[] = [],
   cityIdByName: Map<string, string> = new Map(),
 ) {
-  const out: { id: string; guide: StopGuide }[] = [];
+  const out: { id: string; patch: { guide?: StopGuide; bookAhead?: string } }[] = [];
   const taken = new Set<string>();
   for (const c of extractStopsFromPlan(planText, knownCities)) {
     const stop = matchStop(c, existing, cityIdByName, taken);
     if (stop) taken.add(stop.id);
-    if (!stop || !c.guide) continue;
-    const have = stop.guide ?? {};
-    const merged: StopGuide = { ...have };
-    let changed = false;
-    for (const k of Object.keys(c.guide) as (keyof StopGuide)[]) {
-      const empty = Array.isArray(have[k]) ? !(have[k] as string[]).length : !have[k];
-      if (empty && c.guide[k]) {
-        (merged as Record<string, unknown>)[k] = c.guide[k];
-        changed = true;
+    if (!stop) continue;
+    const patch: { guide?: StopGuide; bookAhead?: string } = {};
+    if (c.guide) {
+      const have = stop.guide ?? {};
+      const merged: StopGuide = { ...have };
+      let changed = false;
+      for (const k of Object.keys(c.guide) as (keyof StopGuide)[]) {
+        const empty = Array.isArray(have[k]) ? !(have[k] as string[]).length : !have[k];
+        if (empty && c.guide[k]) {
+          (merged as Record<string, unknown>)[k] = c.guide[k];
+          changed = true;
+        }
       }
+      if (changed) patch.guide = merged;
     }
-    if (changed) out.push({ id: stop.id, guide: merged });
+    // A re-researched plan may now say a place has to be booked. Filling an
+    // empty field adds the obligation; it never overwrites what was written.
+    if (c.bookAhead && !stop.bookAhead?.trim()) patch.bookAhead = c.bookAhead;
+    if (Object.keys(patch).length) out.push({ id: stop.id, patch });
   }
   return out;
 }
@@ -468,7 +486,7 @@ export async function importStopsFromPlan(
   const cityIdByName = cityIds(cities);
   const fresh = newStopCandidates(planText, existing, names, cityIdByName);
   const backfill = guideBackfill(planText, existing, names, cityIdByName);
-  for (const b of backfill) await db.stops.update(b.id, { guide: b.guide });
+  for (const b of backfill) await db.stops.update(b.id, b.patch);
   if (fresh.length === 0) return 0;
 
   const base = await db.stops.where('tripId').equals(tripId).count();
@@ -484,6 +502,7 @@ export async function importStopsFromPlan(
     lat: c.lat,
     lng: c.lng,
     ...(c.guide ? { guide: c.guide } : {}),
+    ...(c.bookAhead ? { bookAhead: c.bookAhead } : {}),
     order: base + i,
     createdAt: now,
   }));
