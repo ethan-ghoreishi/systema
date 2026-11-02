@@ -262,9 +262,14 @@ describe('ordering and plain words', () => {
     expect(describeDifference(other, best)).toContain('Cost not worked out yet');
   });
 
-  it('labels dates and routes the way a ticket reads', () => {
+  // Built from the calendar parts, not from Intl: WebKit on Linux words the
+  // same request as 'Sat, 12 Dec', and two of those joined by a dash read badly.
+  it('labels dates and routes the way a ticket reads, on every engine', () => {
     expect(optionDates(o('a'))).toBe('Fri 11 – Sat 12 Dec');
     expect(optionDates(o('a', { backDate: '2026-12-11' }))).toBe('Fri 11 Dec');
+    expect(optionDates(o('a', { outDate: '2027-01-30', backDate: '2027-02-01' }))).toBe(
+      'Sat 30 Jan – Mon 1 Feb',
+    );
     expect(optionRoute(o('a'))).toBe('STN → FAO');
     expect(optionRoute(o('a', { backRoute: ['FAO', 'LGW'] }))).toBe('STN → FAO · back FAO → LGW');
   });

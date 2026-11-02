@@ -26,6 +26,7 @@
     updateOpportunity,
   } from '../lib/opportunities';
   import { tripDisplayName } from '../lib/trip-shape';
+  import { wallParts } from '../lib/tz';
 
   /**
    * One destination, and the realistic ways to reach it side by side.
@@ -83,12 +84,10 @@
     ].filter((a): a is string => !!a);
     const months = [
       ...new Set(
-        view.rows.map((r) =>
-          new Date(`${r.option.outDate}T12:00:00`).toLocaleDateString('en-GB', {
-            month: 'long',
-            year: 'numeric',
-          }),
-        ),
+        view.rows.map((r) => {
+          const p = wallParts(r.option.outDate);
+          return p ? `${p.month} ${p.y}` : r.option.outDate;
+        }),
       ),
     ];
     const copied = copyText(

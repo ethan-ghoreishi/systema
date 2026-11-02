@@ -1,5 +1,6 @@
 import type { Opportunity, TripOption } from './db';
 import { MODE_DEFAULTS } from './readiness';
+import { wallParts } from './tz';
 import type { MeasuredCost } from './insights';
 import { newId } from './ids';
 
@@ -484,20 +485,21 @@ export function describeDifference(row: PricedOption, best: PricedOption): strin
   return `${bits[0][0].toUpperCase()}${bits[0].slice(1)}${bits.length > 1 ? `, ${bits.slice(1).join(' and ')}` : ''}.`;
 }
 
-/** 'Fri 11 – Sat 12 Dec' from the option's dates. */
+/**
+ * 'Fri 11 – Sat 12 Dec' from the option's dates, built from the calendar parts
+ * rather than from Intl: engines word the same request differently (WebKit on
+ * Linux writes 'Sat, 13 Feb'), and two of those joined by a dash read badly.
+ */
 export function optionDates(o: TripOption): string {
-  const fmt = (iso: string, withMonth: boolean) => {
-    const d = new Date(`${iso}T12:00:00`);
-    if (Number.isNaN(d.getTime())) return iso;
-    return d.toLocaleDateString('en-GB', {
-      weekday: 'short',
-      day: 'numeric',
-      ...(withMonth ? { month: 'short' } : {}),
-    });
-  };
-  if (!o.backDate || o.backDate === o.outDate) return fmt(o.outDate, true);
-  const sameMonth = o.outDate.slice(0, 7) === o.backDate.slice(0, 7);
-  return `${fmt(o.outDate, !sameMonth)} – ${fmt(o.backDate, true)}`;
+  const a = wallParts(o.outDate);
+  if (!a) return o.outDate;
+  const dayOf = (p: NonNullable<ReturnType<typeof wallParts>>) =>
+    `${p.weekday.slice(0, 3)} ${p.day}`;
+  const withMonth = (p: NonNullable<ReturnType<typeof wallParts>>) =>
+    `${dayOf(p)} ${p.month.slice(0, 3)}`;
+  const b = o.backDate && o.backDate !== o.outDate ? wallParts(o.backDate) : undefined;
+  if (!b) return withMonth(a);
+  return `${a.month === b.month ? dayOf(a) : withMonth(a)} – ${withMonth(b)}`;
 }
 
 /** 'STN → NTE, back NTE → STN' — the airports, which decide the London end. */
