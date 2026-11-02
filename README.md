@@ -41,7 +41,8 @@ subscription.**
 
 ## App shape
 
-- **Home** — **Considering** (destinations being compared) above current trips;
+- **Home** — current trips first, then the **Trip journal**, then
+  **Considering** (destinations being weighed, which are not trips yet);
   trips marked Done shelve into a **Trip
   journal** section (everything kept: plan, stops, notes, photos, expenses,
   journal). Each card names itself from its legs (e.g. `Barcelona → Bologna`);
@@ -61,12 +62,20 @@ subscription.**
   the legacy Travel Spending sheet into a backup file the app imports (trips,
   cities with currencies, expenses, and visited stops inferred from ticket
   purchases). Generated files contain personal data — never commit them.
-- **Considering → Compare → Choose → a trip.** When a cheap trip looks serious,
-  paste the Cheap-Trip Finder's table (or pick
-  its `.csv`) on Home and tick the trips worth comparing. Each destination
-  becomes an **Opportunity** — durable knowledge about the place, which outlives
-  every fare — holding the **options** being weighed: one dates/airports/fares
-  configuration each. The finder has already ranked the world on true cost per
+- **Considering → Compare → Choose → a trip.** Add a destination by hand and
+  type an option straight off a Google Flights search, or — when a finder
+  search looks serious — pick the files it saved on Home (its `.csv` and, beside
+  it, its `.config.json`, which says what that run priced for) and tick the
+  trips worth comparing. The search's price map and its older calendar exports
+  share their first four columns with the results, so they are refused by name
+  rather than imported as destinations with no flights; a row the search never
+  found flights for is left out and counted. Each destination becomes an
+  **Opportunity** — durable knowledge about the place, which outlives every
+  fare — holding the **options** being weighed: one dates/airports/fares
+  configuration each. An option written by hand is added up from its own parts
+  (the fares you state plus your measured transfers and nights) instead of from
+  a figure the finder never gave, and each card says which arithmetic it used.
+  Two places of the same name in different countries stay two destinations. The finder has already ranked the world on true cost per
   usable daylight hour, and none of that is recomputed; what it cannot know is
   you, so each figure is **re-priced from your own ledger** (what Stansted has
   really cost you, what you really pay for a hotel night, what a transfer in
@@ -78,27 +87,43 @@ subscription.**
   is a fortnight old. **Choose this** lays out an ordinary trip — legs, times,
   airports, flight numbers, the hotel night, and for a two-city row the stopover
   scenario — and says plainly what the row could not tell it. Nothing is priced:
-  a quoted fare is not a payment. An opportunity with no dates still ahead and no
-  trip chosen quietly reads as past; what you learned about the city stays.
+  a quoted fare is not a payment. Choosing throws nothing away: the options that
+  lost, the dates that have gone and what you learned about the place are all
+  still there, and the trip's Plan tab links back to them. A destination leaves
+  Considering only while a trip from it is still to happen — once that trip is
+  Done the place is open again, research and all. An opportunity with no dates
+  still ahead and no trip chosen quietly reads as past.
   **Ask Claude what to check** copies a prompt for just the gaps that could
   change the decision (the way in from each airport and what it costs, anything
   closed on those dates, what must be booked), to paste back.
 - **Before you go** — a card on the Plan tab: what is still unresolved, worked
-  out rather than ticked. Every line is derived from the trip itself — a booking
-  reference on the flight, a transport mode on the departure, a hotel on the leg,
-  a plan for each city, a `Book ahead:` place the itinerary named, a payment in
-  the ledger — so the list shrinks as the trip comes together and empties itself
-  at the end. **Book it** records a booking once: the fare goes into Expenses and
-  the mode and journey time go onto the departure, so leave-by stops being a
-  guess and £22 is never typed twice. Checking in is the one plain tick (the
-  airline's window leaves no trace in the data), and it only appears within 48
-  hours of the flight.
+  out rather than ticked. Every line is derived from the trip itself, in the
+  state its own record puts it: **planned** (you know how you are getting there
+  and will pay on the day), **booked** (a reference, or a reservation that cost
+  nothing — a free timed entry), **paid** (the ledger has it). A ride you buy at
+  the machine is settled once you know which ride it is; a bed, a seat or a
+  timed entry is not settled until it is held, so a hotel merely named reads as
+  "chosen, not booked". Each thing's reference lives on the thing itself — a
+  coach reference is never read as a booked flight. The list shrinks as the trip
+  comes together and empties itself at the end. **Book it** records a booking
+  once: the fare goes into Expenses and the mode and journey time go onto the
+  journey, so leave-by stops being a guess and £22 is never typed twice.
+  Checking in is the one plain tick (the airline's window leaves no trace in the
+  data), and it only appears within 48 hours of the flight.
+- **Getting ready** — the half of a trip no booking covers: food, charging, the
+  bag, the flat. Not a list copied from the last trip — ten rules, each shown
+  with the fact about _this_ trip that earned it, so a 04:00 dash is fed and
+  packed nothing like a four-night multi-city break and an airport sleep gets
+  what only that night needs. Food runs in order (buy it, make it, take it out
+  of the fridge). Anything the rules miss you add by hand. It appears a week
+  before you leave, not three months.
 - A trip is described by its **legs** — each city with its arrival and
   departure (as printed on the tickets, in that city's own time zone), where you
-  slept (nothing / airport / hotel), an optional hotel/base, and how you leave
-  (airport or station, terminal, flight number, booking reference, how you get
-  there and how long it takes, how early you want to be there). Leaving home is
-  a departure too. From those the app derives the trip's shape (same-day dash,
+  slept (nothing / airport / hotel), an optional hotel/base, how you get in from
+  the airport, and how you leave (airport or station, terminal, flight number,
+  booking reference, how you get there and how long it takes, how early you want
+  to be there). Getting in and getting out are two journeys, kept apart.
+  Leaving home is a departure too, and so is getting home from the airport. From those the app derives the trip's shape (same-day dash,
   airport sleep, city break, multi-city, **two-city stopover** 1–4…), dates and
   name — so nothing has to be kept in sync by hand. A departure before its own
   arrival is refused, with how to fix it; other timing clashes are explained.
@@ -175,7 +200,8 @@ changes, leave-by and stages, .ics output, chronology, the two-city scenarios,
 per-city prompts, plan blocks, anchors, `Book ahead:` lines, the visit timeline,
 journal photo references, quick-capture defaults and duplicates, CSV round trip,
 insights, what the London airports and a hotel night have really cost, reading
-and re-pricing a finder search, the derived Before-you-go list,
+and re-pricing a finder search (and refusing its price map), the four states of
+the Before-you-go list, which preparation each trip shape earns,
 NAS failure classes, EXIF — and that a snapshot from this version still passes
 the **previous version's** validator and merge (frozen in
 `tests/unit/fixtures`).
@@ -186,8 +212,8 @@ fixed shell (the document never scrolls, the bars never move), double-tap
 policy, the expense `<dialog>` in the top layer, copying inside the tap and
 the fallback sheet, itinerary zones and refusals, city-local maps and covers,
 moments and library imports, quick capture and the CSV, a finder search through
-to a chosen trip and a booked coach, v3 → v4 → v5 database
-upgrades, and NAS sync, partial backups, retries and diagnostics against a fake
+to a chosen trip and a booked coach, a destination and an option written by
+hand, v3 → v4 → v5 database upgrades, and NAS sync, partial backups, retries and diagnostics against a fake
 receiver — plus the real PHP receiver (current, previous and original) in CI.
 
 ### On the iPhone (what emulation can't show)
@@ -413,8 +439,8 @@ tests/
 
 General file/PDF attachments (27 trips' worth of notes show only booking
 screenshots, whose value is the price — already in Expenses — and whose access
-proof belongs in Apple Wallet or a booking reference), a packing list (identical
-on every trip, so it carries no information), fare monitoring, hotel search,
+proof belongs in Apple Wallet or a booking reference), fare monitoring, hotel
+search,
 weather, a configurable scoring model for options, a separate saved-places
 library. Also parked: strict JSON itinerary import, an accreting lens library, a configurable template
 engine, AI-assisted candidate sorting, logistics beyond the countdown, journal

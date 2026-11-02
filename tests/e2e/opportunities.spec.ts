@@ -359,3 +359,57 @@ test('a destination and an option written by hand go all the way to a trip', asy
   await page.locator('.opp-chosen').click();
   await expect(page.getByText(/What you know about Valencia/)).toBeVisible();
 });
+
+// The half of a trip no booking covers. The rules are unit-tested; what the
+// browser has to prove is that a tick survives, since it lives on the trip and
+// so travels with it through backup and sync.
+test('getting ready appears close to the day, and a tick sticks', async ({ page }) => {
+  await page.goto('/');
+  const tripId = await page.evaluate(async () => {
+    const { db } = await import(/* @vite-ignore */ '/src/lib/db.ts');
+    await db.open();
+    const at = new Date(Date.now() + 36 * 3_600_000).toISOString().slice(0, 16);
+    await db.trips.put({
+      id: 'soon',
+      name: '',
+      type: 'weekend',
+      startDate: at.slice(0, 10),
+      endDate: at.slice(0, 10),
+      partySize: 2,
+      returnFlightAt: '',
+      accommodation: true,
+      status: 'planning',
+      planText: '',
+      outbound: { at: `${at.slice(0, 10)}T05:40`, tz: 'Europe/London', hub: 'STN' },
+      order: 0,
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    await db.cities.put({
+      id: 'soon-city',
+      tripId: 'soon',
+      name: 'Faro',
+      currency: 'EUR',
+      order: 0,
+      sleep: 'hotel',
+      arrival: `${at.slice(0, 10)}T09:25`,
+      tz: 'Europe/Lisbon',
+    });
+    return 'soon';
+  });
+
+  await page.goto(`/#/trip/${tripId}/plan`);
+  const prep = page.locator('.card', { hasText: 'Getting ready' });
+  await expect(prep).toBeVisible();
+  // The reason is this trip's own: a 05:40 flight means leaving in the dark.
+  await expect(prep).toContainText('nothing is open on the way');
+  await prep.locator('.need', { hasText: 'Buy what you are taking' }).locator('input').check();
+  await page.reload();
+  await expect(prep.locator('.need--done', { hasText: 'Buy what you are taking' })).toBeVisible();
+  expect(
+    await page.evaluate(async () => {
+      const { db } = await import(/* @vite-ignore */ '/src/lib/db.ts');
+      return (await db.trips.get('soon'))?.prep?.done;
+    }),
+  ).toEqual(['food:buy']);
+});

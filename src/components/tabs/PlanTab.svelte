@@ -9,6 +9,7 @@
   import JournalView from '../JournalView.svelte';
   import NextDeparture from '../NextDeparture.svelte';
   import BeforeYouGo from '../BeforeYouGo.svelte';
+  import PersonalPrep from '../PersonalPrep.svelte';
 
   let { trip }: { trip: Trip } = $props();
 
@@ -116,6 +117,7 @@
   {#if trip.status !== 'done'}
     <NextDeparture {trip} {cities} />
     <BeforeYouGo {trip} {cities} />
+    <PersonalPrep {trip} {cities} />
   {/if}
 
   {#if research}
