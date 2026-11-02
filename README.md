@@ -74,7 +74,9 @@ subscription.**
   fare — holding the **options** being weighed: one dates/airports/fares
   configuration each. An option written by hand is added up from its own parts
   (the fares you state plus your measured transfers and nights) instead of from
-  a figure the finder never gave, and each card says which arithmetic it used.
+  a figure the finder never gave, and each card says which arithmetic it used;
+  where its dates span a night it asks where that night is spent, so an airport
+  sleep typed by hand becomes the same trip shape a finder row would.
   Two places of the same name in different countries stay two destinations. The finder has already ranked the world on true cost per
   usable daylight hour, and none of that is recomputed; what it cannot know is
   you, so each figure is **re-priced from your own ledger** (what Stansted has

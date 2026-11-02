@@ -244,7 +244,7 @@ test('a finder search becomes a compared shortlist, a trip, and a booked coach',
   // A return bus into town is one purchase. The two journeys keep their own
   // lines — they happen at different hours — but buying it settles both.
   await before
-    .locator('.need', { hasText: 'Getting into Faro from the airport' })
+    .locator('.need', { hasText: 'Getting into Faro from FAO' })
     .getByRole('button')
     .click();
   await page.getByLabel('What it cost, for everyone (£)').fill('9');
@@ -343,7 +343,8 @@ test('a destination and an option written by hand go all the way to a trip', asy
     await fill('Flight number', i, leg.no);
     await fill('Fare, each (£)', i, leg.fare);
   }
-  await form.getByLabel('Hotel nights to pay for').fill('2');
+  await form.getByLabel('Where you sleep').selectOption('hotel');
+  await form.getByLabel('Nights to pay for').fill('2');
   await page.getByRole('button', { name: 'Save' }).click();
 
   // Added up from its own parts — fares plus transfers and nights — and said
@@ -372,6 +373,50 @@ test('a destination and an option written by hand go all the way to a trip', asy
   // And the research is still a tap away from the trip it became.
   await page.locator('.opp-chosen').click();
   await expect(page.getByText(/What you know about Valencia/)).toBeVisible();
+});
+
+// The obvious thing to do is pick everything the search saved — results, price
+// map and settings — so the results have to be found among them, and the
+// settings have to be read rather than silently defaulted.
+test('picking everything the search saved finds the results and its settings', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Add a finder search' }).click();
+  await page.locator('input[type=file]').setInputFiles([
+    {
+      name: 'trips_custom_20270212_price_map.csv',
+      mimeType: 'text/csv',
+      buffer: Buffer.from(
+        'City,Country,Out date,Back date,Trip,From £pp,Trip £pp,Fits,Details\n' +
+          'Faro,Portugal,2027-02-12,2027-02-13,Fri→Sat · 1 night,34.5,34.5,True,found\n',
+      ),
+    },
+    {
+      name: 'trips_custom_20270212.csv',
+      mimeType: 'text/csv',
+      buffer: Buffer.from(`${HEAD}\n${ROWS}\n`),
+    },
+    {
+      name: 'trips_custom_20270212.config.json',
+      mimeType: 'application/json',
+      buffer: Buffer.from('{"travellers":3,"dest_transfer_pp":14,"hotel_per_night":72}'),
+    },
+  ]);
+
+  await expect(page.getByText('3 trips found')).toBeVisible();
+  await expect(page.getByText(/Priced for 3 travellers/)).toContainText('£14 a transfer');
+  await expect(page.getByRole('alert')).toHaveCount(0);
+
+  // And what the run priced for travels with each option, so a re-priced
+  // figure is measured against that run and not against a copied constant.
+  await page.locator('.finder-row', { hasText: 'Nantes' }).locator('input').uncheck();
+  await page.getByRole('button', { name: /^Add 2$/ }).click();
+  expect(
+    await page.evaluate(async () => {
+      const { db } = await import(/* @vite-ignore */ '/src/lib/db.ts');
+      const opp = await db.opportunities.toCollection().first();
+      return opp?.options[0]?.finderAssumptions;
+    }),
+  ).toEqual({ travellers: 3, destTransferPP: 14, hotelPerNight: 72 });
 });
 
 // The half of a trip no booking covers. The rules are unit-tested; what the
@@ -417,9 +462,12 @@ test('getting ready appears close to the day, and a tick sticks', async ({ page 
   await expect(prep).toBeVisible();
   // The reason is this trip's own: a 05:40 flight means leaving in the dark.
   await expect(prep).toContainText('nothing is open on the way');
-  await prep.locator('.need', { hasText: 'Buy what you are taking' }).locator('input').check();
+  await prep.locator('.need', { hasText: 'Buy the food' }).locator('input').check();
+  // The card reads the trip back through its own live query, so this is the
+  // write landing — reloading before it has is a race, not a test.
+  await expect(prep.locator('.need--done', { hasText: 'Buy the food' })).toBeVisible();
   await page.reload();
-  await expect(prep.locator('.need--done', { hasText: 'Buy what you are taking' })).toBeVisible();
+  await expect(prep.locator('.need--done', { hasText: 'Buy the food' })).toBeVisible();
   expect(
     await page.evaluate(async () => {
       const { db } = await import(/* @vite-ignore */ '/src/lib/db.ts');

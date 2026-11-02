@@ -156,6 +156,35 @@ describe('what is left before a trip', () => {
     expect(flight.find((n) => n.key === 'transfer-out:c1')?.done).toBe(false);
   });
 
+  // An older version wrote a transfer's reference into the flight's slot. The
+  // payment it was recorded against says which it really is, so a booked coach
+  // stops reading as a booked flight home — on data already on the phone.
+  it('reads a reference an older version put in the flight’s slot as the coach’s', () => {
+    const needs = tripNeeds(
+      trip(),
+      [leg({ exit: { hub: 'FAO', ref: 'NX7788' } })],
+      [
+        expense({
+          need: 'transfer:c1',
+          amountGBP: 9,
+          subcategory: 'Airport Transfer (Abroad)',
+          notes: 'Booking NX7788',
+        }),
+      ],
+      [],
+      NOW,
+    );
+    expect(needs.find((n) => n.key === 'flight:inbound')?.done).toBe(false);
+    expect(needs.find((n) => n.key === 'transfer-out:c1')?.state).toBe('paid');
+  });
+
+  it('names the airport you get home from, where the option said which', () => {
+    const t = trip({ homeward: { hub: 'LGW' } });
+    expect(
+      tripNeeds(t, [leg()], [], [], NOW).find((n) => n.key === 'transfer-uk:back')?.label,
+    ).toBe('Getting home from LGW');
+  });
+
   // A hotel named in the research is a choice; a room is held or it is not.
   it('does not call a chosen hotel a booked one', () => {
     const chosen = tripNeeds(trip(), [leg({ base: { name: 'Hotel Faro' } })], [], [], NOW).find(

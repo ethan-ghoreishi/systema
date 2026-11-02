@@ -58,16 +58,25 @@
   async function pickFiles(e: Event) {
     const input = e.currentTarget as HTMLInputElement;
     const files = [...(input.files ?? [])];
-    // Whichever way round they were picked, and whatever the phone calls them.
     const config = files.find((f) => /\.json$/i.test(f.name));
-    const table = files.find((f) => !/\.json$/i.test(f.name));
     if (config) assumptions = parseFinderConfig(await config.text());
-    if (table) {
-      text = await table.text();
+    // A search saves its results, its price map and its settings side by side,
+    // and picking all three is the obvious thing to do. The results are
+    // whichever table reads as trips, so each is tried rather than trusting the
+    // order the files arrive in — the price map last, since it never is.
+    const tables = files
+      .filter((f) => !/\.json$/i.test(f.name))
+      .sort(
+        (a, b) =>
+          Number(/_price_map\.csv$/i.test(a.name)) - Number(/_price_map\.csv$/i.test(b.name)),
+      );
+    error = '';
+    for (const f of tables) {
+      text = await f.text();
       read(text);
-    } else if (config && !parsed) {
-      error = 'That is the search’s settings on its own. Pick its .csv as well.';
+      if (parsed) break;
     }
+    if (!tables.length) error = 'That is the search’s settings on its own. Pick its .csv as well.';
     input.value = '';
   }
 
@@ -93,8 +102,9 @@
     try {
       // Out of Svelte's reactive proxies before IndexedDB sees them: a proxy
       // cannot be structured-cloned, and the write would fail at the store.
+      const assume = assumptions ? ($state.snapshot(assumptions) as FinderAssumptions) : null;
       const rows = ($state.snapshot(chosen) as ParsedRow[]).map((r) =>
-        assumptions ? { ...r, option: { ...r.option, finderAssumptions: assumptions } } : r,
+        assume ? { ...r, option: { ...r.option, finderAssumptions: assume } } : r,
       );
       const r = await addFinderRows(rows);
       const bits = [

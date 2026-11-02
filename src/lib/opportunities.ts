@@ -244,8 +244,18 @@ export async function chooseOption(opp: Opportunity, option: TripOption): Promis
     ...(option.backRoute[0] ? { hub: option.backRoute[0] } : {}),
     ...(firstFlight(option.backFlights) ? { number: firstFlight(option.backFlights) } : {}),
   };
+
+  // Both ends of the London side, which the row does state: the airport the
+  // return route lands at is often not the one it left from, and the ride home
+  // from it is a journey of its own.
+  const landsAt = option.backRoute[option.backRoute.length - 1];
+  if (landsAt && landsAt !== option.outRoute[0]) toFill.push(`how you get home from ${landsAt}`);
+  if (landsAt) await updateTrip(tripId, { homeward: { hub: landsAt } });
   const landing = wall(option.outDate, option.outArr, option.outArrDay ?? 0);
   const leaving = wall(option.backDate, option.backDep);
+  // Where you land at the far end: the way in from it is its own journey.
+  const arriveAt = option.outRoute[option.outRoute.length - 1];
+  const entry = arriveAt && arriveAt !== option.outRoute[0] ? { hub: arriveAt } : undefined;
 
   if (option.scenario) {
     const pattern = scenarioPattern(option.scenario as StopoverScenario);
@@ -269,6 +279,7 @@ export async function chooseOption(opp: Opportunity, option: TripOption): Promis
       await db.cities.update(destLeg.id, {
         arrival: landing,
         departure: leaving,
+        ...(entry && pattern.order !== 'stopover-first' ? { entry } : {}),
         exit: { ...destLeg.exit, ...homeExit },
         ...(suggestTz(opp.city, currency) ? { tz: suggestTz(opp.city, currency) } : {}),
       });
@@ -296,6 +307,7 @@ export async function chooseOption(opp: Opportunity, option: TripOption): Promis
     await addCity(tripId, opp.city, currency, {
       arrival: landing,
       departure: leaving,
+      ...(entry ? { entry } : {}),
       sleep: night ? 'hotel' : /airport sleep/i.test(option.overnight ?? '') ? 'airport' : 'none',
       ...(suggestTz(opp.city, currency) ? { tz: suggestTz(opp.city, currency) } : {}),
       exit: homeExit,

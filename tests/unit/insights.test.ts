@@ -286,7 +286,44 @@ describe('what the London airports have cost', () => {
     expect(by.STN?.perPerson).toBe(12);
   });
 
-  // It lands at whichever airport the flight home used, which nothing records.
+  // One ticket for both directions, bought once: £24 for two is £6 a journey,
+  // not £12. The app records a return ticket the way the sheet always has.
+  it('halves a return ticket the app recorded as one', () => {
+    const by = ukTransferByAirport(
+      [trip({ id: 'g', partySize: 2, outbound: { hub: 'STN' } })],
+      [
+        exp({
+          tripId: 'g',
+          subcategory: 'Airport Transfer (UK)',
+          description: 'Airport transfer (UK) (Return)',
+          need: 'transfer-uk:out',
+          amountGBP: 24,
+        }),
+      ],
+    );
+    expect(by.STN?.perPerson).toBe(6);
+  });
+
+  // The ride home arrives wherever the flight home landed, which the trip now
+  // records — a different airport from the one it set off from, often enough.
+  it('attributes the ride home to the airport it actually lands at', () => {
+    const by = ukTransferByAirport(
+      [trip({ id: 'h', partySize: 2, outbound: { hub: 'STN' }, homeward: { hub: 'LHR' } })],
+      [
+        exp({
+          tripId: 'h',
+          subcategory: 'Airport Transfer (UK)',
+          description: 'Airport transfer (UK) — return',
+          need: 'transfer-uk:back',
+          amountGBP: 30,
+        }),
+      ],
+    );
+    expect(by.LHR?.perPerson).toBe(15);
+    expect(by.STN).toBeUndefined();
+  });
+
+  // Nothing records where it landed: better silent than wrong.
   it('leaves the ride home out when the row names no airport', () => {
     const by = ukTransferByAirport(
       [trip({ id: 'f', partySize: 2, outbound: { hub: 'STN' } })],

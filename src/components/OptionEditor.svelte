@@ -46,7 +46,17 @@
 
   let outDate = $state(option?.outDate ?? todayIso());
   let backDate = $state(option?.backDate ?? option?.outDate ?? todayIso());
-  let nights = $state(String(option?.paidNights ?? 0));
+  let nights = $state(String(option?.paidNights ?? 1));
+  // Where the night goes, when the dates span one. A row that says nothing
+  // about it becomes a trip that sleeps nowhere, which is only right for the
+  // trips that really do.
+  let sleep = $state<'none' | 'airport' | 'hotel'>(
+    /airport sleep/i.test(option?.overnight ?? '')
+      ? 'airport'
+      : (option?.paidNights ?? 0) > 0
+        ? 'hotel'
+        : 'none',
+  );
   let note = $state(option?.note ?? '');
   let out = $state(legOf(option, 'out'));
   let back = $state(legOf(option, 'back'));
@@ -66,8 +76,9 @@
     return v.trim() && Number.isFinite(n) ? n : undefined;
   };
 
+  const spansNight = $derived(!!backDate && backDate > outDate);
   const built = $derived.by((): TripOption => {
-    const paidNights = Number(nights);
+    const paidNights = spansNight && sleep === 'hotel' ? Number(nights) : 0;
     return {
       id: option?.id ?? newId(),
       source: 'manual',
@@ -85,7 +96,10 @@
       ...(back.flights.trim() ? { backFlights: back.flights.trim() } : {}),
       ...(money(out.fare) != null ? { outFarePP: money(out.fare) } : {}),
       ...(money(back.fare) != null ? { backFarePP: money(back.fare) } : {}),
-      ...(Number.isFinite(paidNights) && paidNights > 0 ? { paidNights } : {}),
+      ...(Number.isFinite(paidNights) && paidNights > 0
+        ? { paidNights, overnight: `Hotel ×${paidNights}` }
+        : {}),
+      ...(spansNight && sleep === 'airport' ? { overnight: 'Airport sleep' } : {}),
       ...(note.trim() ? { note: note.trim() } : {}),
       // Fares typed today are fresh today; the staleness warning counts from here.
       ...(money(out.fare) != null || money(back.fare) != null
@@ -203,8 +217,24 @@
         />
       {/each}
 
-      <label class="label" for="opt-nights">Hotel nights to pay for</label>
-      <input id="opt-nights" class="field" type="text" inputmode="numeric" bind:value={nights} />
+      {#if spansNight}
+        <label class="label" for="opt-sleep">Where you sleep</label>
+        <select id="opt-sleep" class="field" bind:value={sleep}>
+          <option value="none">Nowhere — travelling through</option>
+          <option value="airport">At the airport</option>
+          <option value="hotel">A hotel</option>
+        </select>
+        {#if sleep === 'hotel'}
+          <label class="label" for="opt-nights">Nights to pay for</label>
+          <input
+            id="opt-nights"
+            class="field"
+            type="text"
+            inputmode="numeric"
+            bind:value={nights}
+          />
+        {/if}
+      {/if}
       <label class="label" for="opt-note">Note</label>
       <input
         id="opt-note"

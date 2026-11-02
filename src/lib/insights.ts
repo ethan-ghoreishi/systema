@@ -349,13 +349,12 @@ function measured(values: number[]): MeasuredCost | null {
  * for the usual fare.
  *
  * Two things are never guessed. A row only counts as both directions when it
- * says so in so many words — "(Return)", the way the spending sheet wrote it;
- * a row the app itself stamped is one leg of the journey by construction, and
- * "Airport transfer (UK) — return" is the ride home, not a round trip. And a
- * row is only attributed to the trip's departure airport where it could be that
- * journey. A row the app stamped as the ride home cannot be: that one lands at
- * whichever airport the return flight used, which nothing here records, so it
- * is left out rather than counted against the airport the trip set off from.
+ * says so in so many words — "(Return)", the way the spending sheet wrote it
+ * and the way booking a return ticket records it. "Airport transfer (UK) —
+ * return" is the ride home, one journey, and is not halved. And a row is only
+ * attributed to an airport it names, or to the one its own journey used: the
+ * way out left from `outbound.hub`, the ride home arrives at `homeward.hub`,
+ * which may be a different airport entirely.
  * ponytail: an unstamped row that names no airport is still taken as the
  * departure one — right whenever the route is symmetric, which it usually is,
  * and the only way the imported spending sheet can be read at all.
@@ -366,14 +365,18 @@ export function ukTransferByAirport(
 ): Record<string, MeasuredCost> {
   const party = new Map(trips.map((t) => [t.id, Math.max(1, t.partySize || 1)]));
   const hubOf = new Map(trips.map((t) => [t.id, t.outbound?.hub?.trim().toUpperCase() ?? '']));
+  const backHubOf = new Map(trips.map((t) => [t.id, t.homeward?.hub?.trim().toUpperCase() ?? '']));
   const byHub: Record<string, number[]> = {};
   for (const e of realExpenses(expenses)) {
     if (e.subcategory !== UK_TRANSFER || !e.amountGBP) continue;
     const text = `${e.description} ${e.notes}`.toLowerCase();
     const named = Object.entries(LONDON_HUBS).find(([name]) => text.includes(name))?.[1];
-    const hub = named ?? (e.need === 'transfer-uk:back' ? '' : hubOf.get(e.tripId)) ?? '';
+    const hub =
+      named ??
+      (e.need === 'transfer-uk:back' ? backHubOf.get(e.tripId) : hubOf.get(e.tripId)) ??
+      '';
     if (!hub) continue;
-    const both = !e.need && /\(return\)/i.test(e.description);
+    const both = /\(return\)/i.test(e.description);
     const perPerson = e.amountGBP / (party.get(e.tripId) ?? 1) / (both ? 2 : 1);
     (byHub[hub] ??= []).push(perPerson);
   }

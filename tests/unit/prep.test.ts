@@ -90,6 +90,16 @@ describe('getting yourself ready', () => {
     expect(later.find((i) => i.key === 'food:take')?.after).toBeUndefined();
   });
 
+  // The standing items the real note carried every time, and the ones it only
+  // carried when the trip called for them.
+  it('keeps the standing items and earns the rest', () => {
+    const k = keys(trip(), [leg()]);
+    expect(k).toContain('devices:camera');
+    expect(k).toContain('papers:pills');
+    expect(k).toContain('papers:cards');
+    expect(keys(trip(), [leg({ currency: 'GBP' })])).not.toContain('papers:cards');
+  });
+
   it('says why each line is here, in this trip’s own facts', () => {
     const items = prepItems(trip(), [leg()]);
     expect(items.find((i) => i.key === 'food:buy')?.because).toContain('03:30');

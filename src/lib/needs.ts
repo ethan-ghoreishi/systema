@@ -174,6 +174,23 @@ function groundNeed(
   };
 }
 
+/**
+ * A reference an older version wrote into the flight's slot. Before the two
+ * had separate keys, booking a leg's transfer put its reference in
+ * `exit.ref` — where the flight home's belongs — so a booked coach read as a
+ * booked flight. The payment it was recorded against says which it really is:
+ * that row's note carries the same reference.
+ */
+function strayTransferRef(leg: City | undefined, expenses: Expense[]): string | undefined {
+  const ref = leg?.exit?.ref?.trim();
+  if (!leg || !ref) return undefined;
+  return expenses.some(
+    (e) => e.need === `transfer:${leg.id}` && e.notes.trim() === `Booking ${ref}`,
+  )
+    ? ref
+    : undefined;
+}
+
 const UK_TRANSFER: Omit<BookSpec, 'description'> = {
   category: 'Transportation',
   subcategory: 'Airport Transfer (UK)',
@@ -198,6 +215,7 @@ export function tripNeeds(
   const last = legs[legs.length - 1];
   const out: Need[] = [];
   const ob = trip.outbound ?? {};
+  const stray = strayTransferRef(last, expenses);
 
   // --- The two tickets ---
   for (const t of [
@@ -212,7 +230,7 @@ export function tripNeeds(
     {
       key: 'flight:inbound',
       label: 'Ticket home',
-      ref: last?.exit?.ref?.trim(),
+      ref: last?.exit?.ref?.trim() === stray ? undefined : last?.exit?.ref?.trim(),
       row: paid(expenses, 'flight:inbound', 'Inbound flight'),
       detail:
         [last?.exit?.hub, last?.exit?.number].filter(Boolean).join(' ') ||
@@ -253,7 +271,7 @@ export function tripNeeds(
     ),
     groundNeed(
       'transfer-uk:back',
-      'Getting home from the airport',
+      `Getting home from ${trip.homeward?.hub?.trim() || 'the airport'}`,
       trip.homeward ?? {},
       paid(expenses, 'transfer-uk:back', 'Airport transfer (UK) — return'),
       { ...UK_TRANSFER, description: 'Airport transfer (UK) — return' },
@@ -268,11 +286,12 @@ export function tripNeeds(
     // comes into a station.
     const arriveBy = (i === 0 ? ob.mode : legs[i - 1].exit?.mode) ?? 'flight';
     const arrivalPoint =
-      arriveBy === 'flight'
+      leg.entry?.hub?.trim() ||
+      (arriveBy === 'flight'
         ? 'the airport'
         : arriveBy === 'train'
           ? 'the station'
-          : 'where you land';
+          : 'where you land');
     if (leg.arrival)
       out.push(
         groundNeed(
@@ -296,7 +315,9 @@ export function tripNeeds(
       groundNeed(
         `transfer-out:${leg.id}`,
         `Getting from ${name} to ${hub}`,
-        exit,
+        // Where an older version put this transfer's reference in the flight's
+        // slot, read it as what it is rather than asking for it again.
+        leg.id === last?.id && stray && !exit.transferRef ? { ...exit, transferRef: stray } : exit,
         // Before the two directions were told apart this was `transfer:<leg>`,
         // and the booking it recorded was the way out — so that is the one it
         // still settles.
@@ -526,6 +547,11 @@ export async function bookNeed(
   if (!need.book || !(input.amountGBP > 0)) return { expenseId: null };
   const spec = need.book;
   const all = await db.expenses.where('tripId').equals(trip.id).toArray();
+  // A return ticket says so in its description, the way the spending sheet has
+  // always said it — so the insight that reads what one journey costs can halve
+  // it, instead of counting a £24 return as £24 each way.
+  const description =
+    both && need.kind === 'transfer-uk' ? 'Airport transfer (UK) (Return)' : spec.description;
   const fields = {
     cityId: spec.cityId ?? null,
     date: input.date || todayIso(),
@@ -534,7 +560,7 @@ export async function bookNeed(
       : (legs.find((c) => c.id === spec.cityId)?.name ?? ''),
     category: spec.category,
     subcategory: spec.subcategory,
-    description: spec.description,
+    description,
     paymentMethod: input.paymentMethod || lastPaymentMethod(all, trip.id) || 'Online Payment',
     amountGBP: input.amountGBP,
     amountLocal: 0,

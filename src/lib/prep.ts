@@ -11,25 +11,34 @@ import { instantToWall } from './tz';
  * the bag, the flat you are leaving. Those did live in a note, copied from the
  * last trip and edited down — which is why the note was always wrong.
  *
- * So nothing here is a static list. Each line is a rule with a reason, and a
- * trip only gets it when the reason is true of *that* trip: a 04:00 dash is
+ * The lines come from what those notes actually said, trip after trip: the
+ * camera with its belt, battery and charger; a fully charged Watch and phone;
+ * the Revolut card, the cash and the passports; nuts, coffee, bananas, cake,
+ * boiled eggs and cheese; the allergy pills, sunglasses, sunscreen and
+ * sanitiser. Tickets and boarding passes are left out — Before-you-go already
+ * answers for those from the trip's own data.
+ *
+ * A few of those are standing items on every trip, and they are rules with no
+ * condition. The rest only appear when the trip earns them: a 04:00 dash is
  * fed and packed nothing like a four-night multi-city break, and an airport
  * sleep needs things neither of them does. The reason is shown, so a line that
- * does not belong is obvious rather than merely unticked.
+ * does not belong is obvious rather than merely unticked. It is a short table
+ * of rules, not a packing engine: twelve lines of data, no settings.
  *
  * Ticks live on the trip (`Trip.prep`), because a tick is about one trip and
  * should be deleted and backed up with it. Anything the rules miss can be
  * added by hand, and travels the same way.
  */
 
-export type PrepGroup = 'food' | 'devices' | 'pack' | 'home';
+export type PrepGroup = 'food' | 'devices' | 'papers' | 'pack' | 'home';
 
-/** The order they happen in, roughly: shop, charge, pack, lock up. */
-export const GROUPS: PrepGroup[] = ['food', 'devices', 'pack', 'home'];
+/** The order they happen in, roughly: shop, charge, gather, pack, lock up. */
+export const GROUPS: PrepGroup[] = ['food', 'devices', 'papers', 'pack', 'home'];
 
 export const GROUP_LABEL: Record<PrepGroup, string> = {
   food: 'Food',
-  devices: 'Charging',
+  devices: 'Charging and the camera',
+  papers: 'Cards and papers',
   pack: 'Packing',
   home: 'The flat',
 };
@@ -95,7 +104,7 @@ interface Rule {
 
 const early = (f: PrepFacts) => f.leaveHour != null && f.leaveHour < EARLY_HOUR;
 
-// Ten rules, each with the fact that earns it. Nothing general, nothing
+// Twelve rules, each with the fact that earns it. Nothing general, nothing
 // "useful anyway" — a line nobody would act on is a line that trains you to
 // skim the list.
 const RULES: Rule[] = [
@@ -103,22 +112,22 @@ const RULES: Rule[] = [
     key: 'food:buy',
     group: 'food',
     when: (f) => early(f) || f.shape === 'same-day' || f.airportSleep,
-    label: () => 'Buy what you are taking',
+    label: () => 'Buy the food — nuts, coffee, bananas, cake, eggs, cheese',
     because: (f) =>
       early(f)
         ? `you leave at ${f.leaveLabel}, and nothing is open on the way`
         : f.airportSleep
           ? 'a night at the airport is a long time between meals'
-          : 'a day out and back leaves no time to find lunch',
+          : 'a day out and back leaves no time to go looking for lunch',
   },
   {
     key: 'food:make',
     group: 'food',
     after: 'food:buy',
     when: (f) => early(f) || f.airportSleep,
-    label: () => 'Make it up the night before',
+    label: () => 'Boil the eggs and make it up, the night before',
     because: (f) =>
-      early(f) ? `${f.leaveLabel} is no hour to be making sandwiches` : 'nothing opens airside',
+      early(f) ? `${f.leaveLabel} is no hour to be boiling eggs` : 'nothing opens airside',
   },
   {
     key: 'food:take',
@@ -142,11 +151,21 @@ const RULES: Rule[] = [
     key: 'devices:charge',
     group: 'devices',
     when: () => true,
-    label: (f) => (f.airportSleep ? 'Charge everything, battery pack included' : 'Charge up'),
+    label: (f) =>
+      f.airportSleep
+        ? 'Charge the Watch, the phone and the battery pack'
+        : 'Charge the Watch and the phone',
     because: (f) =>
       f.airportSleep
         ? 'a night at the airport with no socket is a dead phone by morning'
         : 'boarding passes, maps and the plan all live on the phone',
+  },
+  {
+    key: 'devices:camera',
+    group: 'devices',
+    when: () => true,
+    label: () => 'Camera: belt, spare battery, charger',
+    because: () => 'the charger is the one that gets left behind',
   },
   {
     key: 'devices:adapter',
@@ -154,6 +173,20 @@ const RULES: Rule[] = [
     when: (f) => f.abroad && f.nights >= 1,
     label: () => 'Cables and an adapter',
     because: () => 'a night away means charging somewhere else',
+  },
+  {
+    key: 'papers:cards',
+    group: 'papers',
+    when: (f) => f.abroad,
+    label: () => 'Revolut card, cash and the passports',
+    because: () => 'leaving the country',
+  },
+  {
+    key: 'papers:pills',
+    group: 'papers',
+    when: () => true,
+    label: () => 'Allergy pills, sunglasses, sunscreen, sanitiser',
+    because: () => 'the standing four, on every trip',
   },
   {
     key: 'pack:day',
