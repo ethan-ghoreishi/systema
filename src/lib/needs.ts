@@ -66,8 +66,23 @@ export interface Need {
   departureKey?: string;
 }
 
-const paid = (expenses: Expense[], key: string): Expense | undefined =>
-  expenses.find((e) => !e.skeleton && e.need === key && e.amountGBP > 0);
+/**
+ * The payment that settles a need: one stamped with it, or — for a row
+ * captured before stamps existed, or typed by hand — an unstamped one whose
+ * description is exactly the one this need seeds. Those words only ever come
+ * from the preset, so the match is safe, and without it a trip whose flights
+ * were paid for last month would be asked to book them again.
+ */
+const paid = (expenses: Expense[], key: string, description?: string): Expense | undefined =>
+  expenses.find(
+    (e) =>
+      !e.skeleton &&
+      e.amountGBP > 0 &&
+      (e.need === key ||
+        (!e.need &&
+          !!description &&
+          e.description.trim().toLowerCase() === description.trim().toLowerCase())),
+  );
 
 const gbp = (n: number) => `£${Number.isInteger(n) ? n : n.toFixed(2)}`;
 
@@ -90,7 +105,7 @@ export function tripNeeds(
 
   // --- The two tickets ---
   const outRef = ob.ref?.trim();
-  const outPaid = paid(expenses, 'flight:outbound');
+  const outPaid = paid(expenses, 'flight:outbound', 'Outbound flight');
   out.push({
     key: 'flight:outbound',
     kind: 'flight',
@@ -108,7 +123,7 @@ export function tripNeeds(
   });
 
   const inRef = last?.exit?.ref?.trim();
-  const inPaid = paid(expenses, 'flight:inbound');
+  const inPaid = paid(expenses, 'flight:inbound', 'Inbound flight');
   out.push({
     key: 'flight:inbound',
     kind: 'flight',
@@ -128,7 +143,7 @@ export function tripNeeds(
   });
 
   // --- The London end, both ways ---
-  const ukOut = paid(expenses, 'transfer-uk:out');
+  const ukOut = paid(expenses, 'transfer-uk:out', 'Airport transfer (UK) — outbound');
   out.push({
     key: 'transfer-uk:out',
     kind: 'transfer-uk',
@@ -148,7 +163,7 @@ export function tripNeeds(
     },
   });
 
-  const ukBack = paid(expenses, 'transfer-uk:back');
+  const ukBack = paid(expenses, 'transfer-uk:back', 'Airport transfer (UK) — return');
   out.push({
     key: 'transfer-uk:back',
     kind: 'transfer-uk',
@@ -281,6 +296,16 @@ export function outstanding(needs: Need[]): Need[] {
   return needs.filter((n) => !n.done);
 }
 
+/**
+ * The trip has happened: every departure it knows about is behind us. A trip
+ * can sit in Planning long after it is over, and asking someone to book a
+ * flight they have already taken is worse than saying nothing.
+ */
+export function tripIsOver(trip: Trip, cities: City[], now = Date.now()): boolean {
+  const deps = tripDepartures(trip, cities);
+  return deps.length > 0 && deps.every((d) => d.at < now);
+}
+
 // ---- Booking one ----
 
 export interface BookInput {
@@ -379,13 +404,19 @@ export async function bookNeed(
     skeleton: false,
   };
 
+  // Fill the placeholder that was already waiting for this, rather than
+  // leaving it behind as a second row. A trip-wide need matches its own words
+  // exactly, so booking the way home can never fill the way out; a leg's need
+  // names a city the preset never knew, so it takes the first unfilled row of
+  // the right kind instead.
+  const perLeg = need.kind === 'hotel' || need.kind === 'transfer';
   const existing =
     all.find((e) => e.need === need.key) ??
     all.find(
       (e) =>
         e.skeleton &&
         e.subcategory === spec.subcategory &&
-        e.description.trim().toLowerCase() === spec.description.trim().toLowerCase(),
+        (perLeg || e.description.trim().toLowerCase() === spec.description.trim().toLowerCase()),
     );
   if (existing) {
     await db.expenses.update(existing.id, fields);

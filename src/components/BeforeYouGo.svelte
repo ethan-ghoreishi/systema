@@ -1,7 +1,7 @@
 <script lang="ts">
   import { liveQuery } from 'dexie';
   import { db, type City, type Trip } from '../lib/db';
-  import { outstanding, setCheckedIn, tripNeeds, type Need } from '../lib/needs';
+  import { outstanding, setCheckedIn, tripIsOver, tripNeeds, type Need } from '../lib/needs';
   import BookNeed from './BookNeed.svelte';
 
   /**
@@ -25,6 +25,7 @@
     return () => clearInterval(t);
   });
 
+  const over = $derived(tripIsOver(trip, cities, now));
   const needs = $derived(tripNeeds(trip, cities, $expensesQ ?? [], $stopsQ ?? [], now));
   const todo = $derived(outstanding(needs));
   const done = $derived(needs.filter((n) => n.done));
@@ -33,7 +34,7 @@
   let status = $state('');
 </script>
 
-{#if trip.status !== 'done'}
+{#if trip.status !== 'done' && !over}
   <section class="card before" aria-labelledby="before-title">
     <div class="card-head">
       <span class="section-title" id="before-title">Before you go</span>

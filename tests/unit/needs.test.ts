@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { outstanding, tripNeeds } from '../../src/lib/needs';
+import { outstanding, tripIsOver, tripNeeds } from '../../src/lib/needs';
 import type { City, Expense, Stop, Trip } from '../../src/lib/db';
 
 const NOW = Date.parse('2026-12-01T09:00:00Z');
@@ -205,9 +205,39 @@ describe('what is left before a trip', () => {
     expect(outstanding(tripNeeds(t, legs, paid, [], NOW))).toEqual([]);
   });
 
+  // Rows captured before the stamp existed, or typed by hand into Expenses:
+  // a flight already paid for must not be asked for again.
+  it('reads an unstamped payment with the seeded description as that need met', () => {
+    const old = [
+      expense({ id: 'o1', description: 'Outbound flight', amountGBP: 57.6 }),
+      expense({ id: 'o2', description: 'Inbound flight', amountGBP: 85 }),
+    ];
+    const needs = tripNeeds(trip(), [leg()], old, [], NOW);
+    expect(needs.find((n) => n.key === 'flight:outbound')?.done).toBe(true);
+    expect(needs.find((n) => n.key === 'flight:inbound')?.done).toBe(true);
+  });
+
+  it('does not let one unstamped row settle a different need', () => {
+    const old = [expense({ description: 'Groceries', category: 'Food', amountGBP: 12 })];
+    const needs = tripNeeds(trip(), [leg()], old, [], NOW);
+    expect(needs.find((n) => n.key === 'flight:outbound')?.done).toBe(false);
+  });
+
   it('says nothing at all for a trip with no legs yet', () => {
     const needs = tripNeeds(trip({ outbound: undefined }), [], [], [], NOW);
     expect(keys(needs)).not.toContain('transfer:c1');
     expect(keys(needs)).toContain('plan');
+  });
+
+  // A trip can sit in Planning long after it happened. Asking someone to book
+  // a flight they have already taken is worse than saying nothing.
+  it('knows a trip is over once every departure is behind us', () => {
+    const after = Date.parse('2027-01-01T09:00:00Z');
+    expect(tripIsOver(trip(), [leg()], after)).toBe(true);
+    expect(tripIsOver(trip(), [leg()], NOW)).toBe(false);
+    // No times at all: nothing says it is over, so nothing is assumed.
+    expect(tripIsOver(trip({ outbound: undefined }), [leg({ departure: undefined })], after)).toBe(
+      false,
+    );
   });
 });

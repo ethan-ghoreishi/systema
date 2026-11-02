@@ -214,6 +214,32 @@ test('a finder search becomes a compared shortlist, a trip, and a booked coach',
     journeyMin: 75,
   });
 
+  // Booking the hotel fills the placeholder the preset seeded rather than
+  // sitting beside it: one Accommodation row, and no skeleton left over.
+  await before
+    .locator('.need', { hasText: 'Somewhere to stay in Faro' })
+    .getByRole('button')
+    .click();
+  await page.getByLabel('What it cost, for everyone (£)').fill('58');
+  await page.getByLabel('Where you are staying').fill('Hotel Faro Boutique');
+  await page.getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByText(/£58 is in Expenses/)).toBeVisible();
+  const hotel = await page.evaluate(async () => {
+    const { db } = await import(/* @vite-ignore */ '/src/lib/db.ts');
+    const t = (await db.trips.toArray()).find((x) => x.opportunityId);
+    const rows = (await db.expenses.where('tripId').equals(t.id).toArray()).filter(
+      (e) => e.category === 'Accommodation',
+    );
+    const leg = (await db.cities.where('tripId').equals(t.id).toArray())[0];
+    return {
+      rows: rows.length,
+      skeletons: rows.filter((e) => e.skeleton).length,
+      amount: rows[0]?.amountGBP,
+      base: leg.base?.name,
+    };
+  });
+  expect(hotel).toEqual({ rows: 1, skeletons: 0, amount: 58, base: 'Hotel Faro Boutique' });
+
   // And it shows up in Expenses as a real row, never to be typed again.
   await page.getByRole('link', { name: 'Expenses' }).click();
   await expect(

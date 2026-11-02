@@ -200,7 +200,9 @@
               <ul class="opt-facts">
                 {#if o.outDep}
                   <li class="status-row">
-                    <span class="status-key">Leave home</span>
+                    <span class="status-key"
+                      >Leave home<small> assuming 45 min to the airport</small></span
+                    >
                     <span class="status-val"
                       >{row.leaveHome?.time ?? '—'}{row.leaveHome?.dayBefore
                         ? ' the night before'
