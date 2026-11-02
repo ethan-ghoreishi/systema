@@ -239,6 +239,17 @@ describe('what it really costs you', () => {
     ).toBeNull();
   });
 
+  // One fare is not a trip: the return might be most of it.
+  it('keeps a hand-written option unpriced until both fares are in', () => {
+    const r = priceOption(
+      option({ source: 'manual', finderPP: undefined, outFarePP: 20, backFarePP: undefined }),
+      facts(),
+      'Faro',
+    );
+    expect(r.farePP).toBe(20);
+    expect(r.totalPP).toBeNull();
+  });
+
   // The search's own run, not constants mirrored from its source.
   it('measures against the assumptions the search actually ran with', () => {
     const r = priceOption(

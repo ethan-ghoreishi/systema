@@ -106,6 +106,10 @@
         ? { checked: `${todayIso()} 00:00` }
         : {}),
       ...(option?.finderAssumptions ? { finderAssumptions: option.finderAssumptions } : {}),
+      // What the editor does not show still belongs to the option: choosing it
+      // reads the scenario to build the stopover legs.
+      ...(option?.scenario != null ? { scenario: option.scenario } : {}),
+      ...(option?.cities ? { cities: option.cities } : {}),
     };
   });
 

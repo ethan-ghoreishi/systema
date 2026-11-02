@@ -508,7 +508,13 @@ export function priceOption(
     }
   }
 
-  const base = parts ? farePP : (o.finderPP ?? null);
+  // One fare typed is not a trip: the other might be most of it, so a partial
+  // sum would rank as the cheapest. It stays unknown until both are in.
+  const base = parts
+    ? o.outFarePP != null && o.backFarePP != null
+      ? farePP
+      : null
+    : (o.finderPP ?? null);
   const totalPP =
     base == null ? null : round2(base + adjustments.reduce((a, x) => a + x.deltaPP, 0));
 

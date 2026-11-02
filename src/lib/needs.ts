@@ -499,6 +499,11 @@ export async function bookNeed(
     ...(ref ? { transferRef: ref } : {}),
   };
   const something = Object.keys(journey).length > 0;
+  // One ticket for both ways with nothing else typed still has to leave the
+  // other journey reading as sorted: it is a return ticket, so say so — under
+  // anything already recorded there.
+  const cover = !!input.bothWays && !something ? { transport: 'Return ticket' } : null;
+  const merge = (plan?: DepartPlan) => ({ ...cover, ...plan, ...journey });
   const legOf = (prefix: string) => legs.find((c) => c.id === need.key.slice(prefix.length));
 
   // --- The structured half: the reference goes on the thing it books ---
@@ -507,23 +512,19 @@ export async function bookNeed(
   if (need.key === 'flight:inbound' && ref && last)
     await db.cities.update(last.id, { exit: { ...last.exit, ref } });
   const both = !!input.bothWays;
-  if (need.kind === 'transfer-uk' && something)
+  if (need.kind === 'transfer-uk' && (something || cover))
     await db.trips.update(trip.id, {
-      ...(both || need.key === 'transfer-uk:out'
-        ? { outbound: { ...trip.outbound, ...journey } }
-        : {}),
-      ...(both || need.key === 'transfer-uk:back'
-        ? { homeward: { ...trip.homeward, ...journey } }
-        : {}),
+      ...(both || need.key === 'transfer-uk:out' ? { outbound: merge(trip.outbound) } : {}),
+      ...(both || need.key === 'transfer-uk:back' ? { homeward: merge(trip.homeward) } : {}),
       updatedAt: Date.now(),
     });
-  if (need.kind === 'transfer' && something) {
+  if (need.kind === 'transfer' && (something || cover)) {
     const inbound = need.key.startsWith('transfer-in:');
     const leg = legOf(inbound ? 'transfer-in:' : 'transfer-out:');
     if (leg)
       await db.cities.update(leg.id, {
-        ...(both || inbound ? { entry: { ...leg.entry, ...journey } } : {}),
-        ...(both || !inbound ? { exit: { ...leg.exit, ...journey } } : {}),
+        ...(both || inbound ? { entry: merge(leg.entry) } : {}),
+        ...(both || !inbound ? { exit: merge(leg.exit) } : {}),
       });
   }
   if (need.kind === 'hotel') {

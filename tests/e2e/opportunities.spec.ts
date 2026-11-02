@@ -410,6 +410,7 @@ test('picking everything the search saved finds the results and its settings', a
   // figure is measured against that run and not against a copied constant.
   await page.locator('.finder-row', { hasText: 'Nantes' }).locator('input').uncheck();
   await page.getByRole('button', { name: /^Add 2$/ }).click();
+  await expect(page.getByText(/Added 2 options across 1 destination/)).toBeVisible();
   expect(
     await page.evaluate(async () => {
       const { db } = await import(/* @vite-ignore */ '/src/lib/db.ts');
