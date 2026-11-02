@@ -1,7 +1,14 @@
 <script lang="ts">
   import { liveQuery } from 'dexie';
   import { db, type City, type Trip } from '../lib/db';
-  import { outstanding, setCheckedIn, tripIsOver, tripNeeds, type Need } from '../lib/needs';
+  import {
+    STATE_WORD,
+    outstanding,
+    setCheckedIn,
+    tripIsOver,
+    tripNeeds,
+    type Need,
+  } from '../lib/needs';
   import BookNeed from './BookNeed.svelte';
 
   /**
@@ -71,7 +78,11 @@
           <div class="need need--done">
             <span class="need-main">
               <span class="need-label">{need.label}</span>
-              <span class="need-detail">{need.evidence ?? need.detail}</span>
+              <span class="need-detail"
+                >{need.evidence ?? need.detail}{#if need.state === 'planned'}<small>
+                    · {STATE_WORD[need.state]}</small
+                  >{/if}</span
+              >
             </span>
             {#if need.kind === 'checkin'}
               <button

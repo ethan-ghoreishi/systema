@@ -40,9 +40,59 @@ export async function updateOpportunity(id: string, patch: Partial<Opportunity>)
   await db.opportunities.update(id, patch);
 }
 
+/**
+ * Write one option into its opportunity, replacing the one with that id. The
+ * options live in a list on the record, so adding, editing and removing are
+ * all the same write — and a manual option is the same shape as an imported
+ * one, so nothing downstream has to know which it was.
+ */
+export async function putOption(oppId: string, option: TripOption): Promise<void> {
+  await db.transaction('rw', db.opportunities, async () => {
+    const opp = await db.opportunities.get(oppId);
+    if (!opp) return;
+    const options = [...opp.options];
+    const i = options.findIndex((o) => o.id === option.id);
+    if (i < 0) options.push(option);
+    else options[i] = option;
+    await db.opportunities.put({ ...opp, options });
+  });
+}
+
+/**
+ * Drop one option. A trip already chosen from it keeps its own copy of every
+ * fact that mattered (legs, times, airports), so nothing is lost there — but
+ * the record of the decision is, which is why the screen asks first.
+ */
+export async function removeOption(oppId: string, optionId: string): Promise<void> {
+  await db.transaction('rw', db.opportunities, async () => {
+    const opp = await db.opportunities.get(oppId);
+    if (!opp) return;
+    await db.opportunities.put({
+      ...opp,
+      options: opp.options.filter((o) => o.id !== optionId),
+    });
+  });
+}
+
 /** An opportunity goes with its options; a trip chosen from it is untouched. */
 export async function deleteOpportunity(id: string): Promise<void> {
   await db.opportunities.delete(id);
+}
+
+/**
+ * Which destination a row belongs to. The country counts: Valencia in Spain
+ * and Valencia in Venezuela are not one place, and nor are the two Tripolis.
+ * A destination filed before countries were kept (or a row that names none)
+ * still matches on the city alone — otherwise the next import would duplicate
+ * every destination already here.
+ */
+function sameDestination(
+  a: { city: string; country?: string },
+  b: { city: string; country?: string },
+): boolean {
+  if (a.city.trim().toLowerCase() !== b.city.trim().toLowerCase()) return false;
+  const [ca, cb] = [a.country?.trim().toLowerCase(), b.country?.trim().toLowerCase()];
+  return !ca || !cb || ca === cb;
 }
 
 /** Two options describe the same trip when their dates and airports match. */
@@ -74,13 +124,13 @@ export async function addFinderRows(rows: ParsedRow[]): Promise<AddResult> {
   const result: AddResult = { opportunities: 0, added: 0, refreshed: 0 };
   const byCity = new Map<string, ParsedRow[]>();
   for (const r of rows) {
-    const key = r.city.trim().toLowerCase();
+    const key = `${r.city.trim().toLowerCase()}|${r.country?.trim().toLowerCase() ?? ''}`;
     (byCity.get(key) ?? byCity.set(key, []).get(key)!).push(r);
   }
   await db.transaction('rw', db.opportunities, async () => {
     const existing = await db.opportunities.toArray();
-    for (const [key, group] of byCity) {
-      let opp = existing.find((o) => o.city.trim().toLowerCase() === key);
+    for (const group of byCity.values()) {
+      let opp = existing.find((o) => sameDestination(o, group[0]));
       if (!opp) {
         opp = {
           id: newId(),
@@ -167,10 +217,15 @@ export async function chooseOption(opp: Opportunity, option: TripOption): Promis
   const currency = currencySeen(opp.city, allCities);
   if (!currency) toFill.push(`the currency for ${opp.city}`);
   const tripId = await createTrip(presetForOption(option));
+  // The fares are per person for the party the search priced; starting the
+  // trip with a different number would make its own figures disagree with the
+  // one that was compared.
+  const travellers = option.finderAssumptions?.travellers;
 
   await updateTrip(tripId, {
     opportunityId: opp.id,
     optionId: option.id,
+    ...(travellers && travellers !== DEFAULT_PARTY_SIZE ? { partySize: travellers } : {}),
     outbound: {
       at: wall(option.outDate, option.outDep),
       tz: HOME_TZ,
@@ -189,8 +244,18 @@ export async function chooseOption(opp: Opportunity, option: TripOption): Promis
     ...(option.backRoute[0] ? { hub: option.backRoute[0] } : {}),
     ...(firstFlight(option.backFlights) ? { number: firstFlight(option.backFlights) } : {}),
   };
+
+  // Both ends of the London side, which the row does state: the airport the
+  // return route lands at is often not the one it left from, and the ride home
+  // from it is a journey of its own.
+  const landsAt = option.backRoute[option.backRoute.length - 1];
+  if (landsAt && landsAt !== option.outRoute[0]) toFill.push(`how you get home from ${landsAt}`);
+  if (landsAt) await updateTrip(tripId, { homeward: { hub: landsAt } });
   const landing = wall(option.outDate, option.outArr, option.outArrDay ?? 0);
   const leaving = wall(option.backDate, option.backDep);
+  // Where you land at the far end: the way in from it is its own journey.
+  const arriveAt = option.outRoute[option.outRoute.length - 1];
+  const entry = arriveAt && arriveAt !== option.outRoute[0] ? { hub: arriveAt } : undefined;
 
   if (option.scenario) {
     const pattern = scenarioPattern(option.scenario as StopoverScenario);
@@ -214,6 +279,7 @@ export async function chooseOption(opp: Opportunity, option: TripOption): Promis
       await db.cities.update(destLeg.id, {
         arrival: landing,
         departure: leaving,
+        ...(entry && pattern.order !== 'stopover-first' ? { entry } : {}),
         exit: { ...destLeg.exit, ...homeExit },
         ...(suggestTz(opp.city, currency) ? { tz: suggestTz(opp.city, currency) } : {}),
       });
@@ -241,6 +307,7 @@ export async function chooseOption(opp: Opportunity, option: TripOption): Promis
     await addCity(tripId, opp.city, currency, {
       arrival: landing,
       departure: leaving,
+      ...(entry ? { entry } : {}),
       sleep: night ? 'hotel' : /airport sleep/i.test(option.overnight ?? '') ? 'airport' : 'none',
       ...(suggestTz(opp.city, currency) ? { tz: suggestTz(opp.city, currency) } : {}),
       exit: homeExit,
@@ -256,7 +323,15 @@ export async function chooseOption(opp: Opportunity, option: TripOption): Promis
 /**
  * The measured costs an option is re-priced against, read from every trip
  * already taken. Nothing is stored: the answer moves as the ledger grows, and
- * there is no second copy to fall out of step.
+ * there is no second copy to fall out of step. Read through a `liveQuery` so
+ * that stays true on screen — a figure quoted from the ledger has to change
+ * when the ledger does.
+ *
+ * The party size is the household default, not a reading taken off whichever
+ * trip happens to be most recent: how many people went to Faro in March is no
+ * evidence about the trip being planned, and a figure divided by the wrong
+ * number is worse than one divided by a stated assumption. A search that said
+ * how many travellers it priced for overrides it, per option.
  */
 export async function measuredFacts(): Promise<Facts> {
   const [trips, cities, expenses, stops] = await Promise.all([
@@ -265,11 +340,10 @@ export async function measuredFacts(): Promise<Facts> {
     db.expenses.toArray(),
     db.stops.toArray(),
   ]);
-  const recent = [...trips].sort((a, b) => (b.startDate || '').localeCompare(a.startDate || ''))[0];
   return {
     ukTransfer: ukTransferByAirport(trips, expenses),
     destTransfer: destTransferByCity(trips, cities, expenses, stops),
     hotelNight: hotelNightCost(trips, cities, expenses),
-    partySize: Math.max(1, recent?.partySize || DEFAULT_PARTY_SIZE),
+    partySize: DEFAULT_PARTY_SIZE,
   };
 }

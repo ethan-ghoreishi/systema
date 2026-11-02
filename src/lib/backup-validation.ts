@@ -27,7 +27,11 @@ export function validateBackup(value: unknown): asserts value is Backup {
   const departPlan = (v: unknown) =>
     v === undefined ||
     (object(v) &&
-      optional(v, 'mode hub terminal number ref notes from transport at tz', 'string') &&
+      optional(
+        v,
+        'mode hub terminal number ref transferRef notes from transport at tz',
+        'string',
+      ) &&
       optionalNumbers(v, 'journeyMin bufferMin contingencyMin prepareMin') &&
       optional(v, 'checkedIn', 'boolean') &&
       (v.throughTicket === undefined || ['outbound', 'return'].includes(v.throughTicket)));
@@ -62,6 +66,14 @@ export function validateBackup(value: unknown): asserts value is Backup {
       ['planning', 'active', 'done'].includes(r.status) &&
       optional(r, 'nameManual journalText coverPhotoId preset opportunityId optionId', 'string') &&
       departPlan(r.outbound) &&
+      departPlan(r.homeward) &&
+      (r.prep === undefined ||
+        (object(r.prep) &&
+          ['done', 'extra'].every(
+            (k) =>
+              r.prep[k] === undefined ||
+              (Array.isArray(r.prep[k]) && r.prep[k].every((v: unknown) => typeof v === 'string')),
+          ))) &&
       (r.coverMode === undefined || ['auto', 'map', 'route-card', 'photo'].includes(r.coverMode)) &&
       (r.promptPrefs === undefined ||
         (object(r.promptPrefs) &&
@@ -83,9 +95,10 @@ export function validateBackup(value: unknown): asserts value is Backup {
       optional(r, 'arrival departure tz', 'string') &&
       (r.sleep === undefined || ['none', 'airport', 'hotel'].includes(r.sleep)) &&
       departPlan(r.exit) &&
+      departPlan(r.entry) &&
       (r.base === undefined ||
         (object(r.base) &&
-          optional(r.base, 'name address checkIn checkOut', 'string') &&
+          optional(r.base, 'name address checkIn checkOut bookingRef', 'string') &&
           coord(r.base.lat, 90) &&
           coord(r.base.lng, 180))),
   );
@@ -106,7 +119,8 @@ export function validateBackup(value: unknown): asserts value is Backup {
         (c: unknown) => object(c) && strings(c, 'id text') && typeof c.done === 'boolean',
       ) &&
       optionalNumbers(r, 'visitedAt') &&
-      optional(r, 'tz legName bookAhead', 'string') &&
+      optional(r, 'tz legName bookAhead bookingRef', 'string') &&
+      optional(r, 'booked', 'boolean') &&
       (r.guide === undefined ||
         (object(r.guide) &&
           optional(r.guide, 'anchor minimum stretch exit', 'string') &&
@@ -160,7 +174,11 @@ export function validateBackup(value: unknown): asserts value is Backup {
       optionalNumbers(
         v,
         'outArrDay backArrDay outFarePP backFarePP finderPP usableH groundH paidNights scenario',
-      );
+      ) &&
+      (v.source === undefined || v.source === 'manual') &&
+      (v.finderAssumptions === undefined ||
+        (object(v.finderAssumptions) &&
+          optionalNumbers(v.finderAssumptions, 'travellers destTransferPP hotelPerNight')));
     rows(
       'opportunities',
       'id',

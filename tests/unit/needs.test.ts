@@ -81,17 +81,26 @@ function stop(over: Partial<Stop> = {}): Stop {
 const keys = (ns: { key: string }[]) => ns.map((n) => n.key);
 
 describe('what is left before a trip', () => {
-  it('asks for both tickets, both London transfers, the city transfer, a bed and a plan', () => {
+  // The way in from the airport and the way out to it are two journeys: a
+  // different direction, a different hour, often a different mode and fare.
+  it('asks for both tickets, both London transfers, both city transfers, a bed and a plan', () => {
     const todo = outstanding(tripNeeds(trip(), [leg()], [], [], NOW));
     expect(keys(todo)).toEqual([
       'flight:outbound',
       'flight:inbound',
       'transfer-uk:out',
       'transfer-uk:back',
-      'transfer:c1',
+      'transfer-in:c1',
+      'transfer-out:c1',
       'hotel:c1',
       'plan',
     ]);
+  });
+
+  it('asks nothing about the way in when the leg has no arrival to get in from', () => {
+    const todo = keys(outstanding(tripNeeds(trip(), [leg({ arrival: undefined })], [], [], NOW)));
+    expect(todo).not.toContain('transfer-in:c1');
+    expect(todo).toContain('transfer-out:c1');
   });
 
   it('asks for no bed when no night is paid for', () => {
@@ -109,23 +118,103 @@ describe('what is left before a trip', () => {
     expect(needs.find((n) => n.key === 'flight:outbound')?.evidence).toBe('Booking XY12AB');
   });
 
-  // The brief's rule: relevant transfer data exists, so stop asking for it.
-  it('reads a chosen way to the airport as the transfer being settled', () => {
+  // A ride you buy at the machine is sorted once you know which ride it is —
+  // but it is not booked, and the card says so rather than implying a ticket.
+  it('settles a transfer on knowing how, while still calling it unbooked', () => {
     const t = trip({
       outbound: { ...trip().outbound, transport: 'National Express', journeyMin: 75 },
     });
-    const needs = tripNeeds(t, [leg()], [], [], NOW);
-    const uk = needs.find((n) => n.key === 'transfer-uk:out')!;
+    const uk = tripNeeds(t, [leg()], [], [], NOW).find((n) => n.key === 'transfer-uk:out')!;
     expect(uk.done).toBe(true);
-    expect(uk.detail).toBe('National Express, 75 min');
+    expect(uk.state).toBe('planned');
+    expect(uk.detail).toBe('National Express, 75 min — not booked');
+    expect(uk.evidence).toBe('National Express, 75 min — pay on the day');
     const city = tripNeeds(
       trip(),
       [leg({ exit: { hub: 'FAO', transport: 'Próximo bus', journeyMin: 20 } })],
       [],
       [],
       NOW,
-    ).find((n) => n.key === 'transfer:c1')!;
+    ).find((n) => n.key === 'transfer-out:c1')!;
     expect(city.done).toBe(true);
+  });
+
+  // The bug this replaces: a coach reference written where the flight's lives
+  // meant booking the £22 transfer marked the flight home as booked too.
+  it('never reads a transfer’s reference as the flight’s, or the other way round', () => {
+    const coach = tripNeeds(
+      trip(),
+      [leg({ exit: { hub: 'FAO', transferRef: 'NX7788' } })],
+      [],
+      [],
+      NOW,
+    );
+    expect(coach.find((n) => n.key === 'transfer-out:c1')?.state).toBe('booked');
+    expect(coach.find((n) => n.key === 'flight:inbound')?.done).toBe(false);
+    const flight = tripNeeds(trip(), [leg({ exit: { hub: 'FAO', ref: 'ZZ99' } })], [], [], NOW);
+    expect(flight.find((n) => n.key === 'flight:inbound')?.state).toBe('booked');
+    expect(flight.find((n) => n.key === 'transfer-out:c1')?.done).toBe(false);
+  });
+
+  // An older version wrote a transfer's reference into the flight's slot. The
+  // payment it was recorded against says which it really is, so a booked coach
+  // stops reading as a booked flight home — on data already on the phone.
+  it('reads a reference an older version put in the flight’s slot as the coach’s', () => {
+    const needs = tripNeeds(
+      trip(),
+      [leg({ exit: { hub: 'FAO', ref: 'NX7788' } })],
+      [
+        expense({
+          need: 'transfer:c1',
+          amountGBP: 9,
+          subcategory: 'Airport Transfer (Abroad)',
+          notes: 'Booking NX7788',
+        }),
+      ],
+      [],
+      NOW,
+    );
+    expect(needs.find((n) => n.key === 'flight:inbound')?.done).toBe(false);
+    expect(needs.find((n) => n.key === 'transfer-out:c1')?.state).toBe('paid');
+  });
+
+  it('names the airport you get home from, where the option said which', () => {
+    const t = trip({ homeward: { hub: 'LGW' } });
+    expect(
+      tripNeeds(t, [leg()], [], [], NOW).find((n) => n.key === 'transfer-uk:back')?.label,
+    ).toBe('Getting home from LGW');
+  });
+
+  // A hotel named in the research is a choice; a room is held or it is not.
+  it('does not call a chosen hotel a booked one', () => {
+    const chosen = tripNeeds(trip(), [leg({ base: { name: 'Hotel Faro' } })], [], [], NOW).find(
+      (n) => n.key === 'hotel:c1',
+    )!;
+    expect(chosen.done).toBe(false);
+    expect(chosen.detail).toBe('Hotel Faro — chosen, not booked');
+    const held = tripNeeds(
+      trip(),
+      [leg({ base: { name: 'Hotel Faro', bookingRef: 'HB-991' } })],
+      [],
+      [],
+      NOW,
+    ).find((n) => n.key === 'hotel:c1')!;
+    expect(held.done).toBe(true);
+    expect(held.evidence).toBe('Booking HB-991');
+  });
+
+  // Booked before the two directions were told apart: the payment it recorded
+  // was the way out, and it still settles that one.
+  it('keeps a transfer paid for under the old single key', () => {
+    const needs = tripNeeds(
+      trip(),
+      [leg()],
+      [expense({ need: 'transfer:c1', amountGBP: 9, subcategory: 'Airport Transfer (Abroad)' })],
+      [],
+      NOW,
+    );
+    expect(needs.find((n) => n.key === 'transfer-out:c1')?.state).toBe('paid');
+    expect(needs.find((n) => n.key === 'transfer-in:c1')?.done).toBe(false);
   });
 
   // The £22 coach: one payment settles the requirement and is the expense.
@@ -177,6 +266,29 @@ describe('what is left before a trip', () => {
     expect(keys(tripNeeds(trip(), [leg()], [], [stop()], NOW))).not.toContain('book:s1');
   });
 
+  // Some reservations cost nothing — a free timed entry, a slot at a library.
+  // The ledger only records what was paid, so it can never answer for those;
+  // before this they stayed outstanding until the trip was over.
+  it('takes a reservation that cost nothing as booked', () => {
+    const free = tripNeeds(
+      trip(),
+      [leg()],
+      [],
+      [stop({ bookAhead: 'Free timed entry, book ahead', booked: true })],
+      NOW,
+    ).find((n) => n.key === 'book:s1')!;
+    expect(free.done).toBe(true);
+    expect(free.evidence).toBe('Reserved');
+    const withRef = tripNeeds(
+      trip(),
+      [leg()],
+      [],
+      [stop({ bookAhead: 'x', bookingRef: 'MU-4412' })],
+      NOW,
+    ).find((n) => n.key === 'book:s1')!;
+    expect(withRef.evidence).toBe('Booking MU-4412');
+  });
+
   // The one thing nothing in the data can answer — and only worth asking late.
   it('asks about checking in only once the flight is close, and takes the tick', () => {
     expect(keys(tripNeeds(trip(), [leg()], [], [], NOW))).not.toContain('checkin:outbound');
@@ -197,8 +309,9 @@ describe('what is left before a trip', () => {
     });
     const legs = [
       leg({
+        entry: { transport: 'Próximo bus', journeyMin: 20 },
         exit: { hub: 'FAO', ref: 'ZZ99', transport: 'Próximo bus', journeyMin: 20 },
-        base: { name: 'Hotel Faro' },
+        base: { name: 'Hotel Faro', bookingRef: 'HB-991' },
       }),
     ];
     const paid = [expense({ need: 'transfer-uk:back', amountGBP: 22 })];

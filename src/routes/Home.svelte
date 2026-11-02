@@ -6,13 +6,13 @@
   import { formatGBP } from '../lib/money';
   import TopBar from '../components/TopBar.svelte';
   import { scrollMemory } from '../lib/ui-memory';
-  import { router } from '../lib/router.svelte';
+  import { navigate, router } from '../lib/router.svelte';
   import Icon from '../components/Icon.svelte';
   import TripCover from '../components/TripCover.svelte';
   import { conflictsQuery } from '../lib/conflicts';
   import FinderImport from '../components/FinderImport.svelte';
   import { isPast, optionDates, viewOpportunity } from '../lib/options';
-  import { measuredFacts } from '../lib/opportunities';
+  import { createOpportunity, measuredFacts } from '../lib/opportunities';
   import { nasBackup } from '../lib/nas.svelte';
   import { clockLabel, nextDeparture, tripDepartures } from '../lib/readiness';
 
@@ -73,13 +73,22 @@
   const current = $derived(trips.filter((t) => t.status !== 'done'));
   const past = $derived(trips.filter((t) => t.status === 'done'));
 
-  // Destinations under consideration. The ledger-measured costs are read once:
-  // they move with the ledger, so there is nothing stored to fall out of step.
-  let facts = $state<Awaited<ReturnType<typeof measuredFacts>> | null>(null);
-  $effect(() => {
-    if (($oppsQ ?? []).length && !facts) void measuredFacts().then((f) => (facts = f));
-  });
-  const chosenOppIds = $derived(new Set(trips.map((t) => t.opportunityId).filter(Boolean)));
+  // Destinations under consideration. The ledger-measured costs are a live
+  // query, not a figure fetched once: a transfer logged this morning has to
+  // move the comparison that quotes it.
+  const factsQ = liveQuery(() => measuredFacts());
+  const facts = $derived($factsQ ?? null);
+  // A destination leaves Considering while a trip from it is still to happen.
+  // Once that trip is done the place is open again: the same city is worth
+  // going back to, and the research is already here.
+  const chosenOppIds = $derived(
+    new Set(
+      trips
+        .filter((t) => t.status !== 'done')
+        .map((t) => t.opportunityId)
+        .filter(Boolean),
+    ),
+  );
   const ideas = $derived.by(() => {
     const rows = ($oppsQ ?? [])
       .filter((o) => !chosenOppIds.has(o.id))
@@ -105,6 +114,19 @@
 
   let importing = $state(false);
   let importStatus = $state('');
+  // Most research starts in Google Flights, not in a search the finder ran.
+  let addingCity = $state(false);
+  let newCity = $state('');
+  let newCountry = $state('');
+  async function addDestination() {
+    const city = newCity.trim();
+    if (!city) return;
+    const id = await createOpportunity(city, newCountry.trim() || undefined);
+    newCity = '';
+    newCountry = '';
+    addingCity = false;
+    navigate(`/opp/${id}`);
+  }
 
   const statusLabel: Record<string, string> = {
     planning: 'Planning',
@@ -158,27 +180,6 @@
 
     {#if importStatus}<p class="hint hint--ok" role="status">{importStatus}</p>{/if}
 
-    {#if ideas.length}
-      <span class="section-title">Considering</span>
-      <div class="trip-list">
-        {#each ideas as row (row.opp.id)}
-          <a class="card trip-card" class:trip-card--past={row.past} href={`#/opp/${row.opp.id}`}>
-            <span class="trip-card-name"
-              >{row.opp.city}{#if row.opp.country}<small>, {row.opp.country}</small>{/if}</span
-            >
-            <span class="trip-card-meta">{ideaMeta(row)}</span>
-          </a>
-        {/each}
-      </div>
-      <button class="btn btn--ghost btn--sm" onclick={() => (importing = true)}
-        >Add a finder search</button
-      >
-    {:else}
-      <button class="btn btn--ghost new-trip" onclick={() => (importing = true)}>
-        <Icon name="plan" size={20} /> Considering a trip — paste a finder search
-      </button>
-    {/if}
-
     {#if trips.length === 0}
       <div class="card empty-state">
         <p class="empty-title">No trips yet</p>
@@ -219,6 +220,58 @@
           stops, notes, photos, expenses and journal.
         </p>
       {/if}
+    {/if}
+
+    <span class="section-title past-title">Considering</span>
+    {#if ideas.length}
+      <div class="trip-list">
+        {#each ideas as row (row.opp.id)}
+          <a class="card trip-card" class:trip-card--past={row.past} href={`#/opp/${row.opp.id}`}>
+            <span class="trip-card-name"
+              >{row.opp.city}{#if row.opp.country}<small>, {row.opp.country}</small>{/if}</span
+            >
+            <span class="trip-card-meta">{ideaMeta(row)}</span>
+          </a>
+        {/each}
+      </div>
+    {:else}
+      <p class="hint">
+        Somewhere you are thinking about, with the ways of getting there side by side. What you
+        learn about a place stays here after the fares have gone stale.
+      </p>
+    {/if}
+    {#if addingCity}
+      <div class="card">
+        <label class="label" for="new-city">Where</label>
+        <input id="new-city" class="field" type="text" placeholder="Faro" bind:value={newCity} />
+        <label class="label" for="new-country">Country</label>
+        <input
+          id="new-country"
+          class="field"
+          type="text"
+          placeholder="Portugal"
+          bind:value={newCountry}
+        />
+        <p class="hint">
+          The country keeps two places of the same name apart — Valencia in Spain is not Valencia in
+          Venezuela.
+        </p>
+        <div class="cluster">
+          <button class="btn btn--primary" onclick={addDestination} disabled={!newCity.trim()}
+            >Add</button
+          >
+          <button class="btn btn--ghost" onclick={() => (addingCity = false)}>Cancel</button>
+        </div>
+      </div>
+    {:else}
+      <div class="cluster">
+        <button class="btn btn--ghost btn--sm" onclick={() => (addingCity = true)}
+          >Add a destination</button
+        >
+        <button class="btn btn--ghost btn--sm" onclick={() => (importing = true)}
+          >Add a finder search</button
+        >
+      </div>
     {/if}
   </div>
 </div>

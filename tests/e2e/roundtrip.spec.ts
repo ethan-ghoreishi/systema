@@ -30,13 +30,31 @@ async function load(page: Page) {
 async function seedOpportunity(page: Page): Promise<string> {
   return page.evaluate(async () => {
     const m = (window as any).m;
-    const [row] = m.parseFinderCsv(
+    const { rows } = m.parseFinderCsv(
       'City,Country,Out date,Back date,Trip,£/usable h,True £pp,Fare £pp,Status,Usable h,Ground,Cities,Overnight,Paid nights,Out,Out flights,Out £pp,Back,Back flights,Back £pp,Out link,Back link,Checked,Notes\n' +
         'Faro,Portugal,2027-02-12,2027-02-13,Fri→Sat · 1 night,4.99,96.0,34.5,OK,19.2,31h15,FAO 19h,Hotel ×1,1,LTN→FAO 09:25→12:15,Ryanair 5767,19.0,FAO→LTN 19:30→22:20,easyJet 2412,15.5,https://example.test/o,https://example.test/b,2027-01-20 00:46,',
     );
-    await m.addFinderRows([row]);
+    await m.addFinderRows(
+      rows.map((r: any) => ({
+        ...r,
+        option: { ...r.option, finderAssumptions: { travellers: 2, destTransferPP: 12 } },
+      })),
+    );
     const opp = await m.db.opportunities.toCollection().first();
     await m.updateOpportunity(opp.id, { research: 'Próximo bus 16 into town, ~20 min, €2.35.' });
+    // One written by hand, as a Google Flights search arrives.
+    await m.putOption(opp.id, {
+      id: 'manual-1',
+      source: 'manual',
+      outDate: '2027-03-05',
+      backDate: '2027-03-07',
+      outRoute: ['STN', 'FAO'],
+      backRoute: ['FAO', 'STN'],
+      outFarePP: 24,
+      backFarePP: 31,
+      paidNights: 2,
+      note: 'Cabin bag only',
+    });
     return opp.id;
   });
 }
@@ -57,19 +75,36 @@ async function seedRich(page: Page): Promise<string> {
       tz: 'Europe/Rome',
       arrival: '2026-10-16T09:00',
       departure: '2026-10-16T19:00',
-      exit: { ...blq.exit, hub: 'BLQ', journeyMin: 25, bufferMin: 75, notes: 'Marconi Express' },
+      entry: { transport: 'Marconi Express', journeyMin: 20, transferRef: 'ME-7712' },
+      exit: {
+        ...blq.exit,
+        hub: 'BLQ',
+        journeyMin: 25,
+        bufferMin: 75,
+        notes: 'Marconi Express',
+        transferRef: 'NX-5521',
+      },
     });
     await m.updateCity(bcn.id, {
       tz: 'Europe/Madrid',
-      base: { name: 'Hotel Gòtic', address: 'Carrer de Jaume I', checkIn: '2026-10-16T22:00' },
+      base: {
+        name: 'Hotel Gòtic',
+        address: 'Carrer de Jaume I',
+        checkIn: '2026-10-16T22:00',
+        bookingRef: 'HG-8841',
+      },
     });
     await m.updateTrip(trip, {
       outbound: { at: '2026-10-16T06:10', hub: 'LGW', ref: 'ABC123', checkedIn: true },
+      homeward: { transport: 'National Express', journeyMin: 70, transferRef: 'NX-9001' },
+      prep: { done: ['charge:devices'], extra: ['Water the plants'] },
     });
     const stop = await m.addStop(trip, 'Archiginnasio', blq.id);
     await m.updateStop(stop, {
       guide: { anchor: 'Anatomical Theatre', lookFor: ['arms', 'statues', 'canopy'] },
       bookAhead: 'Timed entry, book a week ahead',
+      booked: true,
+      bookingRef: 'AR-2210',
     });
     await m.toggleVisited(await m.db.stops.get(stop));
     await m.addExpense(trip, {

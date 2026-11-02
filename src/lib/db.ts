@@ -33,8 +33,14 @@ export interface DepartPlan {
   terminal?: string;
   /** Flight or train number. */
   number?: string;
-  /** Booking reference. */
+  /** Booking reference for the service itself (the flight, the train). */
   ref?: string;
+  /**
+   * Booking reference for the journey *to* the hub — the coach, the transfer.
+   * Its own key, because `ref` is the flight's: one reference must never be
+   * read as the other (a booked coach is not a booked flight).
+   */
+  transferRef?: string;
   notes?: string;
   /** Where the journey to the hub starts (defaults to the leg's base). */
   from?: string;
@@ -67,6 +73,8 @@ export interface LegBase {
   lng?: number;
   checkIn?: string; // 'YYYY-MM-DDTHH:mm', the city's local time
   checkOut?: string;
+  /** Booking reference: a place named is a choice, a reference is a booking. */
+  bookingRef?: string;
 }
 
 /** The departure from home, before the first leg. */
@@ -145,6 +153,13 @@ export interface Trip {
   preset?: string;
   /** Leaving home for the first leg. */
   outbound?: OutboundPlan;
+  /**
+   * Getting home from the airport at the end — the other half of the London
+   * end, and a journey of its own: a late landing is not the morning coach out.
+   */
+  homeward?: DepartPlan;
+  /** Ticked personal preparation, and anything added by hand (see prep.ts). */
+  prep?: { done?: string[]; extra?: string[] };
   order: number;
   createdAt: number;
   updatedAt: number;
@@ -169,6 +184,13 @@ export interface City {
   tz?: string;
   /** Hotel or base. */
   base?: LegBase;
+  /**
+   * Getting from the arrival airport (or station) into the city. A distinct
+   * journey from `exit`: a different direction, usually a different time of
+   * day and often a different mode, so it is booked and priced on its own.
+   * Carries no flight — the flight that lands is the previous leg's `exit`.
+   */
+  entry?: DepartPlan;
   /** How this city is left (the departure at `departure`). */
   exit?: DepartPlan;
   /** Last write (ms). Set automatically; absent on records from older versions. */
@@ -200,6 +222,13 @@ export interface Stop {
    * the guide rather than inside it.
    */
   bookAhead?: string;
+  /**
+   * Reserved. Some bookings cost nothing — a timed entry, a free slot — so the
+   * ledger cannot answer for them: only what was paid goes in there. The
+   * reservation itself lives on the place it was made for.
+   */
+  booked?: boolean;
+  bookingRef?: string;
   /** When it was ticked visited (ms); absent on stops ticked by older versions. */
   visitedAt?: number;
   /**
@@ -296,6 +325,19 @@ export interface TripOption {
   outLink?: string;
   backLink?: string;
   note?: string;
+  /**
+   * Written by hand rather than read from a finder row. A manual option has no
+   * `finderPP`, so its total is added up from its own parts instead (see
+   * options.ts) — the fares stated plus what the ledger has measured.
+   */
+  source?: 'manual';
+  /**
+   * The cost assumptions the search this row came from actually ran with,
+   * read from its `.config.json`. Kept per option so a re-priced figure is
+   * measured against that run rather than against constants mirrored here,
+   * which drift the moment the finder's defaults change.
+   */
+  finderAssumptions?: { travellers?: number; destTransferPP?: number; hotelPerNight?: number };
 }
 
 /**

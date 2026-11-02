@@ -2373,7 +2373,14 @@ textarea.field {
   min-width: 0;
 }
 .finder-city {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--s2);
   font-weight: 600;
+}
+.finder-price {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 .finder-meta {
   font-size: 13px;
@@ -2428,6 +2435,29 @@ textarea.field {
   cursor: pointer;
   padding: var(--s1) 0;
 }
+/* Airports and clock times, two to a row where there is space for two. */
+.opt-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 var(--s3);
+}
+
+/* A prep line waiting on the one above it: visible, not hidden. */
+.need--waiting {
+  opacity: 0.65;
+}
+.need input[type='checkbox'] {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  accent-color: var(--accent);
+}
+
+.plan-research {
+  display: block;
+  text-decoration: none;
+  color: var(--accent);
+}
 
 .opp-chosen {
   text-decoration: none;
@@ -2472,6 +2502,7 @@ textarea.field {
 }
 .need-main {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: 2px;
   min-width: 0;

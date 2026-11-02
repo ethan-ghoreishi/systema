@@ -1,9 +1,10 @@
 <script lang="ts">
   import { liveQuery } from 'dexie';
-  import { db } from '../lib/db';
+  import { db, type TripOption } from '../lib/db';
   import TopBar from '../components/TopBar.svelte';
   import Icon from '../components/Icon.svelte';
   import PastePlanDialog from '../components/PastePlanDialog.svelte';
+  import OptionEditor from '../components/OptionEditor.svelte';
   import { router, navigate } from '../lib/router.svelte';
   import { scrollMemory, recall, remember } from '../lib/ui-memory';
   import { copyText } from '../lib/copy.svelte';
@@ -13,8 +14,10 @@
     STALE_FARE_DAYS,
     describeDifference,
     optionDates,
+    optionLeg,
     optionRoute,
     pounds,
+    safeLink,
     viewOpportunity,
     type OptionSort,
     type PricedOption,
@@ -23,6 +26,8 @@
     chooseOption,
     deleteOpportunity,
     measuredFacts,
+    putOption,
+    removeOption,
     updateOpportunity,
   } from '../lib/opportunities';
   import { tripDisplayName } from '../lib/trip-shape';
@@ -35,28 +40,38 @@
    * cannot know is what Stansted, a hotel night or a transfer in this city have
    * actually cost *you* — so each figure is the finder's, re-priced against the
    * ledger, with every substitution and every assumption left standing shown in
-   * plain words rather than folded into a score.
+   * plain words rather than folded into a score. An option typed from a Google
+   * Flights search is added up from its own parts instead, and says so.
+   *
+   * Nothing here is thrown away by choosing. The options that lost, the dates
+   * that have gone and what you learned about the place all stay: the next
+   * search starts from them, and the trip links back here.
    */
   let { id }: { id: string } = $props();
 
   const oppQ = liveQuery(async () => (await db.opportunities.get(id)) ?? null);
   const tripsQ = liveQuery(() => db.trips.toArray());
   const citiesQ = liveQuery(() => db.cities.toArray());
+  // Live, because a figure quoted from the ledger has to move with the ledger.
+  const factsQ = liveQuery(() => measuredFacts());
   const opp = $derived($oppQ);
   const trips = $derived($tripsQ ?? []);
-
-  let facts = $state<Awaited<ReturnType<typeof measuredFacts>> | null>(null);
-  $effect(() => {
-    void measuredFacts().then((f) => (facts = f));
-  });
+  const facts = $derived($factsQ ?? null);
 
   let sort = $state<OptionSort>(recall('opp:sort', 'cost') as OptionSort);
   $effect(() => remember('opp:sort', sort));
 
   const view = $derived(
-    opp && facts ? viewOpportunity(opp, facts, sort) : { rows: [], best: null, pastCount: 0 },
+    opp && facts
+      ? viewOpportunity(opp, facts, sort)
+      : { rows: [], best: null, past: [], pastCount: 0, mixedBasis: false },
   );
-  const chosenTrip = $derived(trips.find((t) => t.opportunityId === id));
+
+  // Chosen is per option, not per destination: a place you have been is a
+  // place worth going back to, and the trip that was taken says nothing about
+  // whether this week's fares are worth a look.
+  const tripFor = (optionId: string) => trips.find((t) => t.optionId === optionId);
+  const openTrip = $derived(trips.find((t) => t.opportunityId === id && t.status !== 'done'));
   const visited = $derived(
     !!opp &&
       ($citiesQ ?? []).some((c) => c.name.trim().toLowerCase() === opp.city.trim().toLowerCase()),
@@ -67,6 +82,7 @@
   let draft = $state('');
   let pasting = $state(false);
   let busy = $state(false);
+  let editing = $state<{ option?: TripOption } | null>(null);
 
   function startResearch() {
     draft = opp?.research ?? '';
@@ -117,6 +133,20 @@
     }
   }
 
+  async function dropOption(row: PricedOption) {
+    const taken = tripFor(row.option.id);
+    if (
+      !confirm(
+        taken
+          ? `Remove ${optionDates(row.option)} from the comparison? The trip made from it stays, but this record of why it was chosen goes.`
+          : `Remove ${optionDates(row.option)} from the comparison?`,
+      )
+    )
+      return;
+    await removeOption(id, row.option.id);
+    status = 'Option removed.';
+  }
+
   async function removeIdea() {
     if (!opp) return;
     if (
@@ -131,6 +161,164 @@
 
   const money = (n: number | null) => (n == null ? '—' : pounds(Math.round(n)));
 </script>
+
+{#snippet optionCard(row: PricedOption, live: boolean)}
+  {@const o = row.option}
+  {@const taken = tripFor(o.id)}
+  <article class="card opt" class:opt--blocked={row.blockers.length || !live}>
+    <header class="card-head">
+      <span class="opt-dates">{optionDates(o)}</span>
+      <span class="opt-total">{money(row.totalPP)}<small> each</small></span>
+    </header>
+    <p class="opt-route">
+      {optionRoute(o)}{#if o.outFlights}
+        · {o.outFlights}{/if}{#if o.source === 'manual'}
+        · yours{/if}
+    </p>
+
+    {#if taken}
+      <a class="opt-diff" href={`#/trip/${taken.id}/plan`}
+        >Chosen — {tripDisplayName(
+          taken,
+          ($citiesQ ?? []).filter((c) => c.tripId === taken.id),
+        )}</a
+      >
+    {/if}
+
+    {#if row.blockers.length}
+      <p class="hint hint--warn">{row.blockers.join(' ')}</p>
+    {:else}
+      <ul class="opt-facts">
+        <li class="status-row">
+          <span class="status-key">Out</span>
+          <span class="status-val">{optionLeg(o, 'out') || '—'}</span>
+        </li>
+        <li class="status-row">
+          <span class="status-key">Back</span>
+          <span class="status-val">{optionLeg(o, 'back') || '—'}</span>
+        </li>
+        {#if o.outDep}
+          <li class="status-row">
+            <span class="status-key">Leave home</span>
+            <span class="status-val"
+              >{row.leaveHome?.time ?? '—'}{row.leaveHome?.dayBefore
+                ? ' the night before'
+                : ''}</span
+            >
+          </li>
+        {/if}
+        {#if row.usableH != null}
+          <li class="status-row">
+            <span class="status-key">Daylight there</span>
+            <span class="status-val"
+              >{row.usableH} h{#if row.groundH}<small>&nbsp;of {row.groundH} h on the ground</small
+                >{/if}</span
+            >
+          </li>
+        {/if}
+        {#if row.homeBy}
+          <li class="status-row">
+            <span class="status-key">Home by</span>
+            <span class="status-val"
+              >about {row.homeBy.time}{row.homeBy.dayAfter ? ' the next day' : ''}</span
+            >
+          </li>
+        {/if}
+        {#if o.overnight}
+          <li class="status-row">
+            <span class="status-key">Night</span><span class="status-val">{o.overnight}</span>
+          </li>
+        {/if}
+        {#if o.note}
+          <li class="status-row">
+            <span class="status-key">Note</span><span class="status-val">{o.note}</span>
+          </li>
+        {/if}
+      </ul>
+
+      {#if live && view.best && o.id !== view.best.option.id}
+        <p class="opt-diff">{describeDifference(row, view.best)}</p>
+      {:else if live && view.best}
+        <p class="opt-diff opt-diff--best">
+          {SORT_LABEL[sort]} here, once your own costs are used.
+        </p>
+      {/if}
+
+      {#if live && row.fareAgeDays != null && row.fareAgeDays >= STALE_FARE_DAYS}
+        <p class="hint hint--warn">
+          Fare last checked {row.fareAgeDays} days ago — worth looking again before deciding.
+        </p>
+      {/if}
+
+      <details class="opt-work">
+        <summary class="section-title">How this figure was reached</summary>
+        {#if row.basis === 'parts'}
+          <p class="hint">
+            Yours, so it is added up from what you typed: {row.farePP == null
+              ? 'no fares yet'
+              : `${pounds(row.farePP)} of fares`} plus the transfers and nights below. The finder's own
+            figures also carry an eSIM, bag storage and an early-start allowance, so the two are close
+            arithmetic rather than the same.
+          </p>
+        {:else if row.finderPP != null}
+          <p class="hint">
+            The finder worked it out at {pounds(row.finderPP)} each (fares {row.farePP == null
+              ? 'unknown'
+              : pounds(row.farePP)}, plus its own transfer, hotel and sundry allowances).
+          </p>
+        {/if}
+        {#if row.adjustments.length}
+          <ul class="opt-adjust">
+            {#each row.adjustments as a (a.label)}
+              <li class="status-row">
+                <span class="status-key"
+                  >{a.deltaPP >= 0 ? '+' : '−'}{pounds(
+                    Math.abs(Math.round(a.deltaPP * 100) / 100),
+                  )}</span
+                >
+                <span class="status-val">{a.label} — {a.basis}</span>
+              </li>
+            {/each}
+          </ul>
+        {:else}
+          <p class="hint">
+            Nothing in your ledger speaks to this one yet, so it stands as it came.
+          </p>
+        {/if}
+        {#if row.assumed.length}
+          <p class="hint">
+            Still assumed, because nothing here measures it: {row.assumed.join('; ')}.
+          </p>
+        {/if}
+        <div class="cluster">
+          {#if safeLink(o.outLink)}<a
+              class="btn btn--ghost btn--sm"
+              href={safeLink(o.outLink)}
+              target="_blank"
+              rel="noreferrer">Re-check the fare out</a
+            >{/if}
+          {#if safeLink(o.backLink)}<a
+              class="btn btn--ghost btn--sm"
+              href={safeLink(o.backLink)}
+              target="_blank"
+              rel="noreferrer">…and back</a
+            >{/if}
+          <button class="btn btn--ghost btn--sm" onclick={() => (editing = { option: o })}
+            >Edit</button
+          >
+          <button class="btn btn--ghost btn--sm" onclick={() => void dropOption(row)}>Remove</button
+          >
+        </div>
+      </details>
+
+      {#if live && !openTrip}
+        <button class="btn btn--primary" onclick={() => choose(row)} disabled={busy}
+          >Choose this</button
+        >
+      {/if}
+    {/if}
+  </article>
+{/snippet}
 
 {#if opp === undefined}
   <div class="screen-frame">
@@ -160,13 +348,13 @@
     <div class="screen-body" use:scrollMemory={router.path}>
       {#if status}<p class="hint hint--ok" role="status">{status}</p>{/if}
 
-      {#if chosenTrip}
-        <a class="card opp-chosen" href={`#/trip/${chosenTrip.id}/plan`}>
+      {#if openTrip}
+        <a class="card opp-chosen" href={`#/trip/${openTrip.id}/plan`}>
           <span class="opp-chosen-label">Chosen</span>
           <span class="opp-chosen-name"
             >{tripDisplayName(
-              chosenTrip,
-              ($citiesQ ?? []).filter((c) => c.tripId === chosenTrip.id),
+              openTrip,
+              ($citiesQ ?? []).filter((c) => c.tripId === openTrip.id),
             )}</span
           >
           <span class="hint">The trip is where the planning happens now.</span>
@@ -188,146 +376,44 @@
           Leave-home times assume 45 minutes to the airport and the usual 90 before the flight. The
           real journey goes on the trip once you choose.
         </p>
+        {#if view.mixedBasis}
+          <p class="hint">
+            This list holds both the finder's figures and your own, which are added up slightly
+            differently — each card says which, under "How this figure was reached".
+          </p>
+        {/if}
 
         {#each view.rows as row (row.option.id)}
-          {@const o = row.option}
-          <article class="card opt" class:opt--blocked={row.blockers.length}>
-            <header class="card-head">
-              <span class="opt-dates">{optionDates(o)}</span>
-              <span class="opt-total">{money(row.totalPP)}<small> each</small></span>
-            </header>
-            <p class="opt-route">
-              {optionRoute(o)}{#if o.outFlights}
-                · {o.outFlights}{/if}
-            </p>
-
-            {#if row.blockers.length}
-              <p class="hint hint--warn">{row.blockers.join(' ')}</p>
-            {:else}
-              <ul class="opt-facts">
-                {#if o.outDep}
-                  <li class="status-row">
-                    <span class="status-key">Leave home</span>
-                    <span class="status-val"
-                      >{row.leaveHome?.time ?? '—'}{row.leaveHome?.dayBefore
-                        ? ' the night before'
-                        : ''}</span
-                    >
-                  </li>
-                {/if}
-                {#if row.usableH != null}
-                  <li class="status-row">
-                    <span class="status-key">Daylight there</span>
-                    <span class="status-val"
-                      >{row.usableH} h{#if row.groundH}<small>
-                          of {row.groundH} h on the ground</small
-                        >{/if}</span
-                    >
-                  </li>
-                {/if}
-                {#if row.homeBy}
-                  <li class="status-row">
-                    <span class="status-key">Home by</span>
-                    <span class="status-val"
-                      >about {row.homeBy.time}{row.homeBy.dayAfter ? ' the next day' : ''}</span
-                    >
-                  </li>
-                {/if}
-                {#if o.overnight}
-                  <li class="status-row">
-                    <span class="status-key">Night</span><span class="status-val"
-                      >{o.overnight}</span
-                    >
-                  </li>
-                {/if}
-              </ul>
-
-              {#if view.best && row.option.id !== view.best.option.id}
-                <p class="opt-diff">{describeDifference(row, view.best)}</p>
-              {:else if view.best}
-                <p class="opt-diff opt-diff--best">
-                  {SORT_LABEL[sort]} here, once your own costs are used.
-                </p>
-              {/if}
-
-              {#if row.fareAgeDays != null && row.fareAgeDays >= STALE_FARE_DAYS}
-                <p class="hint hint--warn">
-                  Fare last checked {row.fareAgeDays} days ago — worth looking again before deciding.
-                </p>
-              {/if}
-
-              <details class="opt-work">
-                <summary class="section-title">How this figure was reached</summary>
-                {#if row.finderPP != null}
-                  <p class="hint">
-                    The finder worked it out at {pounds(row.finderPP)} each (fares {row.farePP ==
-                    null
-                      ? 'unknown'
-                      : pounds(row.farePP)}, plus its own transfer, hotel and sundry allowances).
-                  </p>
-                {/if}
-                {#if row.adjustments.length}
-                  <ul class="opt-adjust">
-                    {#each row.adjustments as a (a.label)}
-                      <li class="status-row">
-                        <span class="status-key"
-                          >{a.deltaPP >= 0 ? '+' : '−'}{pounds(
-                            Math.abs(Math.round(a.deltaPP * 100) / 100),
-                          )}</span
-                        >
-                        <span class="status-val">{a.label} — {a.basis}</span>
-                      </li>
-                    {/each}
-                  </ul>
-                {:else}
-                  <p class="hint">
-                    Nothing in your ledger speaks to this one yet, so it stands as it came.
-                  </p>
-                {/if}
-                {#if row.assumed.length}
-                  <p class="hint">
-                    Still assumed, because nothing here measures it: {row.assumed.join('; ')}.
-                  </p>
-                {/if}
-                <div class="cluster">
-                  {#if o.outLink}<a
-                      class="btn btn--ghost btn--sm"
-                      href={o.outLink}
-                      target="_blank"
-                      rel="noreferrer">Re-check the fare out</a
-                    >{/if}
-                  {#if o.backLink}<a
-                      class="btn btn--ghost btn--sm"
-                      href={o.backLink}
-                      target="_blank"
-                      rel="noreferrer">…and back</a
-                    >{/if}
-                </div>
-              </details>
-
-              {#if !chosenTrip}
-                <button class="btn btn--primary" onclick={() => choose(row)} disabled={busy}
-                  >Choose this</button
-                >
-              {/if}
-            {/if}
-          </article>
+          {@render optionCard(row, true)}
         {/each}
       {:else}
         <div class="card empty-state">
-          <p class="empty-title">No dates still ahead</p>
+          <p class="empty-title">Nothing still ahead</p>
           <p class="hint">
             {opp.options.length
-              ? 'Every option here has been overtaken. What you know about the city is below, and still true — add a newer search when the time comes.'
-              : 'Add a Cheap-Trip Finder search from Home to compare ways of getting here.'}
+              ? 'Every option here has been overtaken — they are kept below. What you know about the city is further down, and still true.'
+              : 'Add a way of getting here from a Google Flights search, or bring in a Cheap-Trip Finder search from Home.'}
           </p>
         </div>
       {/if}
 
-      {#if view.pastCount}
-        <p class="hint">
-          {view.pastCount} option{view.pastCount === 1 ? '' : 's'} with dates now past are hidden.
-        </p>
+      <div class="cluster">
+        <button class="btn btn--ghost" onclick={() => (editing = {})}>Add an option</button>
+      </div>
+
+      {#if view.past.length}
+        <details class="opt-work">
+          <summary class="section-title"
+            >{view.past.length} option{view.past.length === 1 ? '' : 's'} whose dates have gone</summary
+          >
+          <p class="hint">
+            Kept on purpose: what a trip here came to last time is the best guide to what it will
+            come to next time.
+          </p>
+          {#each view.past as row (row.option.id)}
+            {@render optionCard(row, false)}
+          {/each}
+        </details>
       {/if}
 
       <section class="card">
@@ -372,6 +458,17 @@
       hint="Paste Claude's answer. It replaces what is here, so keep anything you want from it."
       onSave={saveResearch}
       onClose={() => (pasting = false)}
+    />
+  {/if}
+
+  {#if editing}
+    <OptionEditor
+      option={editing.option}
+      onSave={async (o) => {
+        await putOption(id, o);
+        status = editing?.option ? 'Option updated.' : 'Option added.';
+      }}
+      onClose={() => (editing = null)}
     />
   {/if}
 {/if}

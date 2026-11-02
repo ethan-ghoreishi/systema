@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   compareCities,
   dataQuality,
+  destTransferByCity,
   hotelNightCost,
   transitRows,
   tripRhythm,
@@ -265,6 +266,80 @@ describe('what the London airports have cost', () => {
     expect(by.LTN?.perPerson).toBe(10.2);
   });
 
+  // The app's own return transfer is one journey home, not half a round trip:
+  // the words "— return" name the direction, and only "(Return)" — the way the
+  // spending sheet wrote it — ever meant both.
+  it('never halves a transfer the app stamped, whatever its description says', () => {
+    const by = ukTransferByAirport(
+      [trip({ id: 'e', partySize: 2, outbound: { hub: 'STN' } })],
+      [
+        exp({
+          tripId: 'e',
+          subcategory: 'Airport Transfer (UK)',
+          description: 'Airport transfer (UK) — return',
+          need: 'transfer-uk:back',
+          notes: 'Stansted',
+          amountGBP: 24,
+        }),
+      ],
+    );
+    expect(by.STN?.perPerson).toBe(12);
+  });
+
+  // One ticket for both directions, bought once: £24 for two is £6 a journey,
+  // not £12. The app records a return ticket the way the sheet always has.
+  it('halves a return ticket the app recorded as one', () => {
+    const by = ukTransferByAirport(
+      [trip({ id: 'g', partySize: 2, outbound: { hub: 'STN' } })],
+      [
+        exp({
+          tripId: 'g',
+          subcategory: 'Airport Transfer (UK)',
+          description: 'Airport transfer (UK) (Return)',
+          need: 'transfer-uk:out',
+          amountGBP: 24,
+        }),
+      ],
+    );
+    expect(by.STN?.perPerson).toBe(6);
+  });
+
+  // The ride home arrives wherever the flight home landed, which the trip now
+  // records — a different airport from the one it set off from, often enough.
+  it('attributes the ride home to the airport it actually lands at', () => {
+    const by = ukTransferByAirport(
+      [trip({ id: 'h', partySize: 2, outbound: { hub: 'STN' }, homeward: { hub: 'LHR' } })],
+      [
+        exp({
+          tripId: 'h',
+          subcategory: 'Airport Transfer (UK)',
+          description: 'Airport transfer (UK) — return',
+          need: 'transfer-uk:back',
+          amountGBP: 30,
+        }),
+      ],
+    );
+    expect(by.LHR?.perPerson).toBe(15);
+    expect(by.STN).toBeUndefined();
+  });
+
+  // Nothing records where it landed: better silent than wrong.
+  it('leaves the ride home out when the row names no airport', () => {
+    const by = ukTransferByAirport(
+      [trip({ id: 'f', partySize: 2, outbound: { hub: 'STN' } })],
+      [
+        exp({
+          tripId: 'f',
+          subcategory: 'Airport Transfer (UK)',
+          description: 'Airport transfer (UK) — return',
+          need: 'transfer-uk:back',
+          amountGBP: 24,
+        }),
+      ],
+    );
+    expect(by).toEqual({});
+  });
+
   it('takes the middle, so a voucher or a taxi does not become the usual fare', () => {
     const by = ukTransferByAirport(
       [trip({ id: 'd', partySize: 2 })],
@@ -314,5 +389,36 @@ describe('what a hotel night has cost', () => {
       low: 21.6,
       high: 27.4,
     });
+  });
+});
+
+// A figure that says "the middle of 3 past visits (£3–£9)" has to be exactly
+// that: the comparison screen answers a different question, with a mean and no
+// spread, and borrowing its answer put a claim on the card the data did not make.
+describe('what a transfer in a city has really cost', () => {
+  const trips = [
+    trip({ id: 'r1', partySize: 2 }),
+    trip({ id: 'r2', partySize: 2 }),
+    trip({ id: 'r3', partySize: 1 }),
+  ];
+  const cities = [
+    city({ id: 'c1', tripId: 'r1', name: 'Faro' }),
+    city({ id: 'c2', tripId: 'r2', name: 'Faro' }),
+    city({ id: 'c3', tripId: 'r3', name: 'Faro' }),
+  ];
+  const rows = [
+    exp({ tripId: 'r1', cityId: 'c1', subcategory: 'Airport Transfer (Abroad)', amountGBP: 6 }),
+    exp({ tripId: 'r2', cityId: 'c2', subcategory: 'Airport Transfer (Abroad)', amountGBP: 18 }),
+    exp({ tripId: 'r3', cityId: 'c3', subcategory: 'Airport Transfer (Abroad)', amountGBP: 8 }),
+  ];
+
+  it('is the middle of the visits that logged one, with their real spread', () => {
+    const by = destTransferByCity(trips, cities, rows, []);
+    // £3, £9 and £8 each: the middle is £8, not the £6.67 mean.
+    expect(by.faro).toEqual({ perPerson: 8, samples: 3, low: 3, high: 9 });
+  });
+
+  it('says nothing about a city that never logged one', () => {
+    expect(destTransferByCity(trips, cities, [], [])).toEqual({});
   });
 });

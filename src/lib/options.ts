@@ -19,12 +19,15 @@ import { newId } from './ids';
  */
 
 // The finder's own cost assumptions, from tripfinder/engine.py — the values a
-// re-priced figure is measured against. They are its defaults; a run with a
-// different config would move them, so each adjustment is shown with the
-// assumption it replaced rather than folded silently into one number.
-// ponytail: three constants mirrored from a sibling project. If they drift, the
-// adjustments read slightly off and the stated assumption is the giveaway;
-// carrying them in the CSV would be the fix.
+// re-priced figure is measured against, and the fallback when a search did not
+// say. A search's own `.config.json` carries the two that are configurable
+// (`dest_transfer_pp`, `hotel_per_night`) plus how many travellers it priced
+// for; those are read at import and kept on the option, so a re-priced figure
+// is measured against the run it came from rather than against these.
+// ponytail: the per-airport origin transfers are hard-coded in engine.py, not
+// in the config, so they stay mirrored here. If they drift, the adjustment
+// reads slightly off and the stated assumption is the giveaway; putting them in
+// the config (and so in the hand-off) would be the fix.
 export const FINDER_ORIGIN_TRANSFER_PP: Record<string, number> = {
   LHR: 6,
   LGW: 8,
@@ -39,6 +42,51 @@ export const FINDER_HOTEL_PER_NIGHT = 60;
 
 /** A fare older than this is a guess, not a price. */
 export const STALE_FARE_DAYS = 14;
+
+/** What one search actually priced for, read from the `.config.json` beside it. */
+export interface FinderAssumptions {
+  travellers?: number;
+  destTransferPP?: number;
+  hotelPerNight?: number;
+}
+
+/**
+ * Read a search's `<name>.config.json`. Only the three figures that decide a
+ * re-priced total are taken; the rest of the run's settings are the finder's
+ * business.
+ */
+export function parseFinderConfig(text: string): FinderAssumptions | null {
+  let cfg: Record<string, unknown>;
+  try {
+    cfg = JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  if (!cfg || typeof cfg !== 'object') return null;
+  const n = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : undefined);
+  const out: FinderAssumptions = {
+    travellers: n(cfg.travellers),
+    destTransferPP: n(cfg.dest_transfer_pp),
+    hotelPerNight: n(cfg.hotel_per_night),
+  };
+  return Object.values(out).some((v) => v !== undefined) ? out : null;
+}
+
+/**
+ * An imported link, if it is an ordinary web address. A CSV is just a file —
+ * it can say anything, including `javascript:`, and these end up behind a tap.
+ * Checked again where they are rendered: rows restored from a backup or merged
+ * from the NAS never passed through an import.
+ */
+export function safeLink(url: string | undefined): string | undefined {
+  if (!url?.trim()) return undefined;
+  try {
+    const u = new URL(url.trim());
+    return u.protocol === 'https:' || u.protocol === 'http:' ? u.href : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 // ---- Reading the finder's CSV ----
 
@@ -129,12 +177,26 @@ export interface ParsedRow {
 
 export class OptionParseError extends Error {}
 
+export interface ParsedSearch {
+  rows: ParsedRow[];
+  /** Rows that named a trip but had no flights to make it with. */
+  skipped: number;
+  /** The run's own cost assumptions, where its `.config.json` came too. */
+  assumptions?: FinderAssumptions;
+}
+
 /**
  * Read Cheap-Trip Finder rows — a pasted CSV or the saved `.csv` file, header
  * and all. The header is required: guessing at unlabelled columns is how a
  * fare ends up in the daylight column.
+ *
+ * A search writes more than one table. The price map (`…_price_map.csv`) and
+ * the older calendar exports have the same first four columns as the results,
+ * so a header test alone reads them as a hundred destinations with no flights
+ * and no fares. A real results row says which airports, at what time — so that
+ * is what is required, of the table and of each row.
  */
-export function parseFinderCsv(text: string): ParsedRow[] {
+export function parseFinderCsv(text: string): ParsedSearch {
   const rows = csvRows(text);
   const headIndex = rows.findIndex(
     (r) => r.includes('City') && r.some((c) => c === 'Out date' || c === 'Out Date'),
@@ -144,17 +206,34 @@ export function parseFinderCsv(text: string): ParsedRow[] {
       'That does not look like a Cheap-Trip Finder table. Paste the CSV including its header row (the line starting "City,Country,Out date…"), or pick the .csv file the search saved.',
     );
   const head = rows[headIndex];
+  if (!head.includes('Out'))
+    throw new OptionParseError(
+      head.some((c) => c === 'Fits' || c === 'Price' || c === 'Calendar £pp')
+        ? 'That is the search’s price map — the fares it found while looking, not the trips it worked out. Pick the file of the same name without "_price_map", which has the flights and times in it.'
+        : 'That table has no flights in it, so there is nothing to compare. Pick the search’s own results .csv (its header runs "…Out,Out flights,Out £pp,Back…").',
+    );
+  if (!head.includes('Back') && head.includes('In'))
+    throw new OptionParseError(
+      'That is an older search format, from before the results table settled. Run the search again to get a table this can read.',
+    );
   const at = (r: string[], name: string) => {
     const i = head.indexOf(name);
     return i < 0 ? undefined : r[i];
   };
   const out: ParsedRow[] = [];
+  let skipped = 0;
   for (const r of rows.slice(headIndex + 1)) {
     const city = at(r, 'City');
     const outDate = at(r, 'Out date') ?? at(r, 'Out Date');
     if (!city || !outDate || !/^\d{4}-\d{2}-\d{2}$/.test(outDate)) continue;
     const o = parseLeg(at(r, 'Out') ?? '');
     const b = parseLeg(at(r, 'Back') ?? '');
+    // No flights either way is a search that did not finish for this trip, not
+    // a trip you could take: importing it makes a destination you cannot act on.
+    if (!o.route.length || !b.route.length) {
+      skipped += 1;
+      continue;
+    }
     const overnight = at(r, 'Overnight') ?? '';
     const option: TripOption = {
       id: newId(),
@@ -180,8 +259,8 @@ export function parseFinderCsv(text: string): ParsedRow[] {
       paidNights: num(at(r, 'Paid nights')),
       ...(parseScenario(overnight) ? { scenario: parseScenario(overnight) } : {}),
       checked: at(r, 'Checked') || undefined,
-      outLink: at(r, 'Out link') || undefined,
-      backLink: at(r, 'Back link') || undefined,
+      outLink: safeLink(at(r, 'Out link')),
+      backLink: safeLink(at(r, 'Back link')),
     };
     out.push({
       city,
@@ -193,9 +272,11 @@ export function parseFinderCsv(text: string): ParsedRow[] {
   }
   if (!out.length)
     throw new OptionParseError(
-      'No trips found in that table. Check it has at least one row under the header.',
+      skipped
+        ? `That table has ${skipped} trip${skipped === 1 ? '' : 's'} in it but no flights for any of them — the search had not found fares yet. Run it again, or pick a finished search.`
+        : 'No trips found in that table. Check it has at least one row under the header.',
     );
-  return out;
+  return { rows: out, skipped };
 }
 
 /** '32h40' → 32.67. */
@@ -235,10 +316,16 @@ export function blockers(o: TripOption): string[] {
 export interface Facts {
   /** Per person, one journey, by London IATA code. */
   ukTransfer: Record<string, MeasuredCost>;
-  /** Per person, by lower-cased city name. */
+  /** Per person, one visit (both directions), by lower-cased city name. */
   destTransfer: Record<string, MeasuredCost>;
   /** For the whole party, per night. */
   hotelNight: MeasuredCost | null;
+  /**
+   * How many people a figure is divided between when nothing else says. The
+   * household's usual number, not a reading taken off some other trip: an
+   * option priced for two by a search that said two is not evidence about the
+   * next one. A search that stated its own `travellers` overrides this.
+   */
   partySize: number;
 }
 
@@ -265,6 +352,14 @@ export function pounds(n: number): string {
 
 export interface PricedOption {
   option: TripOption;
+  /**
+   * 'finder' — the search's own true cost with the measured inputs swapped in.
+   * 'parts' — a hand-written option, added up from the fares it states plus
+   * what the ledger knows. The two are close but not the same arithmetic (the
+   * finder also allows for an eSIM, bag storage and an early start), so a list
+   * holding both says so rather than pretending one ranking.
+   */
+  basis: 'finder' | 'parts';
   blockers: string[];
   /** Fares as quoted, per person. */
   farePP: number | null;
@@ -308,10 +403,15 @@ function addMinutes(hhmm: string, delta: number): { time: string; day: number } 
  * The whole comparison for one option: what it really costs you, what had to
  * stay an assumption, and the hours either end of the day.
  *
- * The cost is the finder's own figure plus one adjustment per input the ledger
- * has measured. Rebuilding its total here would mean copying its whole model
- * and then disagreeing with it over rounding; adjusting it keeps one number
- * authoritative and makes every change visible.
+ * For a finder row the cost is the finder's own figure plus one adjustment per
+ * input the ledger has measured. Rebuilding its total here would mean copying
+ * its whole model and then disagreeing with it over rounding; adjusting it
+ * keeps one number authoritative and makes every change visible.
+ *
+ * A hand-written option has no such figure, and leaving it blank would park
+ * every option typed from a Google Flights search at the bottom of the list.
+ * So its parts are added up instead — the fares you state plus the same
+ * transfer and hotel inputs — and `basis` says which arithmetic was used.
  */
 export function priceOption(
   o: TripOption,
@@ -324,6 +424,14 @@ export function priceOption(
   const adjustments: Adjustment[] = [];
   const assumed: string[] = [];
 
+  // A hand-written option has no finder figure to adjust, so its parts are
+  // added up instead: the fares it states, plus the same inputs, measured where
+  // the ledger can and named as an allowance where it cannot.
+  const parts = o.source === 'manual';
+  const party = Math.max(1, o.finderAssumptions?.travellers ?? facts.partySize);
+  const destWas = o.finderAssumptions?.destTransferPP ?? FINDER_DEST_TRANSFER_PP;
+  const hotelWas = o.finderAssumptions?.hotelPerNight ?? FINDER_HOTEL_PER_NIGHT;
+
   const outHub = o.outRoute[0];
   const backHub = o.backRoute[o.backRoute.length - 1];
   for (const [hub, which] of [
@@ -334,12 +442,18 @@ export function priceOption(
     const m = facts.ukTransfer[hub];
     const was = FINDER_ORIGIN_TRANSFER_PP[hub] ?? FINDER_DEFAULT_TRANSFER_PP;
     if (!m) {
-      assumed.push(`${hub} transfer at the finder's £${was} each way`);
+      if (parts)
+        adjustments.push({
+          label: `${hub} transfer ${which}`,
+          deltaPP: was,
+          basis: `£${was} each, the usual allowance — your own trips have not priced it`,
+        });
+      else assumed.push(`${hub} transfer at the finder's £${was} each way`);
       continue;
     }
     adjustments.push({
       label: `${hub} transfer ${which}`,
-      deltaPP: round2(m.perPerson - was),
+      deltaPP: round2(parts ? m.perPerson : m.perPerson - was),
       basis: basisOf(m, 'each', 'journey'),
     });
   }
@@ -347,40 +461,62 @@ export function priceOption(
   // The destination transfer, where this city has been visited before. Only
   // the named city can be looked up: a two-city row's second place is an
   // airport code, so its transfer keeps the finder's assumption, said plainly.
-  const cities = cityCount(o.cities);
+  // ponytail: matched on the city's name alone, because a visited city is a
+  // leg and a leg carries no country. Two same-named places are kept apart as
+  // destinations, but a transfer measured in one would be read against the
+  // other. Giving City a country would fix it, and nothing here needs one yet.
+  const cities = o.cities ? cityCount(o.cities) : parts ? 1 : 0;
   const destMeasured = city ? facts.destTransfer[city.trim().toLowerCase()] : undefined;
   if (cities > 0 && destMeasured) {
     adjustments.push({
       label: `transfer in ${city}`,
-      deltaPP: round2(destMeasured.perPerson - FINDER_DEST_TRANSFER_PP),
-      basis: basisOf(destMeasured, 'each', 'visit'),
+      deltaPP: round2(parts ? destMeasured.perPerson : destMeasured.perPerson - destWas),
+      basis: basisOf(destMeasured, 'each for the visit', 'visit'),
+    });
+  } else if (cities > 0 && parts) {
+    adjustments.push({
+      label: `transfer in ${city || 'the destination'}`,
+      deltaPP: destWas,
+      basis: `£${destWas} each, both ways — the usual allowance, nothing here measures it`,
     });
   } else if (cities > 0) {
-    assumed.push(
-      `the transfer in ${city || 'the destination'} at the finder's £${FINDER_DEST_TRANSFER_PP} each`,
-    );
+    assumed.push(`the transfer in ${city || 'the destination'} at the finder's £${destWas} each`);
   }
-  if (cities > 1)
-    assumed.push(`the second city's transfer at the finder's £${FINDER_DEST_TRANSFER_PP} each`);
+  if (cities > 1) assumed.push(`the second city's transfer at the finder's £${destWas} each`);
 
   const nights = o.paidNights ?? 0;
   if (nights > 0) {
     if (facts.hotelNight) {
-      const perPersonNight = facts.hotelNight.perPerson / Math.max(1, facts.partySize);
+      const perPersonNight = facts.hotelNight.perPerson / party;
       adjustments.push({
         label: `${nights} hotel night${nights === 1 ? '' : 's'}`,
-        deltaPP: round2(
-          (perPersonNight - FINDER_HOTEL_PER_NIGHT / Math.max(1, facts.partySize)) * nights,
+        deltaPP: round2((perPersonNight - (parts ? 0 : hotelWas / party)) * nights),
+        basis: basisOf(
+          facts.hotelNight,
+          `a night for ${party === 1 ? 'one' : 'the party'}`,
+          'stay',
         ),
-        basis: basisOf(facts.hotelNight, 'a night for the party', 'stay'),
+      });
+    } else if (parts) {
+      adjustments.push({
+        label: `${nights} hotel night${nights === 1 ? '' : 's'}`,
+        deltaPP: round2((hotelWas / party) * nights),
+        basis: `£${hotelWas} a night for the party — the usual allowance, nothing here measures it`,
       });
     } else {
-      assumed.push(`the hotel at the finder's £${FINDER_HOTEL_PER_NIGHT} a night`);
+      assumed.push(`the hotel at the finder's £${hotelWas} a night`);
     }
   }
 
+  // One fare typed is not a trip: the other might be most of it, so a partial
+  // sum would rank as the cheapest. It stays unknown until both are in.
+  const base = parts
+    ? o.outFarePP != null && o.backFarePP != null
+      ? farePP
+      : null
+    : (o.finderPP ?? null);
   const totalPP =
-    o.finderPP == null ? null : round2(o.finderPP + adjustments.reduce((a, x) => a + x.deltaPP, 0));
+    base == null ? null : round2(base + adjustments.reduce((a, x) => a + x.deltaPP, 0));
 
   const flight = MODE_DEFAULTS.flight;
   const leave = o.outDep
@@ -390,6 +526,7 @@ export function priceOption(
 
   return {
     option: o,
+    basis: parts ? 'parts' : 'finder',
     blockers: blockers(o),
     farePP: farePP == null ? null : round2(farePP),
     finderPP: o.finderPP ?? null,
@@ -510,17 +647,45 @@ export function optionRoute(o: TripOption): string {
   return back && back !== [...o.outRoute].reverse().join(' → ') ? `${out} · back ${back}` : out;
 }
 
+/**
+ * One leg as a row can be judged by: airports, the clock at both ends, the
+ * service, and the change of planes where there is one. The facts that decide
+ * whether a cheap fare is a trip you would actually take.
+ */
+export function optionLeg(o: TripOption, which: 'out' | 'back'): string {
+  const route = which === 'out' ? o.outRoute : o.backRoute;
+  if (!route.length) return '';
+  const dep = which === 'out' ? o.outDep : o.backDep;
+  const arr = which === 'out' ? o.outArr : o.backArr;
+  const day = (which === 'out' ? o.outArrDay : o.backArrDay) ?? 0;
+  const flights = which === 'out' ? o.outFlights : o.backFlights;
+  const bits = [route.join(' → ')];
+  if (dep && arr) bits.push(`${dep}–${arr}${day ? ` +${day}` : ''}`);
+  if (route.length > 2) bits.push(`change at ${route.slice(1, -1).join(', ')}`);
+  else if (route.length === 2) bits.push('direct');
+  if (flights) bits.push(flights);
+  return bits.join(' · ');
+}
+
 // ---- The whole opportunity ----
 
 export interface OpportunityView {
   rows: PricedOption[];
   /** The leading option under the chosen order, blockers aside. */
   best: PricedOption | null;
-  /** Options whose outbound date has gone. */
+  /** Options whose outbound date has gone — still here, just not in the running. */
+  past: PricedOption[];
   pastCount: number;
+  /** Both kinds of figure are in this list, so neither ranking is the whole truth. */
+  mixedBasis: boolean;
 }
 
-/** Price and order every option of an opportunity, leaving gone dates out. */
+/**
+ * Price and order every option of an opportunity. Dates that have gone are set
+ * aside rather than dropped: the fares and the comparison are what you learned
+ * about this place, and a window that closed is still worth seeing when the
+ * next search comes in.
+ */
 export function viewOpportunity(
   opp: Opportunity,
   facts: Facts,
@@ -528,15 +693,20 @@ export function viewOpportunity(
   now = Date.now(),
 ): OpportunityView {
   const today = new Date(now).toISOString().slice(0, 10);
-  const live = opp.options.filter((o) => o.outDate >= today);
+  const priced = opp.options.map((o) => priceOption(o, facts, opp.city, now));
   const rows = sortPriced(
-    live.map((o) => priceOption(o, facts, opp.city, now)),
+    priced.filter((r) => r.option.outDate >= today),
     by,
+  );
+  const past = [...priced.filter((r) => r.option.outDate < today)].sort((a, b) =>
+    b.option.outDate.localeCompare(a.option.outDate),
   );
   return {
     rows,
     best: rows.find((r) => !r.blockers.length) ?? null,
-    pastCount: opp.options.length - live.length,
+    past,
+    pastCount: past.length,
+    mixedBasis: new Set(rows.map((r) => r.basis)).size > 1,
   };
 }
 
