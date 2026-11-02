@@ -246,9 +246,13 @@ function conflictLabel(c: FieldConflict, m: SyncRecords): { tripId: string | nul
           ? `expense “${row?.description || row?.subcategory}”`
           : c.table === 'moments'
             ? `moment “${row?.title}”`
-            : c.table === 'kv'
-              ? 'sync data'
-              : '';
+            : c.table === 'opportunities'
+              ? `the options for ${row?.city}`
+              : c.table === 'kv'
+                ? 'sync data'
+                : '';
+  // An opportunity belongs to no trip: it is named by its destination.
+  if (c.table === 'opportunities') return { tripId: null, label: what };
   return { tripId, label: what ? `${name}: ${what}` : name };
 }
 
@@ -317,7 +321,14 @@ class NasBackup {
 
     // Any write to user data schedules a sync — no call-site sprinkling.
     const bump = () => this.schedule();
-    for (const table of [db.trips, db.cities, db.stops, db.expenses, db.moments]) {
+    for (const table of [
+      db.trips,
+      db.cities,
+      db.stops,
+      db.expenses,
+      db.moments,
+      db.opportunities,
+    ]) {
       table.hook('creating', bump);
       table.hook('deleting', bump);
       table.hook('updating', bump);
@@ -902,7 +913,17 @@ class NasBackup {
       const otherDevice = remote?.sync?.deviceName ?? 'another device';
       const { changes, conflicts } = await db.transaction(
         'rw',
-        [db.trips, db.cities, db.stops, db.expenses, db.moments, db.photos, db.kv, db.fxRates],
+        [
+          db.trips,
+          db.cities,
+          db.stops,
+          db.expenses,
+          db.moments,
+          db.opportunities,
+          db.photos,
+          db.kv,
+          db.fxRates,
+        ],
         async () => {
           const local = toRecords(await buildDataBackup());
           const { base, descends } = await this.baseFor(remote);

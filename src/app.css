@@ -2335,3 +2335,162 @@ textarea.field {
   font-weight: 600;
   color: var(--accent);
 }
+
+/* ---- Considering: options compared, and what is left before a trip ---- */
+
+/* Picking rows out of a finder search. */
+.finder-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+}
+.finder-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s3);
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  min-height: var(--tap);
+  cursor: pointer;
+}
+.finder-row--on {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+}
+.finder-row input {
+  margin-top: 3px;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  accent-color: var(--accent);
+}
+.finder-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.finder-city {
+  font-weight: 600;
+}
+.finder-meta {
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+
+/* One way of making the trip. */
+.opt {
+  gap: var(--s2);
+}
+.opt--blocked {
+  opacity: 0.7;
+}
+.opt-dates {
+  font-size: 16px;
+  font-weight: 600;
+}
+.opt-total {
+  font-size: 20px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.opt-total small,
+.status-val small {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--ink-soft);
+}
+.opt-route {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+.opt-facts,
+.opt-adjust {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.opt-adjust .status-key {
+  font-variant-numeric: tabular-nums;
+}
+.opt-diff {
+  margin: 0;
+  font-size: 14px;
+}
+.opt-diff--best {
+  color: var(--ink-soft);
+}
+.opt-work summary {
+  cursor: pointer;
+  padding: var(--s1) 0;
+}
+
+.opp-chosen {
+  text-decoration: none;
+  gap: var(--s1);
+  border-color: var(--accent-line);
+}
+.opp-chosen-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  font-weight: 600;
+}
+.opp-chosen-name {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.opp-research {
+  margin: 0;
+  white-space: pre-wrap;
+  font-size: 15px;
+}
+
+/* Before you go. */
+.before {
+  gap: var(--s2);
+}
+.before-count {
+  font-size: 13px;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+.need {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  padding-top: var(--s2);
+  border-top: 1px solid var(--hairline);
+  min-height: var(--tap);
+}
+.need-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.need-label {
+  font-size: 15px;
+  font-weight: 600;
+}
+.need-detail {
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+.need--done .need-label {
+  font-weight: 400;
+  color: var(--ink-soft);
+}
+.before-done summary {
+  font-size: 13px;
+  color: var(--ink-soft);
+  cursor: pointer;
+  padding: var(--s1) 0;
+}

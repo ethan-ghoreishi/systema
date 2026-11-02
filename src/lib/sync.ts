@@ -1,4 +1,4 @@
-import type { City, Expense, KeyValue, Moment, Photo, Stop, Trip } from './db';
+import type { City, Expense, KeyValue, Moment, Opportunity, Photo, Stop, Trip } from './db';
 
 /**
  * Pure three-way merge for NAS sync between devices (iPhone + Mac).
@@ -21,8 +21,8 @@ import type { City, Expense, KeyValue, Moment, Photo, Stop, Trip } from './db';
  * lacks it — it may be the only copy.
  *
  * A table missing from a snapshot altogether (a device on an older version,
- * which doesn't know `moments`) is unknown, not empty: nothing is deleted
- * because of it.
+ * which doesn't know `moments` or `opportunities`) is unknown, not empty:
+ * nothing is deleted because of it.
  */
 
 export type PhotoMeta = Omit<Photo, 'blob'>;
@@ -35,13 +35,30 @@ export interface SyncRecords {
   expenses: Expense[];
   /** Absent in snapshots from versions before moments existed. */
   moments?: Moment[];
+  /** Absent in snapshots from versions before opportunities existed. */
+  opportunities?: Opportunity[];
   /** Synced key/value rows: conflicts and photo tombstones. Never device settings. */
   kv: KeyValue[];
   photosMeta: PhotoMeta[];
 }
 
-export type SyncTable = 'trips' | 'cities' | 'stops' | 'expenses' | 'moments' | 'kv';
-export const SYNC_TABLES: SyncTable[] = ['trips', 'cities', 'stops', 'expenses', 'moments', 'kv'];
+export type SyncTable =
+  | 'trips'
+  | 'cities'
+  | 'stops'
+  | 'expenses'
+  | 'moments'
+  | 'opportunities'
+  | 'kv';
+export const SYNC_TABLES: SyncTable[] = [
+  'trips',
+  'cities',
+  'stops',
+  'expenses',
+  'moments',
+  'opportunities',
+  'kv',
+];
 
 type Row = Record<string, unknown>;
 const keyOf = (table: SyncTable | 'photosMeta') => (table === 'kv' ? 'key' : 'id');

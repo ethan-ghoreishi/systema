@@ -176,12 +176,15 @@
   let pending = $state.raw<{ backup: Backup; files: Map<string, Blob> } | null>(null);
   // Off by default: a restore adds, and only says otherwise when asked to.
   let fillEmpty = $state(false);
+  // Every record kind the restore can add has to count here: one left out and
+  // a backup holding only that kind would read as "already on this device"
+  // and write nothing.
   const changes = (r: ImportResult) =>
-    r.trips + r.cities + r.stops + r.expenses + r.moments + r.photos + r.filled;
+    r.trips + r.cities + r.stops + r.expenses + r.moments + r.opportunities + r.photos + r.filled;
   const describe = (r: ImportResult, preview: boolean) =>
     changes(r) === 0
       ? `Everything in this backup is already on this device.${importNote(r)}`
-      : `${preview ? 'This backup would add' : 'Added'} ${r.trips} trip(s), ${r.cities ? `${r.cities} leg(s), ` : ''}${r.stops} stop(s), ${r.expenses} expense(s), ${r.moments ? `${r.moments} moment(s), ` : ''}${r.photos} photo(s).${importNote(r)}`;
+      : `${preview ? 'This backup would add' : 'Added'} ${r.trips} trip(s), ${r.cities ? `${r.cities} leg(s), ` : ''}${r.stops} stop(s), ${r.expenses} expense(s), ${r.moments ? `${r.moments} moment(s), ` : ''}${r.opportunities ? `${r.opportunities} destination(s) considered, ` : ''}${r.photos} photo(s).${importNote(r)}`;
 
   function inspect(file: Blob): Promise<void> {
     pending = null;

@@ -8,6 +8,7 @@
   import TripEdit from './routes/TripEdit.svelte';
   import PromptBuilder from './routes/PromptBuilder.svelte';
   import Insights from './routes/Insights.svelte';
+  import Opportunity from './routes/Opportunity.svelte';
   import NotFound from './routes/NotFound.svelte';
   import UpdateToast from './components/UpdateToast.svelte';
   import CopySheet from './components/CopySheet.svelte';
@@ -23,6 +24,7 @@
     | { name: 'new' }
     | { name: 'settings' }
     | { name: 'insights' }
+    | { name: 'opportunity'; id: string }
     | { name: 'trip'; id: string; tab: string }
     | { name: 'tripEdit'; id: string }
     | { name: 'prompt'; id: string }
@@ -34,6 +36,7 @@
     if (seg[0] === 'new') return { name: 'new' };
     if (seg[0] === 'settings') return { name: 'settings' };
     if (seg[0] === 'insights') return { name: 'insights' };
+    if (seg[0] === 'opp' && seg[1]) return { name: 'opportunity', id: seg[1] };
     if (seg[0] === 'trip' && seg[1]) {
       if (seg[2] === 'edit') return { name: 'tripEdit', id: seg[1] };
       if (seg[2] === 'prompt') return { name: 'prompt', id: seg[1] };
@@ -80,6 +83,10 @@
     <Settings />
   {:else if view.name === 'insights'}
     <Insights />
+  {:else if view.name === 'opportunity'}
+    {#key view.id}
+      <Opportunity id={view.id} />
+    {/key}
   {:else if view.name === 'trip'}
     {#key view.id}
       <Trip id={view.id} tab={view.tab} />

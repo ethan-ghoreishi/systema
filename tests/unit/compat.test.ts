@@ -26,7 +26,15 @@ function snapshot(): Backup {
         accommodation: true,
         status: 'planning',
         planText: '',
-        outbound: { at: '2026-10-16T06:10', tz: 'Europe/London', hub: 'LGW', journeyMin: 70 },
+        outbound: {
+          at: '2026-10-16T06:10',
+          tz: 'Europe/London',
+          hub: 'LGW',
+          journeyMin: 70,
+          checkedIn: true,
+        },
+        opportunityId: 'opp1',
+        optionId: 'opt1',
         order: 0,
         createdAt: 1,
         updatedAt: 2,
@@ -60,6 +68,7 @@ function snapshot(): Backup {
         tz: 'Europe/Rome',
         legName: 'Rome',
         guide: { anchor: 'Anatomical theatre', lookFor: ['coats of arms'] },
+        bookAhead: 'Timed entry, book a week ahead',
         order: 0,
         createdAt: 1,
       },
@@ -82,6 +91,7 @@ function snapshot(): Backup {
         fxRate: null,
         shared: true,
         gbpManual: true,
+        need: 'flight:outbound',
         skeleton: false,
         order: 0,
         createdAt: 1,
@@ -101,6 +111,43 @@ function snapshot(): Backup {
         lat: 44.4938,
         lng: 11.3426,
         createdAt: 9,
+      },
+    ],
+    opportunities: [
+      {
+        id: 'opp1',
+        city: 'Bologna',
+        country: 'Italy',
+        research: 'Marconi Express into town, about 20 minutes.',
+        options: [
+          {
+            id: 'opt1',
+            outDate: '2026-10-16',
+            backDate: '2026-10-17',
+            outRoute: ['LGW', 'BLQ'],
+            backRoute: ['BCN', 'LGW'],
+            outDep: '06:10',
+            outArr: '09:00',
+            backDep: '21:00',
+            backArr: '22:30',
+            outFlights: 'Vueling 8515',
+            backFlights: 'Vueling 7642',
+            outFarePP: 40,
+            backFarePP: 45,
+            finderPP: 120,
+            usableH: 18.5,
+            groundH: 22,
+            cities: 'BLQ* 10h + BCN 8h',
+            overnight: '1 · out via BLQ, night at the destination',
+            paidNights: 1,
+            scenario: 1,
+            checked: '2026-10-14 10:00',
+            outLink: 'https://example.test/out',
+            backLink: 'https://example.test/back',
+          },
+        ],
+        createdAt: 1,
+        updatedAt: 2,
       },
     ],
     fxRates: [],
@@ -201,6 +248,47 @@ describe('mixed-version sync', () => {
     const base = { ...s, kv: [], photosMeta: s.photosMeta! } as unknown as SyncRecords;
     const { merged } = mergeRecords(base, base, { ...base, moments: [] }, true);
     expect(merged.moments).toEqual([]);
+  });
+
+  it("an older device's snapshot (no opportunities key) deletes none of them", () => {
+    const s = snapshot();
+    const base = { ...s, kv: [], photosMeta: s.photosMeta! } as unknown as SyncRecords;
+    const remote = { ...base, opportunities: undefined };
+    const { merged } = mergeRecords(base, base, remote, true);
+    expect(merged.opportunities?.map((o) => o.id)).toEqual(['opp1']);
+  });
+
+  it('a newer snapshot that has deleted an opportunity does delete it', () => {
+    const s = snapshot();
+    const base = { ...s, kv: [], photosMeta: s.photosMeta! } as unknown as SyncRecords;
+    const { merged } = mergeRecords(base, base, { ...base, opportunities: [] }, true);
+    expect(merged.opportunities).toEqual([]);
+  });
+
+  // An option added on one device and a different one added on the other: the
+  // list is one field, so the newer edit is kept and the other is offered for
+  // review rather than quietly dropped.
+  it('an option list edited on both devices keeps one and reports the other', () => {
+    const s = snapshot();
+    const base = { ...s, kv: [], photosMeta: s.photosMeta! } as unknown as SyncRecords;
+    const mine = JSON.parse(JSON.stringify(base));
+    mine.opportunities[0].options[0].outFarePP = 38;
+    mine.opportunities[0].updatedAt = 99;
+    const theirs = JSON.parse(JSON.stringify(base));
+    theirs.opportunities[0].options[0].outFarePP = 42;
+    theirs.opportunities[0].updatedAt = 50;
+    const { merged, conflicts } = mergeRecords(base, mine, theirs, true);
+    expect(merged.opportunities![0].options[0].outFarePP).toBe(38);
+    expect(conflicts.map((c) => c.table)).toEqual(['opportunities']);
+  });
+
+  it('refuses a malformed option rather than storing it', () => {
+    const bad = snapshot();
+    (bad.opportunities![0].options[0] as Record<string, unknown>).outRoute = 'LGW';
+    expect(() => validateBackup(bad)).toThrow(/opportunities/);
+    const dupes = snapshot();
+    dupes.opportunities![0].options.push({ ...dupes.opportunities![0].options[0] });
+    expect(() => validateBackup(dupes)).toThrow(/opportunities/);
   });
 
   it('rejects a moment linked into another trip', () => {

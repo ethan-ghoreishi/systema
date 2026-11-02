@@ -244,8 +244,8 @@ describe('newStopCandidates', () => {
     ];
     // Florence's block matches s2 by city; Bologna's falls to the spare.
     expect(guideBackfill(twoCities, existing, ['Bologna', 'Florence'], legs)).toEqual([
-      { id: 's1', guide: { anchor: 'the west front' } },
-      { id: 's2', guide: { anchor: 'Brunelleschi’s dome' } },
+      { id: 's1', patch: { guide: { anchor: 'the west front' } } },
+      { id: 's2', patch: { guide: { anchor: 'Brunelleschi’s dome' } } },
     ]);
   });
 
@@ -255,8 +255,8 @@ describe('newStopCandidates', () => {
       stop({ id: 's2', name: 'Duomo', cityId: 'c2' }),
     ];
     expect(guideBackfill(twoCities, existing, ['Bologna', 'Florence'], legs)).toEqual([
-      { id: 's1', guide: { anchor: 'the west front' } },
-      { id: 's2', guide: { anchor: 'Brunelleschi’s dome' } },
+      { id: 's1', patch: { guide: { anchor: 'the west front' } } },
+      { id: 's2', patch: { guide: { anchor: 'Brunelleschi’s dome' } } },
     ]);
   });
 });
@@ -318,7 +318,56 @@ Location: 44.4935, 11.3431
       },
     ];
     const [b] = guideBackfill(plan, existing, ['Bologna']);
-    expect(b.guide.anchor).toBe('My own anchor');
-    expect(b.guide.minimum).toBe('15 minutes: the theatre, then the main stair.');
+    expect(b.patch.guide?.anchor).toBe('My own anchor');
+    expect(b.patch.guide?.minimum).toBe('15 minutes: the theatre, then the main stair.');
+  });
+});
+
+// What the plan itself says has to be booked before arriving: the one piece of
+// pre-trip work that cannot be derived from the trip's own structure.
+describe('book ahead', () => {
+  const plan = [
+    '## Route',
+    '',
+    '### Vasa Museum',
+    '',
+    '- The only preserved 17th-century ship in the world.',
+    'Anchor: the stern carvings',
+    'Minimum visit: one lap of the hull',
+    'Book ahead: timed entry online, a few days before — the queue is outdoors',
+    'Location: 59.3280, 18.0915',
+    '',
+    '### Strandvägen',
+    '',
+    '- A boulevard built to rival Paris.',
+    'Anchor: the waterfront end',
+    '',
+  ].join('\n');
+
+  it('reads a Book ahead line into its own field, not into the anchor', () => {
+    const [vasa, strand] = extractStopsFromPlan(plan);
+    expect(vasa.bookAhead).toBe('timed entry online, a few days before — the queue is outdoors');
+    expect(vasa.guide?.anchor).toBe('the stern carvings');
+    expect(vasa.guide).not.toHaveProperty('bookAhead');
+    expect(vasa.notes).not.toContain('Book ahead');
+    expect(vasa.lat).toBe(59.328);
+    expect(strand.bookAhead).toBeUndefined();
+  });
+
+  it('accepts the line as a bullet or in bold, as a model may write it', () => {
+    const [a] = extractStopsFromPlan('### A\n\n- **Book ahead:** book the slot\n');
+    expect(a.bookAhead).toBe('book the slot');
+  });
+
+  it('fills an empty one on a stop already in the list, never over a written one', () => {
+    const existing = [
+      stop({ id: 's1', name: 'Vasa Museum', cityId: null }),
+      stop({ id: 's2', name: 'Strandvägen', cityId: null, bookAhead: 'mine' }),
+    ];
+    const out = guideBackfill(plan, existing);
+    expect(out.find((o) => o.id === 's1')?.patch.bookAhead).toBe(
+      'timed entry online, a few days before — the queue is outdoors',
+    );
+    expect(out.find((o) => o.id === 's2')?.patch.bookAhead).toBeUndefined();
   });
 });

@@ -10,10 +10,14 @@
   import Icon from '../components/Icon.svelte';
   import TripCover from '../components/TripCover.svelte';
   import { conflictsQuery } from '../lib/conflicts';
+  import FinderImport from '../components/FinderImport.svelte';
+  import { isPast, optionDates, viewOpportunity } from '../lib/options';
+  import { measuredFacts } from '../lib/opportunities';
   import { nasBackup } from '../lib/nas.svelte';
   import { clockLabel, nextDeparture, tripDepartures } from '../lib/readiness';
 
   const tripsQ = liveQuery(() => db.trips.orderBy('order').reverse().toArray());
+  const oppsQ = liveQuery(() => db.opportunities.toArray());
   const citiesQ = liveQuery(() => db.cities.toArray());
   const expensesQ = liveQuery(() => db.expenses.toArray());
   const conflictsQ = liveQuery(conflictsQuery);
@@ -69,6 +73,39 @@
   const current = $derived(trips.filter((t) => t.status !== 'done'));
   const past = $derived(trips.filter((t) => t.status === 'done'));
 
+  // Destinations under consideration. The ledger-measured costs are read once:
+  // they move with the ledger, so there is nothing stored to fall out of step.
+  let facts = $state<Awaited<ReturnType<typeof measuredFacts>> | null>(null);
+  $effect(() => {
+    if (($oppsQ ?? []).length && !facts) void measuredFacts().then((f) => (facts = f));
+  });
+  const chosenOppIds = $derived(new Set(trips.map((t) => t.opportunityId).filter(Boolean)));
+  const ideas = $derived.by(() => {
+    const rows = ($oppsQ ?? [])
+      .filter((o) => !chosenOppIds.has(o.id))
+      .map((o) => {
+        const view = facts ? viewOpportunity(o, facts) : null;
+        return { opp: o, view, past: isPast(o, false) };
+      });
+    const cheapest = (r: (typeof rows)[number]) => r.view?.best?.totalPP ?? Infinity;
+    return [
+      ...rows.filter((r) => !r.past).sort((a, b) => cheapest(a) - cheapest(b)),
+      ...rows.filter((r) => r.past).sort((a, b) => a.opp.city.localeCompare(b.opp.city)),
+    ];
+  });
+  function ideaMeta(row: (typeof ideas)[number]): string {
+    if (row.past) return 'dates passed · what you know is kept';
+    const n = row.view?.rows.length ?? row.opp.options.length;
+    const parts = [`${n} option${n === 1 ? '' : 's'}`];
+    const best = row.view?.best;
+    if (best?.totalPP != null) parts.push(`from ${formatGBP(best.totalPP)} each`);
+    if (best) parts.push(optionDates(best.option));
+    return parts.join(' · ');
+  }
+
+  let importing = $state(false);
+  let importStatus = $state('');
+
   const statusLabel: Record<string, string> = {
     planning: 'Planning',
     active: 'Active',
@@ -119,6 +156,29 @@
       <Icon name="expenses" size={20} /> Insights — every trip, every pound
     </a>
 
+    {#if importStatus}<p class="hint hint--ok" role="status">{importStatus}</p>{/if}
+
+    {#if ideas.length}
+      <span class="section-title">Considering</span>
+      <div class="trip-list">
+        {#each ideas as row (row.opp.id)}
+          <a class="card trip-card" class:trip-card--past={row.past} href={`#/opp/${row.opp.id}`}>
+            <span class="trip-card-name"
+              >{row.opp.city}{#if row.opp.country}<small>, {row.opp.country}</small>{/if}</span
+            >
+            <span class="trip-card-meta">{ideaMeta(row)}</span>
+          </a>
+        {/each}
+      </div>
+      <button class="btn btn--ghost btn--sm" onclick={() => (importing = true)}
+        >Add a finder search</button
+      >
+    {:else}
+      <button class="btn btn--ghost new-trip" onclick={() => (importing = true)}>
+        <Icon name="plan" size={20} /> Considering a trip — paste a finder search
+      </button>
+    {/if}
+
     {#if trips.length === 0}
       <div class="card empty-state">
         <p class="empty-title">No trips yet</p>
@@ -162,3 +222,7 @@
     {/if}
   </div>
 </div>
+
+{#if importing}
+  <FinderImport onClose={() => (importing = false)} onDone={(m) => (importStatus = m)} />
+{/if}

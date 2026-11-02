@@ -52,6 +52,11 @@ export interface DepartPlan {
    * London ('outbound') or the ticket home ('return').
    */
   throughTicket?: 'outbound' | 'return';
+  /**
+   * Checked in for this flight. The one thing before a trip that nothing else
+   * can tell us: the airline's window differs and leaves no trace in the data.
+   */
+  checkedIn?: boolean;
 }
 
 /** Where you stay in a city. */
@@ -120,6 +125,15 @@ export interface Trip {
   journalText?: string;
   /** Saved research-prompt-builder answers (optional). */
   promptPrefs?: PromptPrefs;
+  /**
+   * The Opportunity this trip was chosen from. The link lives here, not on the
+   * Opportunity, so "chosen" is derived and nothing has to be kept in step —
+   * and so an opportunity row never carries a `tripId` for a restore to
+   * mistake for a record moving between trips.
+   */
+  opportunityId?: string;
+  /** Which of that opportunity's options was chosen, so the record of the decision keeps. */
+  optionId?: string;
   /** How the trip card picks its cover (default 'auto'). */
   coverMode?: CoverMode;
   /** Chosen photo id when coverMode === 'photo'. */
@@ -180,6 +194,12 @@ export interface Stop {
   lng?: number;
   /** Structured visit anchor, extracted from the plan or written by hand. */
   guide?: StopGuide;
+  /**
+   * What has to be booked before arriving, from the plan's `Book ahead:` line
+   * (a timed-entry museum, say). Logistics, not an anchor, so it sits beside
+   * the guide rather than inside it.
+   */
+  bookAhead?: string;
   /** When it was ticked visited (ms); absent on stops ticked by older versions. */
   visitedAt?: number;
   /**
@@ -221,6 +241,78 @@ export interface Moment {
    */
   lat?: number;
   lng?: number;
+  createdAt: number;
+  updatedAt?: number;
+}
+
+/**
+ * One realistic way to make a trip: a pair of dates, a pair of airports and
+ * what the tickets cost — read from a Cheap-Trip Finder row, or typed.
+ *
+ * Fares and times go stale, so an option is disposable: it belongs to its
+ * Opportunity and dies with it. Nothing else ever points at one, which is why
+ * options live in a list on the Opportunity rather than in a table of their own.
+ *
+ * The finder's own figures (`finderPP`, `usableH`, `groundH`) are kept exactly
+ * as it worked them out and never recalculated here — Systema only re-prices
+ * them against what the ledger knows (see options.ts).
+ */
+export interface TripOption {
+  id: string;
+  /** 'YYYY-MM-DD' — the day you leave London, and the day you come back. */
+  outDate: string;
+  backDate: string;
+  /** Airports in order: ['STN', 'NTE'], or ['TNG', 'BCN', 'LHR'] through a stopover. */
+  outRoute: string[];
+  backRoute: string[];
+  /** 'HH:MM', local to each end. */
+  outDep?: string;
+  outArr?: string;
+  backDep?: string;
+  backArr?: string;
+  /** Days the arrival falls after its date (a '+1' landing after midnight). */
+  outArrDay?: number;
+  backArrDay?: number;
+  /** 'Ryanair 2232', or 'Vueling 8515 + Vueling 7642' through a stopover. */
+  outFlights?: string;
+  backFlights?: string;
+  /** Fares as quoted, £ per person. */
+  outFarePP?: number;
+  backFarePP?: number;
+  /** The finder's true cost per person, its usable daylight and ground hours. */
+  finderPP?: number;
+  usableH?: number;
+  groundH?: number;
+  /** 'NTE 21h', or 'TNG 10h + BCN* 8h' (`*` = a protected layover city). */
+  cities?: string;
+  /** 'Hotel ×1', 'Airport sleep (~5h50)', '4 · back via BCN, night at the destination'. */
+  overnight?: string;
+  paidNights?: number;
+  /** Two-city stopover scenario 1–4, when the row is one (see trip-shape.ts). */
+  scenario?: number;
+  /** When the fare was last checked ('YYYY-MM-DD HH:mm'): a fortnight-old fare is a guess. */
+  checked?: string;
+  /** Google Flights searches, so a fare can be re-checked in one tap. */
+  outLink?: string;
+  backLink?: string;
+  note?: string;
+}
+
+/**
+ * A destination taken seriously enough to compare — the durable half of the
+ * decision. Its research outlives every option: when a date window loses, what
+ * was learned about the city is still true, so nothing has to be collected
+ * twice. Nothing has to be tidied either: an opportunity with no live options
+ * and no trip reads as past on its own (see opportunities.ts).
+ */
+export interface Opportunity {
+  id: string;
+  /** The destination, as the finder names it. */
+  city: string;
+  country?: string;
+  /** Durable knowledge about the place: transfers, closures, what to book. */
+  research?: string;
+  options: TripOption[];
   createdAt: number;
   updatedAt?: number;
 }
@@ -276,6 +368,13 @@ export interface Expense {
    * Unset on older rows; a 'CityA/CityB' destination then reads as shared.
    */
   shared?: boolean;
+  /**
+   * The thing that had to be sorted before the trip and this payment settles
+   * ('flight:outbound', 'transfer-uk:back', 'hotel:<legId>'…). Booking writes
+   * the amount and the travel details in one go, so £22 is never typed twice.
+   * See needs.ts. Absent on rows captured on the ground.
+   */
+  need?: string;
   skeleton: boolean; // pre-seeded placeholder row vs. a real entry
   order: number;
   createdAt: number;
@@ -303,6 +402,7 @@ export class SystemaDB extends Dexie {
   photos!: Table<Photo, string>;
   fxRates!: Table<FxRate, string>;
   moments!: Table<Moment, string>;
+  opportunities!: Table<Opportunity, string>;
 
   constructor() {
     super('systema');
@@ -343,6 +443,22 @@ export class SystemaDB extends Dexie {
       fxRates: 'code',
       moments: 'id, tripId, cityId, stopId',
     });
+
+    // v5 — opportunities (a destination being compared, with its options).
+    // Another additive step: a new table and optional fields only, so an
+    // install on v4 upgrades without rewriting a row, and a device still on v4
+    // keeps syncing (a snapshot without the table deletes nothing).
+    this.version(5).stores({
+      kv: 'key',
+      trips: 'id, order, status, updatedAt',
+      cities: 'id, tripId, order',
+      stops: 'id, tripId, cityId, order',
+      expenses: 'id, tripId, cityId, order',
+      photos: 'id, tripId, stopId, expenseId, kind, momentId',
+      fxRates: 'code',
+      moments: 'id, tripId, cityId, stopId',
+      opportunities: 'id, city',
+    });
   }
 }
 
@@ -351,7 +467,14 @@ export const db = new SystemaDB();
 // Every user record carries `updatedAt`, so sync can tell which of two
 // conflicting edits is newer. Set on every write unless the writer (e.g. a
 // sync merge) supplies its own.
-for (const table of [db.trips, db.cities, db.stops, db.expenses, db.moments] as Table<{
+for (const table of [
+  db.trips,
+  db.cities,
+  db.stops,
+  db.expenses,
+  db.moments,
+  db.opportunities,
+] as Table<{
   updatedAt?: number;
 }>[]) {
   table.hook('creating', (_key, obj) => {

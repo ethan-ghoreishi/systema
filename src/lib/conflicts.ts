@@ -55,6 +55,10 @@ const FIELD_LABELS: Record<string, string> = {
   title: 'Title',
   note: 'Note',
   at: 'Time',
+  city: 'Destination',
+  country: 'Country',
+  research: 'What you know',
+  options: 'Options',
 };
 
 export const fieldLabel = (field: string) => FIELD_LABELS[field] ?? field;
