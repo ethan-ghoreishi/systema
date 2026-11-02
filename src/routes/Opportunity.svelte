@@ -185,6 +185,11 @@
           {/each}
         </div>
 
+        <p class="hint">
+          Leave-home times assume 45 minutes to the airport and the usual 90 before the flight. The
+          real journey goes on the trip once you choose.
+        </p>
+
         {#each view.rows as row (row.option.id)}
           {@const o = row.option}
           <article class="card opt" class:opt--blocked={row.blockers.length}>
@@ -203,9 +208,7 @@
               <ul class="opt-facts">
                 {#if o.outDep}
                   <li class="status-row">
-                    <span class="status-key"
-                      >Leave home<small> assuming 45 min to the airport</small></span
-                    >
+                    <span class="status-key">Leave home</span>
                     <span class="status-val"
                       >{row.leaveHome?.time ?? '—'}{row.leaveHome?.dayBefore
                         ? ' the night before'
