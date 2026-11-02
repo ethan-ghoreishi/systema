@@ -1,4 +1,4 @@
-import { db, type City, type Expense, type Stop, type Trip } from './db';
+import { db, type City, type DepartPlan, type Expense, type Stop, type Trip } from './db';
 import { cityBlock } from './headings';
 import { newId } from './ids';
 import { lastPaymentMethod, sharedDestination } from './expense-defaults';
@@ -12,15 +12,26 @@ import { todayIso } from './sheet';
  * than kept as a list to tick.
  *
  * Nothing here is a task. Each need names a thing that has to exist before
- * departure, and it is done when that thing exists: a booking reference on the
- * flight, a transport mode on the departure, a hotel on the leg, a plan for the
- * city, a payment in the ledger. So a 25-item checklist shrinks to the few
- * things actually outstanding, and the list empties itself as the trip comes
- * together — nothing to mark off, nothing to go stale.
+ * departure, and how far along it is comes from the trip's own data: a booking
+ * reference, a hotel actually held, a payment in the ledger. So a 25-item
+ * checklist shrinks to the few things actually outstanding, and the list
+ * empties itself as the trip comes together — nothing to mark off, nothing to
+ * go stale.
  *
- * The one exception is checking in: the window differs by airline and leaves
- * no trace in the data, so it is a plain tick (DepartPlan.checkedIn), and it
- * only appears once the flight is close.
+ * Four states, because three of them are different things and conflating them
+ * is how a trip reads as ready when it is not:
+ *
+ * - **open** — nothing known.
+ * - **planned** — you know how you are doing it. The coach is the 9:05; you
+ *   have not bought a ticket. Enough for a ride you pay for on the day,
+ *   nowhere near enough for a bed or a seat.
+ * - **booked** — it is held: there is a reference, or a reservation that cost
+ *   nothing (a timed entry).
+ * - **paid** — the ledger has the payment.
+ *
+ * The one thing no data can answer is checking in: the window differs by
+ * airline and leaves no trace, so it is a plain tick (DepartPlan.checkedIn),
+ * and it only appears once the flight is close.
  */
 
 /** How far ahead of a flight checking in starts being worth asking about. */
@@ -34,6 +45,28 @@ export type NeedKind =
   | 'plan'
   | 'book'
   | 'checkin';
+
+/** See the module note. 'settled' is for the ones that are simply there or not. */
+export type NeedState = 'open' | 'planned' | 'booked' | 'paid' | 'settled';
+
+export const STATE_WORD: Record<NeedState, string> = {
+  open: 'not sorted',
+  planned: 'planned, not booked',
+  booked: 'booked',
+  paid: 'paid',
+  settled: 'done',
+};
+
+/**
+ * Whether a state settles a need. A ride you buy at the machine is sorted once
+ * you know which ride it is; a bed, a seat or a timed entry is not sorted until
+ * it is actually held, however firm the intention.
+ */
+export function settles(kind: NeedKind, state: NeedState): boolean {
+  if (state === 'open') return false;
+  if (state === 'planned') return kind === 'transfer' || kind === 'transfer-uk';
+  return true;
+}
 
 /** What the booking sheet should write into the ledger for this need. */
 export interface BookSpec {
@@ -55,6 +88,8 @@ export interface Need {
   kind: NeedKind;
   label: string;
   detail: string;
+  state: NeedState;
+  /** `settles(kind, state)` — nothing more to do about this one before leaving. */
   done: boolean;
   /** Why it reads as done — shown in the settled list, so nothing is mysterious. */
   evidence?: string;
@@ -72,19 +107,80 @@ export interface Need {
  * description is exactly the one this need seeds. Those words only ever come
  * from the preset, so the match is safe, and without it a trip whose flights
  * were paid for last month would be asked to book them again.
+ *
+ * `also` names a key this need has taken over from, so a transfer paid for
+ * before the two directions were told apart still reads as paid.
  */
-const paid = (expenses: Expense[], key: string, description?: string): Expense | undefined =>
+const paid = (
+  expenses: Expense[],
+  key: string,
+  description?: string,
+  also?: string,
+): Expense | undefined =>
   expenses.find(
     (e) =>
       !e.skeleton &&
       e.amountGBP > 0 &&
       (e.need === key ||
+        (!!also && e.need === also) ||
         (!e.need &&
           !!description &&
           e.description.trim().toLowerCase() === description.trim().toLowerCase())),
   );
 
 const gbp = (n: number) => `£${Number.isInteger(n) ? n : n.toFixed(2)}`;
+
+/**
+ * One journey on the ground, in whichever state its own record puts it: a
+ * reference means it is held, a mode and a time mean you know how you are
+ * going, and neither means nothing is sorted. The transfer's reference is
+ * never the service's (`transferRef`, not `ref`): a booked coach to Stansted
+ * says nothing about whether the flight is booked.
+ */
+function groundNeed(
+  key: string,
+  label: string,
+  plan: DepartPlan,
+  row: Expense | undefined,
+  book: BookSpec,
+  kind: NeedKind = 'transfer',
+): Need {
+  const ref = plan.transferRef?.trim();
+  const how = plan.transport?.trim();
+  const way = [how, plan.journeyMin != null ? `${plan.journeyMin} min` : '']
+    .filter(Boolean)
+    .join(', ');
+  const state: NeedState = row ? 'paid' : ref ? 'booked' : way ? 'planned' : 'open';
+  return {
+    key,
+    kind,
+    label,
+    detail:
+      state === 'open'
+        ? 'Not sorted yet'
+        : state === 'planned'
+          ? `${way} — not booked`
+          : way || STATE_WORD[state],
+    state,
+    done: settles(kind, state),
+    evidence: row
+      ? gbp(row.amountGBP)
+      : ref
+        ? `Booking ${ref}`
+        : way
+          ? `${way} — pay on the day`
+          : undefined,
+    book,
+  };
+}
+
+const UK_TRANSFER: Omit<BookSpec, 'description'> = {
+  category: 'Transportation',
+  subcategory: 'Airport Transfer (UK)',
+  shared: true,
+  cityId: null,
+  asksTransport: true,
+};
 
 /**
  * Everything still to sort out before this trip, and everything already
@@ -104,126 +200,141 @@ export function tripNeeds(
   const ob = trip.outbound ?? {};
 
   // --- The two tickets ---
-  const outRef = ob.ref?.trim();
-  const outPaid = paid(expenses, 'flight:outbound', 'Outbound flight');
-  out.push({
-    key: 'flight:outbound',
-    kind: 'flight',
-    label: 'Ticket out',
-    detail: [ob.hub, ob.number].filter(Boolean).join(' ') || 'Leaving London',
-    done: !!outRef || !!outPaid,
-    evidence: outRef ? `Booking ${outRef}` : outPaid ? gbp(outPaid.amountGBP) : undefined,
-    book: {
-      category: 'Transportation',
-      subcategory: 'Flight',
+  for (const t of [
+    {
+      key: 'flight:outbound',
+      label: 'Ticket out',
+      ref: ob.ref?.trim(),
+      row: paid(expenses, 'flight:outbound', 'Outbound flight'),
+      detail: [ob.hub, ob.number].filter(Boolean).join(' ') || 'Leaving London',
       description: 'Outbound flight',
-      shared: true,
-      cityId: null,
     },
-  });
-
-  const inRef = last?.exit?.ref?.trim();
-  const inPaid = paid(expenses, 'flight:inbound', 'Inbound flight');
-  out.push({
-    key: 'flight:inbound',
-    kind: 'flight',
-    label: 'Ticket home',
-    detail:
-      [last?.exit?.hub, last?.exit?.number].filter(Boolean).join(' ') ||
-      (last ? `Leaving ${last.name}` : 'The flight home'),
-    done: !!inRef || !!inPaid,
-    evidence: inRef ? `Booking ${inRef}` : inPaid ? gbp(inPaid.amountGBP) : undefined,
-    book: {
-      category: 'Transportation',
-      subcategory: 'Flight',
+    {
+      key: 'flight:inbound',
+      label: 'Ticket home',
+      ref: last?.exit?.ref?.trim(),
+      row: paid(expenses, 'flight:inbound', 'Inbound flight'),
+      detail:
+        [last?.exit?.hub, last?.exit?.number].filter(Boolean).join(' ') ||
+        (last ? `Leaving ${last.name}` : 'The flight home'),
       description: 'Inbound flight',
-      shared: true,
-      cityId: null,
     },
-  });
-
-  // --- The London end, both ways ---
-  const ukOut = paid(expenses, 'transfer-uk:out', 'Airport transfer (UK) — outbound');
-  out.push({
-    key: 'transfer-uk:out',
-    kind: 'transfer-uk',
-    label: `Getting to ${ob.hub || 'the airport'}`,
-    detail: ob.transport?.trim()
-      ? `${ob.transport.trim()}${ob.journeyMin ? `, ${ob.journeyMin} min` : ''}`
-      : 'Not chosen yet',
-    done: !!ob.transport?.trim() || !!ukOut,
-    evidence: ukOut ? gbp(ukOut.amountGBP) : ob.transport?.trim() || undefined,
-    book: {
-      category: 'Transportation',
-      subcategory: 'Airport Transfer (UK)',
-      description: 'Airport transfer (UK) — outbound',
-      shared: true,
-      cityId: null,
-      asksTransport: true,
-    },
-  });
-
-  const ukBack = paid(expenses, 'transfer-uk:back', 'Airport transfer (UK) — return');
-  out.push({
-    key: 'transfer-uk:back',
-    kind: 'transfer-uk',
-    label: 'Getting home from the airport',
-    detail: ukBack ? 'Booked' : 'Not booked yet',
-    done: !!ukBack,
-    evidence: ukBack ? gbp(ukBack.amountGBP) : undefined,
-    book: {
-      category: 'Transportation',
-      subcategory: 'Airport Transfer (UK)',
-      description: 'Airport transfer (UK) — return',
-      shared: true,
-      cityId: null,
-    },
-  });
-
-  // --- Each city: the transfer, and a bed where one is needed ---
-  for (const leg of legs) {
-    const exit = leg.exit ?? {};
-    const key = `transfer:${leg.id}`;
-    const row = paid(expenses, key);
-    const known = !!exit.transport?.trim() || exit.journeyMin != null;
+  ]) {
+    const state: NeedState = t.row ? 'paid' : t.ref ? 'booked' : 'open';
     out.push({
-      key,
-      kind: 'transfer',
-      label: `Airport transfer in ${leg.name || 'the next city'}`,
-      detail: known
-        ? `${exit.transport?.trim() || 'Planned'}${exit.journeyMin != null ? `, ${exit.journeyMin} min` : ''}`
-        : 'How you get in and out is not noted',
-      done: known || !!row,
-      evidence: row ? gbp(row.amountGBP) : exit.transport?.trim() || undefined,
+      key: t.key,
+      kind: 'flight',
+      label: t.label,
+      detail: t.detail,
+      state,
+      done: settles('flight', state),
+      evidence: t.ref ? `Booking ${t.ref}` : t.row ? gbp(t.row.amountGBP) : undefined,
       book: {
         category: 'Transportation',
-        subcategory: 'Airport Transfer (Abroad)',
-        description: `Airport transfer — ${leg.name || 'city'}`,
-        cityId: leg.id,
-        asksTransport: true,
+        subcategory: 'Flight',
+        description: t.description,
+        shared: true,
+        cityId: null,
       },
     });
+  }
 
-    if (leg.sleep !== 'hotel') continue;
+  // --- The London end: two journeys, not one ---
+  // Getting home from the airport is not the way out in reverse — a different
+  // hour, often a different airport, and sometimes nothing like the same fare.
+  out.push(
+    groundNeed(
+      'transfer-uk:out',
+      `Getting to ${ob.hub || 'the airport'}`,
+      ob,
+      paid(expenses, 'transfer-uk:out', 'Airport transfer (UK) — outbound'),
+      { ...UK_TRANSFER, description: 'Airport transfer (UK) — outbound' },
+      'transfer-uk',
+    ),
+    groundNeed(
+      'transfer-uk:back',
+      'Getting home from the airport',
+      trip.homeward ?? {},
+      paid(expenses, 'transfer-uk:back', 'Airport transfer (UK) — return'),
+      { ...UK_TRANSFER, description: 'Airport transfer (UK) — return' },
+      'transfer-uk',
+    ),
+  );
+
+  // --- Each city: the way in, the way out, and a bed where one is needed ---
+  legs.forEach((leg, i) => {
+    const name = leg.name || 'the next city';
+    // How you arrived decides the word: a flight lands at an airport, a train
+    // comes into a station.
+    const arriveBy = (i === 0 ? ob.mode : legs[i - 1].exit?.mode) ?? 'flight';
+    const arrivalPoint =
+      arriveBy === 'flight'
+        ? 'the airport'
+        : arriveBy === 'train'
+          ? 'the station'
+          : 'where you land';
+    if (leg.arrival)
+      out.push(
+        groundNeed(
+          `transfer-in:${leg.id}`,
+          `Getting into ${name} from ${arrivalPoint}`,
+          leg.entry ?? {},
+          paid(expenses, `transfer-in:${leg.id}`),
+          {
+            category: 'Transportation',
+            subcategory: 'Airport Transfer (Abroad)',
+            description: `Airport transfer into ${name}`,
+            cityId: leg.id,
+            asksTransport: true,
+          },
+        ),
+      );
+
+    const exit = leg.exit ?? {};
+    const hub = exit.hub?.trim() || (exit.mode === 'train' ? 'the station' : 'the airport');
+    out.push(
+      groundNeed(
+        `transfer-out:${leg.id}`,
+        `Getting from ${name} to ${hub}`,
+        exit,
+        // Before the two directions were told apart this was `transfer:<leg>`,
+        // and the booking it recorded was the way out — so that is the one it
+        // still settles.
+        paid(expenses, `transfer-out:${leg.id}`, undefined, `transfer:${leg.id}`),
+        {
+          category: 'Transportation',
+          subcategory: 'Airport Transfer (Abroad)',
+          description: `Airport transfer — ${name}`,
+          cityId: leg.id,
+          asksTransport: true,
+        },
+      ),
+    );
+
+    if (leg.sleep !== 'hotel') return;
     const hotelKey = `hotel:${leg.id}`;
     const hotelRow = paid(expenses, hotelKey);
     const base = leg.base?.name?.trim();
+    const hotelRef = leg.base?.bookingRef?.trim();
+    // A hotel named in the research is a choice, not a room held for you.
+    const state: NeedState = hotelRow ? 'paid' : hotelRef ? 'booked' : base ? 'planned' : 'open';
     out.push({
       key: hotelKey,
       kind: 'hotel',
-      label: `Somewhere to stay in ${leg.name || 'the city'}`,
-      detail: base || 'No hotel yet',
-      done: !!base || !!hotelRow,
-      evidence: hotelRow ? gbp(hotelRow.amountGBP) : base,
+      label: `Somewhere to stay in ${name}`,
+      detail: state === 'planned' ? `${base} — chosen, not booked` : base || 'No hotel yet',
+      state,
+      done: settles('hotel', state),
+      evidence: hotelRow ? gbp(hotelRow.amountGBP) : hotelRef ? `Booking ${hotelRef}` : base,
       book: {
         category: 'Accommodation',
         subcategory: 'Hotel',
-        description: `Hotel — ${leg.name || 'city'}`,
+        description: `Hotel — ${name}`,
         cityId: leg.id,
         asksPlace: true,
       },
     });
-  }
+  });
 
   // --- The itinerary, one city at a time for a multi-city trip ---
   const research = researchCities(legs);
@@ -237,6 +348,7 @@ export function tripNeeds(
         kind: 'plan',
         label: `A plan for ${c.name}`,
         detail: block?.trim() ? 'Written' : 'Not researched yet',
+        state: block?.trim() ? 'settled' : 'open',
         done: !!block?.trim(),
         href: `#/trip/${trip.id}/prompt`,
       });
@@ -247,6 +359,7 @@ export function tripNeeds(
       kind: 'plan',
       label: 'An itinerary',
       detail: plan.trim() ? 'Written' : 'Not researched yet',
+      state: plan.trim() ? 'settled' : 'open',
       done: !!plan.trim(),
       href: `#/trip/${trip.id}/prompt`,
     });
@@ -258,13 +371,24 @@ export function tripNeeds(
     if (!ahead || s.visited) continue;
     const key = `book:${s.id}`;
     const row = paid(expenses, key);
+    // A timed entry can be free, and the ledger only records what was paid —
+    // so the reservation lives on the place it was made for.
+    const ref = s.bookingRef?.trim();
+    const state: NeedState = row ? 'paid' : ref || s.booked ? 'booked' : 'open';
     out.push({
       key,
       kind: 'book',
       label: `Book ${s.name} ahead`,
       detail: ahead,
-      done: !!row,
-      evidence: row ? gbp(row.amountGBP) : undefined,
+      state,
+      done: settles('book', state),
+      evidence: row
+        ? gbp(row.amountGBP)
+        : ref
+          ? `Booking ${ref}`
+          : s.booked
+            ? 'Reserved'
+            : undefined,
       book: {
         category: 'Experiences',
         subcategory: 'Museum',
@@ -282,6 +406,7 @@ export function tripNeeds(
       kind: 'checkin',
       label: `Check in — ${d.from === 'home' ? 'flight out' : `flight from ${d.from}`}`,
       detail: d.plan.number ? `${d.plan.number}, ${d.wall.slice(11, 16)}` : d.wall.slice(11, 16),
+      state: d.plan.checkedIn === true ? 'settled' : 'open',
       done: d.plan.checkedIn === true,
       evidence: d.plan.checkedIn ? 'Checked in' : undefined,
       departureKey: d.key,
@@ -338,44 +463,53 @@ export async function bookNeed(
   const legs = await db.cities.where('tripId').equals(trip.id).sortBy('order');
   const last = legs[legs.length - 1];
   const ref = input.ref?.trim();
-  const transport = input.transport?.trim();
   const place = input.place?.trim();
+  // How you are getting there, for whichever journey this need is.
+  const journey = {
+    ...(input.transport?.trim() ? { transport: input.transport.trim() } : {}),
+    ...(input.journeyMin != null ? { journeyMin: input.journeyMin } : {}),
+    ...(ref ? { transferRef: ref } : {}),
+  };
+  const something = Object.keys(journey).length > 0;
+  const legOf = (prefix: string) => legs.find((c) => c.id === need.key.slice(prefix.length));
 
-  // --- The structured half ---
-  if (need.key === 'flight:outbound' && ref) {
-    await db.trips.update(trip.id, {
-      outbound: { ...trip.outbound, ...(ref ? { ref } : {}) },
-      updatedAt: Date.now(),
-    });
-  }
-  if (need.key === 'flight:inbound' && ref && last) {
+  // --- The structured half: the reference goes on the thing it books ---
+  if (need.key === 'flight:outbound' && ref)
+    await db.trips.update(trip.id, { outbound: { ...trip.outbound, ref }, updatedAt: Date.now() });
+  if (need.key === 'flight:inbound' && ref && last)
     await db.cities.update(last.id, { exit: { ...last.exit, ref } });
-  }
-  if (need.key === 'transfer-uk:out' && (transport || input.journeyMin != null)) {
+  if (need.key === 'transfer-uk:out' && something)
     await db.trips.update(trip.id, {
-      outbound: {
-        ...trip.outbound,
-        ...(transport ? { transport } : {}),
-        ...(input.journeyMin != null ? { journeyMin: input.journeyMin } : {}),
-      },
+      outbound: { ...trip.outbound, ...journey },
       updatedAt: Date.now(),
     });
+  if (need.key === 'transfer-uk:back' && something)
+    await db.trips.update(trip.id, {
+      homeward: { ...trip.homeward, ...journey },
+      updatedAt: Date.now(),
+    });
+  if (need.key.startsWith('transfer-in:') && something) {
+    const leg = legOf('transfer-in:');
+    if (leg) await db.cities.update(leg.id, { entry: { ...leg.entry, ...journey } });
   }
-  if (need.kind === 'transfer') {
-    const leg = legs.find((c) => c.id === need.key.slice('transfer:'.length));
-    if (leg && (transport || input.journeyMin != null || ref))
+  if (need.key.startsWith('transfer-out:') && something) {
+    const leg = legOf('transfer-out:');
+    if (leg) await db.cities.update(leg.id, { exit: { ...leg.exit, ...journey } });
+  }
+  if (need.kind === 'hotel') {
+    const leg = legOf('hotel:');
+    if (leg && (place || ref))
       await db.cities.update(leg.id, {
-        exit: {
-          ...leg.exit,
-          ...(transport ? { transport } : {}),
-          ...(input.journeyMin != null ? { journeyMin: input.journeyMin } : {}),
-          ...(ref ? { ref } : {}),
+        base: {
+          ...leg.base,
+          ...(place ? { name: place } : {}),
+          ...(ref ? { bookingRef: ref } : {}),
         },
       });
   }
-  if (need.kind === 'hotel') {
-    const leg = legs.find((c) => c.id === need.key.slice('hotel:'.length));
-    if (leg && place) await db.cities.update(leg.id, { base: { ...leg.base, name: place } });
+  if (need.kind === 'book') {
+    const stopId = need.key.slice('book:'.length);
+    await db.stops.update(stopId, { booked: true, ...(ref ? { bookingRef: ref } : {}) });
   }
   if (need.kind === 'flight' || need.kind === 'transfer') await recomputeTripDerived(trip.id);
 

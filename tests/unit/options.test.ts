@@ -10,9 +10,11 @@ import {
   isPast,
   optionDates,
   optionRoute,
+  parseFinderConfig,
   parseFinderCsv,
   parseGroundHours,
   priceOption,
+  safeLink,
   sortPriced,
   viewOpportunity,
   type Facts,
@@ -39,7 +41,7 @@ const facts = (over: Partial<Facts> = {}): Facts => ({
 
 describe('reading a finder search', () => {
   it('reads a row into an option, times, airports, fares and the finder’s own figures', () => {
-    const [row] = parseFinderCsv(`${HEAD}\n${FARO}`);
+    const [row] = parseFinderCsv(`${HEAD}\n${FARO}`).rows;
     expect(row.city).toBe('Faro');
     expect(row.country).toBe('Portugal');
     expect(row.option).toMatchObject({
@@ -64,13 +66,13 @@ describe('reading a finder search', () => {
   });
 
   it('keeps a landing after midnight on the next day', () => {
-    const [row] = parseFinderCsv(`${HEAD}\n${MILAN}`);
+    const [row] = parseFinderCsv(`${HEAD}\n${MILAN}`).rows;
     expect(row.option.outArr).toBe('00:10');
     expect(row.option.outArrDay).toBe(1);
   });
 
   it('reads a two-city row’s scenario, route through the stopover and quoted commas', () => {
-    const [row] = parseFinderCsv(`${HEAD}\n${TANGIER}`);
+    const [row] = parseFinderCsv(`${HEAD}\n${TANGIER}`).rows;
     expect(row.option.scenario).toBe(4);
     expect(row.option.overnight).toBe('4 · back via BCN, night at the destination');
     expect(row.option.backRoute).toEqual(['TNG', 'BCN', 'LHR']);
@@ -80,7 +82,7 @@ describe('reading a finder search', () => {
   });
 
   it('gives every option its own id, so two rows never overwrite each other', () => {
-    const rows = parseFinderCsv(`${HEAD}\n${FARO}\n${MILAN}\n${TANGIER}`);
+    const { rows } = parseFinderCsv(`${HEAD}\n${FARO}\n${MILAN}\n${TANGIER}`);
     expect(new Set(rows.map((r) => r.option.id)).size).toBe(3);
   });
 
@@ -88,6 +90,42 @@ describe('reading a finder search', () => {
   it('refuses a table with no header rather than guessing which column is which', () => {
     expect(() => parseFinderCsv(FARO)).toThrow(OptionParseError);
     expect(() => parseFinderCsv(HEAD)).toThrow(/No trips found/);
+  });
+
+  // The search writes several tables and they share their first four columns,
+  // so "has a City and an Out date" reads the price map as a hundred trips
+  // with no flights and no fares.
+  it('refuses the price map and the calendar, which are not trips', () => {
+    const priceMap =
+      'City,Country,Out date,Back date,Trip,From £pp,Trip £pp,Fits,Details\nTirane,Albania,2026-12-04,2026-12-05,Fri→Sat · 1 night,51.0,51.0,True,found';
+    expect(() => parseFinderCsv(priceMap)).toThrow(/price map/);
+    const calendar =
+      'City,Country,Out date,Back date,Trip,Calendar £pp,Price,Details,Fits,Real £pp\nHeraklion,Greece,2026-11-27,2026-11-27,Fri same day,,no flights,skipped,,';
+    expect(() => parseFinderCsv(calendar)).toThrow(/price map/);
+  });
+
+  it('leaves out a results row the search found no flights for', () => {
+    const empty = FARO.replace('LTN→FAO 09:25→12:15', '').replace('FAO→LTN 19:30→22:20', '');
+    const read = parseFinderCsv(`${HEAD}\n${FARO}\n${empty}`);
+    expect(read.rows).toHaveLength(1);
+    expect(read.skipped).toBe(1);
+    expect(() => parseFinderCsv(`${HEAD}\n${empty}`)).toThrow(/no flights for any of them/);
+  });
+
+  it('takes a run’s own cost assumptions from its config, and ignores anything else', () => {
+    expect(
+      parseFinderConfig('{"travellers":3,"dest_transfer_pp":14,"hotel_per_night":72,"pace_s":2}'),
+    ).toEqual({ travellers: 3, destTransferPP: 14, hotelPerNight: 72 });
+    expect(parseFinderConfig('not json')).toBeNull();
+    expect(parseFinderConfig('{"label":"custom"}')).toBeNull();
+  });
+
+  // A CSV is a file: it can say anything, and these end up behind a tap.
+  it('keeps only ordinary web links', () => {
+    expect(safeLink('https://www.google.com/travel/flights?q=x')).toContain('google.com');
+    expect(safeLink('javascript:alert(1)')).toBeUndefined();
+    expect(safeLink('  ')).toBeUndefined();
+    expect(safeLink('not a url')).toBeUndefined();
   });
 
   it('reads ground hours as hours and minutes', () => {
@@ -169,6 +207,47 @@ describe('what it really costs you', () => {
     const r = priceOption(option({ finderPP: undefined }), facts(), 'Faro');
     expect(r.totalPP).toBeNull();
     expect(r.perHour).toBeNull();
+  });
+
+  // A trip typed from a Google Flights search has no finder figure to adjust,
+  // and an option with no figure sinks to the bottom of every order — which is
+  // no way to treat the way most research actually happens.
+  it('adds up a hand-written option from its own parts', () => {
+    const r = priceOption(
+      option({ source: 'manual', finderPP: undefined, cities: undefined }),
+      facts({ ukTransfer: { STN: { perPerson: 12, samples: 9, low: 5.95, high: 16.5 } } }),
+      'Faro',
+    );
+    expect(r.basis).toBe('parts');
+    // £35 of fares + £12 each way to Stansted + £12 in Faro + £30 of hotel.
+    expect(r.totalPP).toBe(35 + 12 + 12 + FINDER_DEST_TRANSFER_PP + FINDER_HOTEL_PER_NIGHT / 2);
+    expect(r.adjustments.every((a) => a.deltaPP > 0)).toBe(true);
+  });
+
+  it('still cannot price a hand-written option with no fares', () => {
+    expect(
+      priceOption(
+        option({
+          source: 'manual',
+          finderPP: undefined,
+          outFarePP: undefined,
+          backFarePP: undefined,
+        }),
+        facts(),
+        'Faro',
+      ).totalPP,
+    ).toBeNull();
+  });
+
+  // The search's own run, not constants mirrored from its source.
+  it('measures against the assumptions the search actually ran with', () => {
+    const r = priceOption(
+      option({ finderAssumptions: { travellers: 2, destTransferPP: 20, hotelPerNight: 100 } }),
+      facts({ destTransfer: { faro: { perPerson: 4, samples: 2, low: 3, high: 5 } } }),
+      'Faro',
+    );
+    expect(r.totalPP).toBe(100 + (4 - 20));
+    expect(r.assumed.join(' ')).toContain('£100 a night');
   });
 
   it('says when you would leave home, the night before where that is true', () => {
@@ -291,10 +370,11 @@ describe('an opportunity that has quietly become history', () => {
   });
   const now = Date.parse('2026-11-02T09:00:00Z');
 
-  it('hides the dates that have gone but keeps the destination', () => {
+  it('keeps the dates that have gone out of the running but still readable', () => {
     const view = viewOpportunity(opp(['2026-10-01', '2026-12-11']), facts(), 'cost', now);
     expect(view.rows).toHaveLength(1);
     expect(view.pastCount).toBe(1);
+    expect(view.past.map((r) => r.option.outDate)).toEqual(['2026-10-01']);
   });
 
   // No shelving chore: with nothing ahead and no trip, it simply stops asking.

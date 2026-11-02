@@ -45,6 +45,22 @@ export async function deleteOpportunity(id: string): Promise<void> {
   await db.opportunities.delete(id);
 }
 
+/**
+ * Which destination a row belongs to. The country counts: Valencia in Spain
+ * and Valencia in Venezuela are not one place, and nor are the two Tripolis.
+ * A destination filed before countries were kept (or a row that names none)
+ * still matches on the city alone — otherwise the next import would duplicate
+ * every destination already here.
+ */
+function sameDestination(
+  a: { city: string; country?: string },
+  b: { city: string; country?: string },
+): boolean {
+  if (a.city.trim().toLowerCase() !== b.city.trim().toLowerCase()) return false;
+  const [ca, cb] = [a.country?.trim().toLowerCase(), b.country?.trim().toLowerCase()];
+  return !ca || !cb || ca === cb;
+}
+
 /** Two options describe the same trip when their dates and airports match. */
 function sameConfiguration(a: TripOption, b: TripOption): boolean {
   return (
@@ -74,13 +90,13 @@ export async function addFinderRows(rows: ParsedRow[]): Promise<AddResult> {
   const result: AddResult = { opportunities: 0, added: 0, refreshed: 0 };
   const byCity = new Map<string, ParsedRow[]>();
   for (const r of rows) {
-    const key = r.city.trim().toLowerCase();
+    const key = `${r.city.trim().toLowerCase()}|${r.country?.trim().toLowerCase() ?? ''}`;
     (byCity.get(key) ?? byCity.set(key, []).get(key)!).push(r);
   }
   await db.transaction('rw', db.opportunities, async () => {
     const existing = await db.opportunities.toArray();
-    for (const [key, group] of byCity) {
-      let opp = existing.find((o) => o.city.trim().toLowerCase() === key);
+    for (const group of byCity.values()) {
+      let opp = existing.find((o) => sameDestination(o, group[0]));
       if (!opp) {
         opp = {
           id: newId(),
@@ -167,10 +183,15 @@ export async function chooseOption(opp: Opportunity, option: TripOption): Promis
   const currency = currencySeen(opp.city, allCities);
   if (!currency) toFill.push(`the currency for ${opp.city}`);
   const tripId = await createTrip(presetForOption(option));
+  // The fares are per person for the party the search priced; starting the
+  // trip with a different number would make its own figures disagree with the
+  // one that was compared.
+  const travellers = option.finderAssumptions?.travellers;
 
   await updateTrip(tripId, {
     opportunityId: opp.id,
     optionId: option.id,
+    ...(travellers && travellers !== DEFAULT_PARTY_SIZE ? { partySize: travellers } : {}),
     outbound: {
       at: wall(option.outDate, option.outDep),
       tz: HOME_TZ,
@@ -256,7 +277,15 @@ export async function chooseOption(opp: Opportunity, option: TripOption): Promis
 /**
  * The measured costs an option is re-priced against, read from every trip
  * already taken. Nothing is stored: the answer moves as the ledger grows, and
- * there is no second copy to fall out of step.
+ * there is no second copy to fall out of step. Read through a `liveQuery` so
+ * that stays true on screen — a figure quoted from the ledger has to change
+ * when the ledger does.
+ *
+ * The party size is the household default, not a reading taken off whichever
+ * trip happens to be most recent: how many people went to Faro in March is no
+ * evidence about the trip being planned, and a figure divided by the wrong
+ * number is worse than one divided by a stated assumption. A search that said
+ * how many travellers it priced for overrides it, per option.
  */
 export async function measuredFacts(): Promise<Facts> {
   const [trips, cities, expenses, stops] = await Promise.all([
@@ -265,11 +294,10 @@ export async function measuredFacts(): Promise<Facts> {
     db.expenses.toArray(),
     db.stops.toArray(),
   ]);
-  const recent = [...trips].sort((a, b) => (b.startDate || '').localeCompare(a.startDate || ''))[0];
   return {
     ukTransfer: ukTransferByAirport(trips, expenses),
     destTransfer: destTransferByCity(trips, cities, expenses, stops),
     hotelNight: hotelNightCost(trips, cities, expenses),
-    partySize: Math.max(1, recent?.partySize || DEFAULT_PARTY_SIZE),
+    partySize: DEFAULT_PARTY_SIZE,
   };
 }

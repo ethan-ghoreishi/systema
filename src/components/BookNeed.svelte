@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import type { Trip } from '../lib/db';
-  import { bookNeed, type Need } from '../lib/needs';
+  import { bookNeed, settles, STATE_WORD, type Need, type NeedState } from '../lib/needs';
   import { todayIso } from '../lib/sheet';
 
   /**
@@ -33,12 +33,27 @@
 
   const spec = $derived(need.book);
   const money = $derived(Number(amount.replace(/[£,\s]/g, '')));
+  // A free reservation has nothing to type: saving it *is* the record.
   const valid = $derived(
-    (money > 0 && Number.isFinite(money)) ||
+    need.kind === 'book' ||
+      (money > 0 && Number.isFinite(money)) ||
       !!ref.trim() ||
       !!transport.trim() ||
       !!place.trim() ||
       !!journeyMin.trim(),
+  );
+
+  // What this will actually leave behind — so the sheet never reports a thing
+  // as sorted that the trip still reads as outstanding. A hotel with a name and
+  // no reference is a choice; a transfer you will pay for on the day is enough.
+  const willBe = $derived<NeedState>(
+    money > 0 && Number.isFinite(money)
+      ? 'paid'
+      : ref.trim() || need.kind === 'book'
+        ? 'booked'
+        : transport.trim() || journeyMin.trim() || place.trim()
+          ? 'planned'
+          : 'open',
   );
 
   async function save() {
@@ -55,10 +70,13 @@
         place: place.trim() || undefined,
         date,
       });
+      const word = STATE_WORD[willBe];
       onDone(
         expenseId
-          ? `${need.label} is sorted, and £${money} is in Expenses — no need to enter it again.`
-          : `${need.label} is sorted.`,
+          ? `${need.label}: ${word}, and £${money} is in Expenses — no need to enter it again.`
+          : settles(need.kind, willBe)
+            ? `${need.label}: ${word}.`
+            : `${need.label}: ${word} — still on the list until it is.`,
       );
       dialogEl.close();
     } catch (err) {
@@ -100,6 +118,7 @@
       {#if spec?.asksPlace}
         <label class="label" for="book-place">Where you are staying</label>
         <input id="book-place" class="field" type="text" bind:value={place} />
+        <p class="hint">A name is a choice. It counts as booked once there is a reference below.</p>
       {/if}
 
       {#if spec?.asksTransport}
@@ -125,6 +144,13 @@
 
       <label class="label" for="book-ref">Booking reference</label>
       <input id="book-ref" class="field" type="text" bind:value={ref} />
+      {#if need.kind === 'book'}
+        <p class="hint">Saving this records the reservation, whether or not it cost anything.</p>
+      {:else if spec?.asksTransport}
+        <p class="hint">
+          Only for a ticket you hold — leave it blank for a fare you pay on the day.
+        </p>
+      {/if}
 
       <label class="label" for="book-date">Paid on</label>
       <input id="book-date" class="field" type="date" bind:value={date} />

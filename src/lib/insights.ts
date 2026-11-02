@@ -277,15 +277,19 @@ export function transitRows(trips: Trip[], cities: City[], expenses: Expense[]):
           e.tripId === trip.id && e.subcategory === TRANSFER && expenseCityId(e, legs) === c.id,
       );
       const exit = c.exit ?? {};
-      if (!paid.length && !exit.transport && exit.journeyMin == null) continue;
+      if (!paid.length && !exit.transport && exit.journeyMin == null && !c.entry?.transport)
+        continue;
       const described = [...new Set(paid.map((e) => e.description.trim()).filter(Boolean))];
       const total = paid.reduce((a, e) => a + (e.amountGBP || 0), 0);
+      // Both directions where both are known: the way in from the airport is a
+      // different journey from the way out to it, and often a different mode.
+      const ways = [...new Set([c.entry?.transport, exit.transport].filter(Boolean))].join(' / ');
       out.push({
         key: `${trip.id}:${c.id}`,
         city: c.name,
         trip: tripDisplayName(trip, legs),
         date: tripStartIso(trip, legs),
-        mode: exit.transport || described.join(', ') || 'not noted',
+        mode: ways || described.join(', ') || 'not noted',
         costPP: paid.length ? round2(total / Math.max(1, trip.partySize || 1)) : null,
         journeyMin: exit.journeyMin ?? null,
         notes: exit.notes ?? '',
@@ -341,10 +345,20 @@ function measured(values: number[]): MeasuredCost | null {
 
 /**
  * What one journey to or from each London airport has cost, per person —
- * keyed by IATA code. A row marked "(Return)" covered both directions, so it
- * counts as half. Rows that name no airport (a hop to the coach stop) are left
- * out rather than guessed at; the median keeps a voucher or a taxi from
- * standing in for the usual fare.
+ * keyed by IATA code. The median keeps a voucher or a taxi from standing in
+ * for the usual fare.
+ *
+ * Two things are never guessed. A row only counts as both directions when it
+ * says so in so many words — "(Return)", the way the spending sheet wrote it;
+ * a row the app itself stamped is one leg of the journey by construction, and
+ * "Airport transfer (UK) — return" is the ride home, not a round trip. And a
+ * row is only attributed to the trip's departure airport where it could be that
+ * journey. A row the app stamped as the ride home cannot be: that one lands at
+ * whichever airport the return flight used, which nothing here records, so it
+ * is left out rather than counted against the airport the trip set off from.
+ * ponytail: an unstamped row that names no airport is still taken as the
+ * departure one — right whenever the route is symmetric, which it usually is,
+ * and the only way the imported spending sheet can be read at all.
  */
 export function ukTransferByAirport(
   trips: Trip[],
@@ -357,9 +371,9 @@ export function ukTransferByAirport(
     if (e.subcategory !== UK_TRANSFER || !e.amountGBP) continue;
     const text = `${e.description} ${e.notes}`.toLowerCase();
     const named = Object.entries(LONDON_HUBS).find(([name]) => text.includes(name))?.[1];
-    const hub = named ?? hubOf.get(e.tripId) ?? '';
+    const hub = named ?? (e.need === 'transfer-uk:back' ? '' : hubOf.get(e.tripId)) ?? '';
     if (!hub) continue;
-    const both = /\(return\)|return\b/i.test(e.description);
+    const both = !e.need && /\(return\)/i.test(e.description);
     const perPerson = e.amountGBP / (party.get(e.tripId) ?? 1) / (both ? 2 : 1);
     (byHub[hub] ??= []).push(perPerson);
   }
@@ -396,22 +410,34 @@ export function hotelNightCost(
   return measured(nightly);
 }
 
-/** Per-person airport transfer abroad, by city, from the visits that logged one. */
+/**
+ * Per-person airport transfer abroad, by city — what each visit that logged
+ * one actually came to, both directions, divided by the party that was there.
+ *
+ * Read from the visits themselves rather than from the Insights comparison,
+ * which answers a different question with a mean: a figure labelled "the
+ * middle of 4 past visits (£3–£9)" has to be the middle of four visits, and
+ * the spread has to be the real one.
+ */
 export function destTransferByCity(
   trips: Trip[],
   cities: City[],
   expenses: Expense[],
   stops: Stop[],
 ): Record<string, MeasuredCost> {
-  const { rows } = compareCities(trips, cities, expenses, stops, 'transferPP');
+  const byCity = new Map<string, { name: string; values: number[] }>();
+  for (const v of visits(trips, cities, expenses, stops)) {
+    if (!(v.transfer > 0)) continue;
+    const key = v.name.trim().toLowerCase();
+    const row = byCity.get(key) ?? { name: v.name, values: [] };
+    row.values.push(v.transfer / v.partySize);
+    byCity.set(key, row);
+  }
   const out: Record<string, MeasuredCost> = {};
-  for (const r of rows)
-    out[r.name.toLowerCase()] = {
-      perPerson: r.value,
-      samples: r.visits,
-      low: r.value,
-      high: r.value,
-    };
+  for (const [key, row] of byCity) {
+    const m = measured(row.values);
+    if (m) out[key] = m;
+  }
   return out;
 }
 
