@@ -107,7 +107,9 @@ subscription.**
   coach reference is never read as a booked flight. The list shrinks as the trip
   comes together and empties itself at the end. **Book it** records a booking
   once: the fare goes into Expenses and the mode and journey time go onto the
-  journey, so leave-by stops being a guess and £22 is never typed twice.
+  journey, so leave-by stops being a guess and £22 is never typed twice. A
+  return ticket is one purchase — tick "the same ticket covers the way back" and
+  it settles both journeys without pretending they are one.
   Checking in is the one plain tick (the airline's window leaves no trace in the
   data), and it only appears within 48 hours of the flight.
 - **Getting ready** — the half of a trip no booking covers: food, charging, the

@@ -24,6 +24,9 @@ import { instantToWall } from './tz';
 
 export type PrepGroup = 'food' | 'devices' | 'pack' | 'home';
 
+/** The order they happen in, roughly: shop, charge, pack, lock up. */
+export const GROUPS: PrepGroup[] = ['food', 'devices', 'pack', 'home'];
+
 export const GROUP_LABEL: Record<PrepGroup, string> = {
   food: 'Food',
   devices: 'Charging',

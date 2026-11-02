@@ -211,8 +211,7 @@
           <li class="status-row">
             <span class="status-key">Daylight there</span>
             <span class="status-val"
-              >{row.usableH} h{#if row.groundH}<small>
-                  of {row.groundH} h on the ground</small
+              >{row.usableH} h{#if row.groundH}<small>&nbsp;of {row.groundH} h on the ground</small
                 >{/if}</span
             >
           </li>

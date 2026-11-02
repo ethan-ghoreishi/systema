@@ -241,6 +241,20 @@ test('a finder search becomes a compared shortlist, a trip, and a booked coach',
   });
   expect(hotel).toEqual({ rows: 1, skeletons: 0, amount: 58, base: 'Hotel Faro Boutique' });
 
+  // A return bus into town is one purchase. The two journeys keep their own
+  // lines — they happen at different hours — but buying it settles both.
+  await before
+    .locator('.need', { hasText: 'Getting into Faro from the airport' })
+    .getByRole('button')
+    .click();
+  await page.getByLabel('What it cost, for everyone (£)').fill('9');
+  await page.getByLabel('How you get there').fill('Próximo bus 16');
+  await page.getByLabel('How long it takes (minutes)').fill('20');
+  await page.getByText('The same ticket covers the way back').click();
+  await page.getByRole('button', { name: 'Save' }).click();
+  await expect(before.locator('.before > .need', { hasText: 'Getting into Faro' })).toHaveCount(0);
+  await expect(before.locator('.before > .need', { hasText: 'Getting from Faro' })).toHaveCount(0);
+
   // And it shows up in Expenses as a real row, never to be typed again.
   await page.getByRole('link', { name: 'Expenses' }).click();
   await expect(

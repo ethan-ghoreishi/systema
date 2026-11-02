@@ -442,6 +442,13 @@ export interface BookInput {
   journeyMin?: number;
   /** Where you are staying, for a hotel. */
   place?: string;
+  /**
+   * One ticket for the journey there and the journey back — a return bus into
+   * town, a return coach to Stansted. Both journeys stay their own line (they
+   * are two journeys), but the detail is written to both, so one purchase
+   * settles both rather than leaving the other reading as unsorted.
+   */
+  bothWays?: boolean;
   /** The day it was paid for; today unless said otherwise. */
   date?: string;
   paymentMethod?: string;
@@ -478,23 +485,25 @@ export async function bookNeed(
     await db.trips.update(trip.id, { outbound: { ...trip.outbound, ref }, updatedAt: Date.now() });
   if (need.key === 'flight:inbound' && ref && last)
     await db.cities.update(last.id, { exit: { ...last.exit, ref } });
-  if (need.key === 'transfer-uk:out' && something)
+  const both = !!input.bothWays;
+  if (need.kind === 'transfer-uk' && something)
     await db.trips.update(trip.id, {
-      outbound: { ...trip.outbound, ...journey },
+      ...(both || need.key === 'transfer-uk:out'
+        ? { outbound: { ...trip.outbound, ...journey } }
+        : {}),
+      ...(both || need.key === 'transfer-uk:back'
+        ? { homeward: { ...trip.homeward, ...journey } }
+        : {}),
       updatedAt: Date.now(),
     });
-  if (need.key === 'transfer-uk:back' && something)
-    await db.trips.update(trip.id, {
-      homeward: { ...trip.homeward, ...journey },
-      updatedAt: Date.now(),
-    });
-  if (need.key.startsWith('transfer-in:') && something) {
-    const leg = legOf('transfer-in:');
-    if (leg) await db.cities.update(leg.id, { entry: { ...leg.entry, ...journey } });
-  }
-  if (need.key.startsWith('transfer-out:') && something) {
-    const leg = legOf('transfer-out:');
-    if (leg) await db.cities.update(leg.id, { exit: { ...leg.exit, ...journey } });
+  if (need.kind === 'transfer' && something) {
+    const inbound = need.key.startsWith('transfer-in:');
+    const leg = legOf(inbound ? 'transfer-in:' : 'transfer-out:');
+    if (leg)
+      await db.cities.update(leg.id, {
+        ...(both || inbound ? { entry: { ...leg.entry, ...journey } } : {}),
+        ...(both || !inbound ? { exit: { ...leg.exit, ...journey } } : {}),
+      });
   }
   if (need.kind === 'hotel') {
     const leg = legOf('hotel:');

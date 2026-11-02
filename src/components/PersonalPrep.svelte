@@ -1,12 +1,12 @@
 <script lang="ts">
   import type { City, Trip } from '../lib/db';
   import {
+    GROUPS,
     GROUP_LABEL,
     prepIsDue,
     prepItems,
     setOwnPrep,
     setPrepDone,
-    type PrepGroup,
     type PrepItem,
   } from '../lib/prep';
 
@@ -28,11 +28,11 @@
   const due = $derived(prepIsDue(trip, cities, now));
   const items = $derived(prepItems(trip, cities));
   const left = $derived(items.filter((i) => !i.done).length);
-  const groups = $derived.by(() => {
-    const m = new Map<PrepGroup, PrepItem[]>();
-    for (const i of items) m.set(i.group, [...(m.get(i.group) ?? []), i]);
-    return [...m];
-  });
+  const groups = $derived(
+    GROUPS.map((g) => [g, items.filter((i) => i.group === g)] as const).filter(
+      ([, list]) => list.length,
+    ),
+  );
 
   // A step whose own step is still open waits its turn: buy it, make it, take it.
   const blocked = (i: PrepItem) => !!i.after && !items.find((x) => x.key === i.after)?.done;

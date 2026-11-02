@@ -26,6 +26,7 @@
   let transport = $state('');
   let journeyMin = $state('');
   let place = $state('');
+  let bothWays = $state(false);
   let date = $state(todayIso());
   let error = $state('');
   let saving = $state(false);
@@ -68,6 +69,7 @@
         transport: transport.trim() || undefined,
         journeyMin: journeyMin.trim() && Number.isFinite(mins) && mins >= 0 ? mins : undefined,
         place: place.trim() || undefined,
+        bothWays,
         date,
       });
       const word = STATE_WORD[willBe];
@@ -140,6 +142,13 @@
           bind:value={journeyMin}
         />
         <p class="hint">The countdown counts back from this, so leave-by stops being a guess.</p>
+        <label class="switch">
+          <input type="checkbox" bind:checked={bothWays} />
+          <span class="hint">
+            The same ticket covers the way back. Both journeys keep their own line — they happen at
+            different hours — but this one purchase settles both.
+          </span>
+        </label>
       {/if}
 
       <label class="label" for="book-ref">Booking reference</label>
