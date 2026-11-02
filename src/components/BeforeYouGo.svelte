@@ -39,11 +39,7 @@
     <div class="card-head">
       <span class="section-title" id="before-title">Before you go</span>
       <span class="before-count"
-        >{todo.length
-          ? `${todo.length} to sort out`
-          : needs.length
-            ? 'Nothing outstanding'
-            : 'Add the legs first'}</span
+        >{todo.length ? `${todo.length} to sort out` : 'Nothing outstanding'}</span
       >
     </div>
 

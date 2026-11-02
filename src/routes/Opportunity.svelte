@@ -2,6 +2,7 @@
   import { liveQuery } from 'dexie';
   import { db } from '../lib/db';
   import TopBar from '../components/TopBar.svelte';
+  import Icon from '../components/Icon.svelte';
   import PastePlanDialog from '../components/PastePlanDialog.svelte';
   import { router, navigate } from '../lib/router.svelte';
   import { scrollMemory, recall, remember } from '../lib/ui-memory';
@@ -151,7 +152,9 @@
   <div class="screen-frame">
     <TopBar title={opp.city} onBack={() => router.back('/')}>
       {#snippet actions()}
-        <button class="icon-btn" aria-label="Delete this idea" onclick={removeIdea}>✕</button>
+        <button class="icon-btn" aria-label="Delete this idea" onclick={removeIdea}
+          ><Icon name="trash" /></button
+        >
       {/snippet}
     </TopBar>
 
