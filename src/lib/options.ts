@@ -461,6 +461,10 @@ export function priceOption(
   // The destination transfer, where this city has been visited before. Only
   // the named city can be looked up: a two-city row's second place is an
   // airport code, so its transfer keeps the finder's assumption, said plainly.
+  // ponytail: matched on the city's name alone, because a visited city is a
+  // leg and a leg carries no country. Two same-named places are kept apart as
+  // destinations, but a transfer measured in one would be read against the
+  // other. Giving City a country would fix it, and nothing here needs one yet.
   const cities = o.cities ? cityCount(o.cities) : parts ? 1 : 0;
   const destMeasured = city ? facts.destTransfer[city.trim().toLowerCase()] : undefined;
   if (cities > 0 && destMeasured) {
