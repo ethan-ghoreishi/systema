@@ -18,7 +18,11 @@
   const OTHER = '__other';
   const known = $derived(commonCurrencies.some((c) => c.code === value.trim().toUpperCase()));
   let typing = $state(false);
-  const shown = $derived(typing || (!!value.trim() && !known) ? OTHER : value.trim().toUpperCase());
+  // Nothing set yet is its own state. Without it the wheel shows its first
+  // entry, so an unanswered field reads as pounds — and picking pounds then
+  // fires no change, leaving no way to answer it.
+  const unset = $derived(!value.trim() && !typing);
+  const shown = $derived(unset ? '' : typing || !known ? OTHER : value.trim().toUpperCase());
 
   function pick(code: string) {
     if (code === OTHER) {
@@ -36,6 +40,9 @@
   value={shown}
   onchange={(e) => pick((e.currentTarget as HTMLSelectElement).value)}
 >
+  {#if unset}
+    <option value="">Which currency?</option>
+  {/if}
   {#each commonCurrencies as c (c.code)}
     <option value={c.code}>{c.code} · {c.name}</option>
   {/each}

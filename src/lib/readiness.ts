@@ -73,11 +73,12 @@ function rideInstant(
   const sameDay = wallToInstant(`${wall.slice(0, 10)}T${time}`, tz);
   if (sameDay == null) return undefined;
   if (sameDay <= departAt) return sameDay;
-  const dayBefore = wallToInstant(
-    `${instantToWall(wallToInstant(wall.slice(0, 10), tz)! - 86_400_000, tz).slice(0, 10)}T${time}`,
-    tz,
-  );
-  return dayBefore ?? sameDay;
+  // The previous calendar day, counted on the calendar: the night the clocks
+  // go forward is 23 hours long, so taking a day off the instant lands two
+  // days back and the coach reads as leaving a day early.
+  const d = new Date(`${wall.slice(0, 10)}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - 1);
+  return wallToInstant(`${d.toISOString().slice(0, 10)}T${time}`, tz) ?? sameDay;
 }
 
 /**

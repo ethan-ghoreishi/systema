@@ -79,3 +79,31 @@ test('a two-city stopover: scenario, zones, refused bad times, and a calm leave-
   expect(text).toContain('SUMMARY:Leave now for BLQ');
   expect(text).toContain('DTSTART:20261016T145000Z');
 });
+
+// An unanswered currency used to show the wheel's first entry, so a leg with
+// none read as pounds — and picking pounds fired no change, leaving no way to
+// answer it at all.
+test('a leg with no currency says so, and takes an answer', async ({ page }) => {
+  await page.goto('/');
+  const tripId = await page.evaluate(async () => {
+    const { db } = await import(/* @vite-ignore */ '/src/lib/db.ts');
+    const { createTrip, addCity } = await import(/* @vite-ignore */ '/src/lib/trips.ts');
+    await db.open();
+    const id = await createTrip('weekend');
+    await addCity(id, 'Amman', '');
+    return id;
+  });
+  await page.goto(`/#/trip/${tripId}/edit`);
+  // The leg's own picker; the add-a-city row below has one too.
+  const ccy = page.locator('.leg').first().getByLabel('Currency', { exact: true });
+  await expect(ccy).toHaveValue('');
+  await ccy.selectOption('GBP');
+  await expect(ccy).toHaveValue('GBP');
+  await ccy.selectOption('JOD');
+  expect(
+    await page.evaluate(async (id) => {
+      const { db } = await import(/* @vite-ignore */ '/src/lib/db.ts');
+      return (await db.cities.where('tripId').equals(id).toArray())[0]?.currency;
+    }, tripId),
+  ).toBe('JOD');
+});

@@ -593,7 +593,6 @@ input.city-ccy {
   min-width: 0;
 }
 
-
 .cover-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));

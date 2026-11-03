@@ -175,10 +175,12 @@
   }
 
   async function saveDeparture(key: string, wall: string, plan: DepartPlan) {
+    // Replace, never merge: the editor was given the stored plan to start
+    // from, so anything merged back under it would undo every field emptied.
     if (key === 'outbound') {
-      await updateTrip(id, { outbound: { ...trip?.outbound, ...plan, at: wall || undefined } });
+      await updateTrip(id, { outbound: { ...plan, at: wall || undefined } });
     } else if (key === 'homeward') {
-      await updateTrip(id, { homeward: { ...trip?.homeward, ...plan } });
+      await updateTrip(id, { homeward: plan });
     } else {
       await updateCity(key, { departure: wall || undefined, exit: plan });
       delete legErrors[key];

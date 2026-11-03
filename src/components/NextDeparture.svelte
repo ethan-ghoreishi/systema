@@ -47,7 +47,11 @@
 
   async function saveDeparture(d: Departure, wall: string, plan: DepartPlan) {
     if (d.key === 'outbound') {
-      await updateTrip(trip.id, { outbound: { ...trip.outbound, ...plan, at: wall } });
+      // The plan replaces what was stored rather than being laid over it: the
+      // editor started from the stored one, so merging would bring back every
+      // field just emptied — a coach reference written into the flight's slot
+      // could never be taken out again.
+      await updateTrip(trip.id, { outbound: { ...plan, at: wall } });
     } else {
       await updateCity(d.key, { departure: wall, exit: plan });
     }

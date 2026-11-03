@@ -89,6 +89,10 @@
   const money = $derived(num(amount));
   const isGBP = $derived(currency === 'GBP');
   const needsPounds = $derived(!isGBP && money > 0 && rate == null);
+  // A dinar never prices itself, however long you wait online, so a booking in
+  // one with no £ would sit in the ledger reading as nothing paid while the
+  // sheet says it was. Ask for the £ instead of saving a figure of zero.
+  const mustTypePounds = $derived(needsPounds && !ecbPublishes(currency) && num(gbp) === 0);
   const priced = $derived(
     priceEntry({
       amount: money,
@@ -102,14 +106,15 @@
 
   // A free reservation has nothing to type: saving it *is* the record.
   const valid = $derived(
-    need.kind === 'book' ||
-      money > 0 ||
-      !!ref.trim() ||
-      !!transport.trim() ||
-      !!place.trim() ||
-      !!journeyMin.trim() ||
-      !!transferAt.trim() ||
-      payOnDay,
+    !mustTypePounds &&
+      (need.kind === 'book' ||
+        money > 0 ||
+        !!ref.trim() ||
+        !!transport.trim() ||
+        !!place.trim() ||
+        !!journeyMin.trim() ||
+        !!transferAt.trim() ||
+        payOnDay),
   );
 
   // What this will actually leave behind — so the list never reports a thing as
@@ -213,10 +218,10 @@
       {#if needsPounds}
         <label class="label" for="book-gbp">…which is, in £</label>
         <input id="book-gbp" class="field" type="text" inputmode="decimal" bind:value={gbp} />
-        <p class="hint">
+        <p class="hint" class:hint--warn={mustTypePounds}>
           {ecbPublishes(currency)
             ? `No ${currency} rate to hand — it prices itself when you are next online, or put the £ in now.`
-            : `No ${currency} rate is published, so put the £ from your statement here.`}
+            : `No ${currency} rate is published and none is coming, so the £ from your statement is needed before this can be saved.`}
         </p>
       {:else if !isGBP && money > 0}
         <p class="hint">

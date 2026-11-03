@@ -176,6 +176,27 @@ describe('a ride to the airport with its own clock', () => {
     expect(d.leaveBy).toBe(Z('2026-10-15T22:00'));
   });
 
+  // The night the clocks go forward is 23 hours long, so "a day earlier"
+  // cannot be a day's worth of milliseconds: that lands two days back and the
+  // coach reads as leaving on the wrong night.
+  it('finds the previous evening across a clock change', () => {
+    const d = tripDepartures(
+      trip({
+        outbound: {
+          at: '2026-03-29T06:30',
+          tz: 'Europe/London',
+          hub: 'STN',
+          transport: 'National Express',
+          transferAt: '23:10',
+          contingencyMin: 10,
+        },
+      }),
+      [],
+    )[0];
+    // 23:10 on 28 March is still GMT, so 23:10Z — the night of the 28th.
+    expect(d.serviceAt).toBe(Z('2026-03-28T23:10'));
+  });
+
   // You cannot leave later than the coach: there is no cushion past it.
   it('makes the service the last moment you can leave', () => {
     const d = withCoach();

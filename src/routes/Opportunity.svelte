@@ -404,7 +404,8 @@
             </p>
           {/if}
           <div class="cluster cluster--wrap">
-            <button class="btn btn--ghost btn--sm" onclick={copyResearchPrompt}>Copy a prompt</button
+            <button class="btn btn--ghost btn--sm" onclick={copyResearchPrompt}
+              >Copy a prompt</button
             >
             <button class="btn btn--ghost btn--sm" onclick={() => (pasting = true)}
               >Paste an answer</button

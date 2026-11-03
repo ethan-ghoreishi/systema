@@ -4,6 +4,7 @@
   import { newId } from '../lib/ids';
   import { blockers } from '../lib/options';
   import { ecbPublishes, getRate } from '../lib/fx';
+  import { priceEntry } from '../lib/expenses';
   import { FARE_CURRENCIES } from '../lib/currencies';
   import { todayIso } from '../lib/sheet';
 
@@ -138,25 +139,56 @@
   });
   const rateFor = (ccy: string) => (ccy === 'GBP' ? 1 : (rates[ccy] ?? null));
 
-  /** The fare in sterling: the amount itself, the day's rate, or the £ typed. */
-  function farePounds(leg: Leg): number | undefined {
+  const needsPounds = (leg: Leg) =>
+    leg.ccy !== 'GBP' && money(leg.fare) != null && rateFor(leg.ccy) == null;
+
+  /**
+   * The fare in sterling, decided the same way a saved expense's £ is
+   * (expenses.ts): the amount itself when it is already pounds, the £ typed by
+   * hand where one was asked for, otherwise the day's rate — and the £ already
+   * recorded while the fare has not moved, so re-opening an option and saving
+   * it cannot quietly re-price it at today's rate (and so bump when the fare
+   * was last checked, or throw away the search's own total).
+   *
+   * The typed £ counts only while its field is on screen. A hidden field that
+   * still decides the figure is exactly the bug this fixes in the ledger.
+   */
+  const RECORDED_ON = '2000-01-01';
+  function farePounds(leg: Leg, which: 'out' | 'back'): number | undefined {
     const local = money(leg.fare);
     if (local == null) return undefined;
     if (leg.ccy === 'GBP') return local;
-    const typed = money(leg.gbp);
-    if (typed != null) return typed;
-    const rate = rateFor(leg.ccy);
-    return rate == null ? undefined : Math.round(local * rate * 100) / 100;
+    const was = {
+      local: which === 'out' ? option?.outFareLocal : option?.backFareLocal,
+      ccy: which === 'out' ? option?.outFareCcy : option?.backFareCcy,
+      pounds: which === 'out' ? option?.outFarePP : option?.backFarePP,
+    };
+    const priced = priceEntry({
+      amount: local,
+      currency: leg.ccy,
+      date: RECORDED_ON,
+      overrideGBP: needsPounds(leg) ? (money(leg.gbp) ?? null) : null,
+      rate: rateFor(leg.ccy),
+      ...(was.pounds != null && was.local != null && was.ccy
+        ? {
+            recorded: {
+              amount: was.local,
+              amountGBP: was.pounds,
+              currency: was.ccy,
+              date: RECORDED_ON,
+              fxRate: null,
+            },
+          }
+        : {}),
+    });
+    return priced.fxPending ? undefined : priced.amountGBP;
   }
-
-  const needsPounds = (leg: Leg) =>
-    leg.ccy !== 'GBP' && money(leg.fare) != null && rateFor(leg.ccy) == null;
 
   const spansNight = $derived(!!backDate && backDate > outDate);
 
   const fareFields = (leg: Leg, which: 'out' | 'back') => {
     const local = money(leg.fare);
-    const gbp = farePounds(leg);
+    const gbp = farePounds(leg, which);
     const key = which === 'out' ? 'outFare' : 'backFare';
     return {
       ...(gbp != null ? { [`${key}PP`]: gbp } : {}),
@@ -371,8 +403,10 @@
               ? `No ${part.leg.ccy} rate to hand right now — put the £ in yourself and the comparison can use it.`
               : `No ${part.leg.ccy} rate is published, so the £ cannot be worked out — put in roughly what it comes to.`}
           </p>
-        {:else if part.leg.ccy !== 'GBP' && farePounds(part.leg) != null}
-          <p class="hint">About £{farePounds(part.leg)} each at today's rate.</p>
+        {:else if part.leg.ccy !== 'GBP' && farePounds(part.leg, part.key as 'out' | 'back') != null}
+          <p class="hint">
+            About £{farePounds(part.leg, part.key as 'out' | 'back')} each in sterling.
+          </p>
         {/if}
 
         <details class="opt-work">

@@ -619,3 +619,194 @@ test('a quoted fare becomes a booking, and a corrected price stays corrected', a
     }),
   ).toBe('RY-99KL');
 });
+
+/**
+ * A field you empty has to stay empty. The editor is handed the stored plan to
+ * start from, so laying its result back over that plan put every cleared field
+ * straight back — including a coach reference written into the flight's slot,
+ * which is how a trip read as having a booked flight it did not have.
+ */
+test('a detail cleared on the London end stays cleared', async ({ page }) => {
+  await page.goto('/');
+  const tripId = await page.evaluate(async () => {
+    const { db } = await import(/* @vite-ignore */ '/src/lib/db.ts');
+    const { createTrip, addCity, updateTrip } = await import(
+      /* @vite-ignore */ '/src/lib/trips.ts'
+    );
+    await db.open();
+    const id = await createTrip('weekend');
+    await updateTrip(id, {
+      outbound: {
+        at: '2027-06-18T06:30',
+        tz: 'Europe/London',
+        hub: 'STN',
+        ref: 'WRONG-REF',
+        transport: 'National Express',
+        payOnDay: true,
+      },
+    });
+    await addCity(id, 'Faro', 'EUR', {
+      arrival: '2027-06-18T09:20',
+      departure: '2027-06-20T19:30',
+      sleep: 'hotel',
+    });
+    return id;
+  });
+
+  await page.goto(`/#/trip/${tripId}/edit`);
+  await page.getByRole('button', { name: /Flight out/ }).click();
+  const editor = page.locator('dialog.modal[open]');
+  await editor.getByLabel('Flight booking ref').fill('');
+  await editor.getByLabel(/bought on the day/i).uncheck();
+  await editor.getByRole('button', { name: 'Save' }).click();
+  await expect(editor).toHaveCount(0);
+  await page.reload();
+
+  expect(
+    await page.evaluate(async (id) => {
+      const { db } = await import(/* @vite-ignore */ '/src/lib/db.ts');
+      const t = await db.trips.get(id);
+      return {
+        ref: t?.outbound?.ref ?? null,
+        payOnDay: t?.outbound?.payOnDay ?? null,
+        // Everything the editor was not asked about is still there.
+        at: t?.outbound?.at,
+        hub: t?.outbound?.hub,
+      };
+    }, tripId),
+  ).toEqual({ ref: null, payOnDay: null, at: '2027-06-18T06:30', hub: 'STN' });
+
+  // And the ticket out is outstanding again, because nothing books it now.
+  await page.goto(`/#/trip/${tripId}/plan`);
+  const before = page.getByRole('region', { name: 'Before you go' });
+  await expect(before.locator('.need-label', { hasText: 'Ticket out' })).toBeVisible();
+  await expect(before.locator('.need', { hasText: 'Getting to STN' })).toContainText(
+    'not booked yet',
+  );
+});
+
+/**
+ * Editing an option must not quietly re-price it. Re-opening one whose fare is
+ * in another currency used to carry its stored £ in a hidden field: change the
+ * fare and the £ stayed as it was — the same defect as the ledger's, in the
+ * other direction.
+ */
+test('a fare in another currency re-prices when it changes, and only then', async ({ page }) => {
+  await page.goto('/');
+  await page.route('https://api.frankfurter.dev/**', (r) =>
+    r.fulfill({ json: { date: '2027-01-02', rates: { GBP: 0.85 } } }),
+  );
+  await page.evaluate(async () => {
+    const { db } = await import(/* @vite-ignore */ '/src/lib/db.ts');
+    await db.open();
+    await db.opportunities.put({
+      id: 'eur',
+      city: 'Nantes',
+      country: 'France',
+      options: [
+        {
+          id: 'o-eur',
+          source: 'manual',
+          outDate: '2027-09-10',
+          backDate: '2027-09-12',
+          outRoute: ['STN', 'NTE'],
+          backRoute: ['NTE', 'STN'],
+          outFarePP: 40,
+          outFareLocal: 50,
+          outFareCcy: 'EUR',
+          backFarePP: 30,
+          // Checked long ago: an untouched save must not make it look fresh.
+          checked: '2027-01-02 00:00',
+        },
+      ],
+      createdAt: 1,
+    });
+  });
+  await page.goto('/#/opp/eur');
+
+  const stored = async () =>
+    page.evaluate(async () => {
+      const { db } = await import(/* @vite-ignore */ '/src/lib/db.ts');
+      const o = (await db.opportunities.get('eur'))!.options[0];
+      return { outFarePP: o.outFarePP, outFareLocal: o.outFareLocal, checked: o.checked };
+    });
+
+  // Saving without touching the fare keeps the £ it was recorded with — and
+  // keeps saying how old the fare is.
+  await page.locator('.opt').first().getByRole('button', { name: 'Edit' }).click();
+  await page.getByRole('button', { name: 'Save' }).click();
+  await expect(page.locator('dialog.modal[open]')).toHaveCount(0);
+  expect(await stored()).toEqual({
+    outFarePP: 40,
+    outFareLocal: 50,
+    checked: '2027-01-02 00:00',
+  });
+
+  // Changing it re-prices at the day's rate, and the fare is fresh again.
+  await page.locator('.opt').first().getByRole('button', { name: 'Edit' }).click();
+  const form = page.locator('dialog[open] .modal-body');
+  await form.getByLabel('Fare, each', { exact: true }).first().fill('80');
+  await expect(form.getByText('About £68 each in sterling')).toBeVisible();
+  await page.getByRole('button', { name: 'Save' }).click();
+  await expect(page.locator('dialog.modal[open]')).toHaveCount(0);
+  const after = await stored();
+  expect(after.outFarePP).toBe(68);
+  expect(after.outFareLocal).toBe(80);
+  expect(after.checked).not.toBe('2027-01-02 00:00');
+});
+
+// A dinar has no published rate and never will, so a booking in one with no £
+// would sit in the ledger as nothing paid while the sheet said it was.
+test('a booking in a currency with no rate asks for the £ before it saves', async ({ page }) => {
+  await page.goto('/');
+  const tripId = await page.evaluate(async () => {
+    const { db } = await import(/* @vite-ignore */ '/src/lib/db.ts');
+    const { createTrip, addCity, updateTrip } = await import(
+      /* @vite-ignore */ '/src/lib/trips.ts'
+    );
+    await db.open();
+    const id = await createTrip('weekend');
+    await updateTrip(id, { outbound: { at: '2027-07-02T09:30', tz: 'Europe/London', hub: 'STN' } });
+    await addCity(id, 'Amman', 'JOD', {
+      arrival: '2027-07-02T17:05',
+      departure: '2027-07-05T11:00',
+      sleep: 'hotel',
+    });
+    return id;
+  });
+  await page.goto(`/#/trip/${tripId}/plan`);
+  const before = page.getByRole('region', { name: 'Before you go' });
+  await before.locator('.need', { hasText: 'Getting into Amman' }).getByRole('button').click();
+
+  await page.getByLabel('What it cost, for everyone').fill('12');
+  await page.getByLabel('Paid in').selectOption('JOD');
+  await expect(page.getByText(/No JOD rate is published and none is coming/)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Save' })).toBeDisabled();
+
+  await page.getByLabel('…which is, in £').fill('13.40');
+  await page.getByLabel('How you get there').fill('Airport bus 1');
+  await page.getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByText(/£13.40 is in Expenses/)).toBeVisible();
+
+  expect(
+    await page.evaluate(async (id) => {
+      const { db } = await import(/* @vite-ignore */ '/src/lib/db.ts');
+      const e = (await db.expenses.where('tripId').equals(id).toArray()).find((x) =>
+        x.need?.startsWith('transfer-in:'),
+      );
+      return {
+        amountGBP: e?.amountGBP,
+        amountLocal: e?.amountLocal,
+        currency: e?.currency,
+        fxPending: e?.fxPending ?? false,
+        gbpManual: e?.gbpManual,
+      };
+    }, tripId),
+  ).toEqual({
+    amountGBP: 13.4,
+    amountLocal: 12,
+    currency: 'JOD',
+    fxPending: false,
+    gbpManual: true,
+  });
+});
