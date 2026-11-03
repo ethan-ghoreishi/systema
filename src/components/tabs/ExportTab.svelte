@@ -85,7 +85,7 @@
 
   function copyPrompt() {
     void copyText(prompt, 'Journaling prompt').then((ok) => {
-      if (ok) status = 'Journaling prompt copied — paste it into Claude.';
+      if (ok) status = 'Journaling prompt copied — paste it into your AI assistant.';
     });
   }
 
@@ -99,7 +99,7 @@
     void copyText(text, 'Reconstruction prompt').then((ok) => {
       if (ok)
         status =
-          'Reconstruction prompt copied — Claude interviews you first, then writes the journal. Paste the result back below.';
+          'Reconstruction prompt copied — it interviews you first, then writes the journal. Paste the result back below.';
     });
   }
 
@@ -119,7 +119,7 @@
     const nav = navigator as Navigator & { canShare?: (d: { files?: File[] }) => boolean };
     if (nav.canShare?.({ files })) {
       void nav.share({ files }).then(
-        () => (status = 'Shared — attach them to Claude in this order (they are numbered).'),
+        () => (status = 'Shared — attach them in this order (they are numbered).'),
         () => {},
       );
       return;
@@ -141,7 +141,7 @@
     <h2 class="section-title">Journal this trip</h2>
     <p class="hint">
       Copy the prompt (it already includes the trip pack: plan, ticked stops, the visit order with
-      your off-plan moments, the photo list and the expense summary) and paste it into Claude.
+      your off-plan moments, the photo list and the expense summary) and paste it in.
     </p>
     <button class="btn btn--primary" onclick={copyPrompt}>Copy journaling prompt</button>
     {#if trip.status === 'done' && !(trip.journalText ?? '').trim()}
@@ -149,8 +149,8 @@
         Copy reconstruction prompt (pre-app trip)
       </button>
       <p class="hint">
-        For trips from before the app: Claude uses the expense trail as a memory scaffold,
-        interviews you, then writes the journal.
+        For trips from before the app: the expense trail becomes a memory scaffold, interviews you,
+        then writes the journal.
       </p>
     {/if}
     <button class="btn btn--ghost" onclick={downloadPack}>Download trip pack (.md)</button>
@@ -161,7 +161,7 @@
     </details>
     {#if manifest.length}
       <details class="pack-details">
-        <summary>Photo list for Claude ({manifest.length}, in the order to attach)</summary>
+        <summary>Photo list ({manifest.length}, in the order to attach)</summary>
         <ol class="manifest">
           {#each manifest as e (e.id)}
             <li><code>{e.ref}</code> {[e.city, e.place].filter(Boolean).join(', ')}, {e.when}</li>
@@ -169,22 +169,22 @@
         </ol>
       </details>
       <button class="btn btn--ghost" onclick={sharePhotos}>
-        Share the photos for Claude ({manifest.length}, in order)
+        Share the photos ({manifest.length}, in order)
       </button>
     {/if}
     <p class="hint">
       The prompt lists every photo with a reference (P-xxxxxx), where and when it was taken. Attach
-      the photos themselves in Claude in the same order; Claude marks where each belongs, and the
-      journal shows the real photographs there.
+      the photos themselves in the same order; it marks where each belongs, and the journal shows
+      the real photographs there.
     </p>
   </div>
 
   <div class="card">
     <h2 class="section-title">Keep the journal</h2>
     <p class="hint">
-      Paste the journal Claude wrote back here to keep it with the trip — it appears as a Journal
-      view on the Plan tab, where Edit journal changes it afterwards, and past trips become a
-      browsable trip journal on the home screen.
+      Paste the journal back here to keep it with the trip — it appears as a Journal view on the
+      Plan tab, where Edit journal changes it afterwards, and past trips become a browsable trip
+      journal on the home screen.
     </p>
     <textarea
       class="field"

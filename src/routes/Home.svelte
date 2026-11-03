@@ -102,6 +102,11 @@
       ...rows.filter((r) => r.past).sort((a, b) => a.opp.city.localeCompare(b.opp.city)),
     ];
   });
+  // Places still worth a look, and places whose fares have been overtaken: the
+  // second kind is research to come back to, not a shortlist to read past.
+  const live = $derived(ideas.filter((r) => !r.past));
+  const gone = $derived(ideas.filter((r) => r.past));
+
   function ideaMeta(row: (typeof ideas)[number]): string {
     if (row.past) return 'dates passed · what you know is kept';
     const n = row.view?.rows.length ?? row.opp.options.length;
@@ -174,10 +179,6 @@
       <a class="hint hint--warn home-notice" href="#/settings">{backupNotice}</a>
     {/if}
 
-    <a class="btn btn--ghost new-trip" href="#/insights">
-      <Icon name="expenses" size={20} /> Insights — every trip, every pound
-    </a>
-
     {#if importStatus}<p class="hint hint--ok" role="status">{importStatus}</p>{/if}
 
     {#if trips.length === 0}
@@ -223,10 +224,10 @@
     {/if}
 
     <span class="section-title past-title">Considering</span>
-    {#if ideas.length}
+    {#if live.length}
       <div class="trip-list">
-        {#each ideas as row (row.opp.id)}
-          <a class="card trip-card" class:trip-card--past={row.past} href={`#/opp/${row.opp.id}`}>
+        {#each live as row (row.opp.id)}
+          <a class="card trip-card" href={`#/opp/${row.opp.id}`}>
             <span class="trip-card-name"
               >{row.opp.city}{#if row.opp.country}<small>, {row.opp.country}</small>{/if}</span
             >
@@ -234,12 +235,32 @@
           </a>
         {/each}
       </div>
-    {:else}
+    {:else if !gone.length}
       <p class="hint">
         Somewhere you are thinking about, with the ways of getting there side by side. What you
         learn about a place stays here after the fares have gone stale.
       </p>
     {/if}
+    {#if gone.length}
+      <!-- Dates that have gone are research, not a shortlist: one line here,
+           everything still inside. -->
+      <details class="opt-work">
+        <summary class="section-title"
+          >{gone.length} where the dates have gone — what you learned is kept</summary
+        >
+        <div class="trip-list">
+          {#each gone as row (row.opp.id)}
+            <a class="card trip-card trip-card--past" href={`#/opp/${row.opp.id}`}>
+              <span class="trip-card-name"
+                >{row.opp.city}{#if row.opp.country}<small>, {row.opp.country}</small>{/if}</span
+              >
+              <span class="trip-card-meta">{ideaMeta(row)}</span>
+            </a>
+          {/each}
+        </div>
+      </details>
+    {/if}
+
     {#if addingCity}
       <div class="card">
         <label class="label" for="new-city">Where</label>
@@ -273,6 +294,10 @@
         >
       </div>
     {/if}
+
+    <a class="btn btn--ghost new-trip" href="#/insights">
+      <Icon name="expenses" size={20} /> Insights — every trip, every pound
+    </a>
   </div>
 </div>
 

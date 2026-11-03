@@ -89,6 +89,13 @@
                 class="btn btn--ghost btn--sm"
                 onclick={() => void setCheckedIn(trip, need.departureKey!, false)}>Undo</button
               >
+            {:else if need.book && need.state !== 'paid'}
+              <!-- Sorted is not paid. The coach you bought last week belongs in
+                   the ledger, and hunting for it in Expenses is the friction
+                   this card exists to remove. -->
+              <button class="btn btn--ghost btn--sm" onclick={() => (booking = need)}
+                >Price it</button
+              >
             {/if}
           </div>
         {/each}

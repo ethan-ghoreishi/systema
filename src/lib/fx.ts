@@ -12,6 +12,50 @@ import { todayIso } from './sheet';
 // 301, which quietly broke rate fetches in the installed PWA.
 const FRANKFURTER = 'https://api.frankfurter.dev/v1';
 
+/**
+ * The thirty currencies the ECB publishes against the euro, which is every
+ * currency this can price. A Jordanian dinar, a dirham or a dram never prices
+ * itself however long you wait online, so the sheet says to type the £ from
+ * the statement instead of promising a rate that will not come.
+ */
+export const ECB_CURRENCIES = [
+  'AUD',
+  'BRL',
+  'CAD',
+  'CHF',
+  'CNY',
+  'CZK',
+  'DKK',
+  'EUR',
+  'GBP',
+  'HKD',
+  'HUF',
+  'IDR',
+  'ILS',
+  'INR',
+  'ISK',
+  'JPY',
+  'KRW',
+  'MXN',
+  'MYR',
+  'NOK',
+  'NZD',
+  'PHP',
+  'PLN',
+  'RON',
+  'SEK',
+  'SGD',
+  'THB',
+  'TRY',
+  'USD',
+  'ZAR',
+];
+
+/** Whether a rate for this currency can ever be fetched (see ECB_CURRENCIES). */
+export function ecbPublishes(code: string): boolean {
+  return ECB_CURRENCIES.includes(code.trim().toUpperCase());
+}
+
 export interface FxResult {
   rate: number; // multiply local by this to get GBP
   date: string; // ECB date the rate is for

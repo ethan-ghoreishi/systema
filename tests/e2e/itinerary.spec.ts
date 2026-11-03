@@ -42,11 +42,15 @@ test('a two-city stopover: scenario, zones, refused bad times, and a calm leave-
   await bologna.getByLabel('Departure', { exact: true }).blur();
   await expect(bologna.getByRole('alert')).toHaveCount(0);
 
-  await bologna.getByRole('button', { name: /Departs Fri 16 Oct, 19:00/ }).click();
+  await bologna.getByRole('button', { name: /Leaving Bologna · Fri 16 Oct, 19:00/ }).click();
   const editor = page.locator('dialog.modal[open]');
   await editor.getByLabel('Airport').fill('BLQ');
-  await editor.getByLabel('Journey (min)').fill('25');
-  await expect(editor.getByRole('status')).toHaveText('Leave by 16:50.');
+  await editor.getByLabel('Or just how long it takes (min)').fill('25');
+  // The sum is shown in words, so what the time rests on is never a mystery.
+  await expect(editor.getByRole('status')).toContainText(
+    'Leave by 16:50 = 19:00 departure − 90 min at BLQ − 25 min to get there − 15 min spare.',
+  );
+  await expect(editor.getByRole('status')).toContainText('it never moves leave-by');
   await editor.getByRole('button', { name: 'Save' }).click();
   await expect(editor).toHaveCount(0);
   await expect(bologna.getByText('leave by 16:50')).toBeVisible();
@@ -74,4 +78,32 @@ test('a two-city stopover: scenario, zones, refused bad times, and a calm leave-
   const text = Buffer.concat(ics).toString();
   expect(text).toContain('SUMMARY:Leave now for BLQ');
   expect(text).toContain('DTSTART:20261016T145000Z');
+});
+
+// An unanswered currency used to show the wheel's first entry, so a leg with
+// none read as pounds — and picking pounds fired no change, leaving no way to
+// answer it at all.
+test('a leg with no currency says so, and takes an answer', async ({ page }) => {
+  await page.goto('/');
+  const tripId = await page.evaluate(async () => {
+    const { db } = await import(/* @vite-ignore */ '/src/lib/db.ts');
+    const { createTrip, addCity } = await import(/* @vite-ignore */ '/src/lib/trips.ts');
+    await db.open();
+    const id = await createTrip('weekend');
+    await addCity(id, 'Amman', '');
+    return id;
+  });
+  await page.goto(`/#/trip/${tripId}/edit`);
+  // The leg's own picker; the add-a-city row below has one too.
+  const ccy = page.locator('.leg').first().getByLabel('Currency', { exact: true });
+  await expect(ccy).toHaveValue('');
+  await ccy.selectOption('GBP');
+  await expect(ccy).toHaveValue('GBP');
+  await ccy.selectOption('JOD');
+  expect(
+    await page.evaluate(async (id) => {
+      const { db } = await import(/* @vite-ignore */ '/src/lib/db.ts');
+      return (await db.cities.where('tripId').equals(id).toArray())[0]?.currency;
+    }, tripId),
+  ).toBe('JOD');
 });

@@ -137,8 +137,8 @@
       class="field plan-textarea"
       rows="18"
       placeholder={editing === 'journalText'
-        ? 'Write the journal, or paste the one Claude wrote…'
-        : 'Paste the plan you generated in Claude…'}
+        ? 'Write the journal, or paste the one you had written…'
+        : 'Paste the plan you generated…'}
       bind:value={draft}
       oninput={() => void scheduleSave()}></textarea>
     {#if editing === 'journalText'}
@@ -226,8 +226,9 @@
       <div class="card empty-state">
         <p class="empty-title">No plan yet</p>
         <p class="hint">
-          Build a research prompt from this trip's details, run it in Claude, then paste the result
-          here. It renders cleanly offline, and the Stops tab can extract the route automatically.
+          Build a research prompt from this trip's details, run it in your AI assistant, then paste
+          the result here. It renders cleanly offline, and the Stops tab can extract the route
+          automatically.
         </p>
         <div class="cluster">
           <a class="btn btn--primary" href={`#/trip/${trip.id}/prompt`}>Build research prompt</a>

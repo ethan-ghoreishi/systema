@@ -47,7 +47,11 @@
 
   async function saveDeparture(d: Departure, wall: string, plan: DepartPlan) {
     if (d.key === 'outbound') {
-      await updateTrip(trip.id, { outbound: { ...trip.outbound, ...plan, at: wall } });
+      // The plan replaces what was stored rather than being laid over it: the
+      // editor started from the stored one, so merging would bring back every
+      // field just emptied — a coach reference written into the flight's slot
+      // could never be taken out again.
+      await updateTrip(trip.id, { outbound: { ...plan, at: wall } });
     } else {
       await updateCity(d.key, { departure: wall, exit: plan });
     }
@@ -70,22 +74,26 @@
 </script>
 
 {#if next && words}
+  {@const journey = `${next.from === 'home' ? 'Home' : next.from} → ${next.to}`}
   <section class="card depart depart--{words.stage}" aria-label="Next departure">
     <div class="depart-head">
-      <span class="section-title">Next departure</span>
+      <span class="section-title">Next departure · {journey}</span>
       <span class="depart-stage">{STAGE_LABEL[words.stage]}</span>
     </div>
     <p class="depart-title">{words.title}</p>
     <p class="hint">{words.detail}</p>
     <p class="depart-facts">
-      {next.from === 'home' ? 'Home' : next.from} → {next.to}{next.plan.number
-        ? ` · ${next.plan.number}`
-        : ''} · departs {wallLabel(next.wall)}{next.plan.terminal
+      {next.plan.number ? `${next.plan.number} · ` : ''}departs {wallLabel(next.wall)}{next.plan
+        .terminal
         ? ` · T${next.plan.terminal}`
         : ''}
     </p>
     <div class="cluster cluster--wrap">
-      <button class="btn btn--ghost btn--sm" onclick={() => (editing = next)}>Adjust</button>
+      <!-- Named, because the card shows two journeys and the button only ever
+           changed this one. -->
+      <button class="btn btn--ghost btn--sm" onclick={() => (editing = next)}
+        >Adjust {journey}</button
+      >
       <button class="btn btn--ghost btn--sm" onclick={addToCalendar}>Calendar reminders</button>
       {#if 'share' in navigator}
         <button class="btn btn--ghost btn--sm" onclick={shareIcs}>Share…</button>
@@ -94,11 +102,18 @@
     {#if note}<p class="hint" role="status">{note}</p>{/if}
     {#if later.length}
       <details class="depart-later">
-        <summary>{later.length} later departure{later.length > 1 ? 's' : ''}</summary>
+        <summary>After this one: {later.length} more departure{later.length > 1 ? 's' : ''}</summary
+        >
         {#each later as d (d.key)}
           <button class="depart-row" onclick={() => (editing = d)}>
-            <span>{d.from === 'home' ? 'Home' : d.from} → {d.to}</span>
-            <span class="hint">leave by {clockLabel(d.leaveBy, d.tz, now)}</span>
+            <span class="hint"
+              >{d.from === 'home' ? 'Home' : d.from} → {d.to} · leave by {clockLabel(
+                d.leaveBy,
+                d.tz,
+                now,
+              )}</span
+            >
+            <span>Adjust</span>
           </button>
         {/each}
       </details>

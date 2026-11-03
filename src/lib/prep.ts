@@ -1,7 +1,7 @@
 import { db, type City, type Trip } from './db';
 import { tripDepartures } from './readiness';
 import { tripHotelNights, tripShape } from './trip-shape';
-import { instantToWall } from './tz';
+import { HOME_TZ, instantToWall, wallToInstant } from './tz';
 
 /**
  * Getting yourself ready — the half of a trip no booking covers.
@@ -30,18 +30,23 @@ import { instantToWall } from './tz';
  * added by hand, and travels the same way.
  */
 
-export type PrepGroup = 'food' | 'devices' | 'papers' | 'pack' | 'home';
+export type PrepGroup = 'food' | 'devices' | 'papers' | 'pack' | 'home' | 'other';
 
 /** The order they happen in, roughly: shop, charge, gather, pack, lock up. */
-export const GROUPS: PrepGroup[] = ['food', 'devices', 'papers', 'pack', 'home'];
+export const GROUPS: PrepGroup[] = ['food', 'devices', 'papers', 'pack', 'home', 'other'];
 
 export const GROUP_LABEL: Record<PrepGroup, string> = {
   food: 'Food',
   devices: 'Charging and the camera',
   papers: 'Cards and papers',
   pack: 'Packing',
-  home: 'The flat',
+  home: 'Leaving the flat',
+  other: 'Anything else',
 };
+
+export function isPrepGroup(v: string | undefined): v is PrepGroup {
+  return !!v && (GROUPS as string[]).includes(v);
+}
 
 export interface PrepItem {
   key: string;
@@ -52,8 +57,12 @@ export interface PrepItem {
   done: boolean;
   /** Food runs in an order: buy it, make it, take it. */
   after?: string;
+  /** The label of the line this one follows, when there is one. */
+  afterLabel?: string;
   /** Added by hand rather than derived. */
   own?: boolean;
+  /** Put aside as not applying to this trip. Kept, so it can come back. */
+  skipped?: boolean;
 }
 
 /** The trip's own facts that the rules read. */
@@ -65,6 +74,9 @@ export interface PrepFacts {
   leaveLabel: string;
   /** The last departure's clock time — how late you get back. */
   lastDepHour: number | null;
+  /** When the flight home lands, where the trip knows it: the better fact of the two. */
+  homeHour: number | null;
+  homeLabel: string;
   airportSleep: boolean;
   multiCity: boolean;
   /** Somewhere that does not spend pounds. */
@@ -81,12 +93,16 @@ export function prepFacts(trip: Trip, cities: City[]): PrepFacts {
   const last = deps[deps.length - 1];
   const hourOf = (t: number | undefined, tz: string | undefined) =>
     t == null ? null : Number(instantToWall(t, tz).slice(11, 13));
+  const homeTz = trip.homeward?.tz ?? HOME_TZ;
+  const homeAt = wallToInstant(trip.homeward?.at, homeTz);
   return {
     shape: tripShape(trip, legs).key,
     nights: tripHotelNights(trip, legs),
     leaveHour: first ? hourOf(first.leaveBy, first.tz) : null,
     leaveLabel: first ? instantToWall(first.leaveBy, first.tz).slice(11, 16) : '',
     lastDepHour: last ? hourOf(last.at, last.tz) : null,
+    homeHour: hourOf(homeAt, homeTz),
+    homeLabel: homeAt == null ? '' : instantToWall(homeAt, homeTz).slice(11, 16),
     airportSleep: legs.some((c) => c.sleep === 'airport'),
     multiCity: new Set(legs.map((c) => c.name.trim().toLowerCase()).filter(Boolean)).size > 1,
     abroad: legs.some((c) => c.currency && c.currency.toUpperCase() !== 'GBP'),
@@ -140,12 +156,17 @@ const RULES: Rule[] = [
   {
     key: 'food:back',
     group: 'food',
-    when: (f) => f.nights >= 2 || (f.lastDepHour != null && f.lastDepHour >= 18),
+    when: (f) =>
+      f.nights >= 2 ||
+      (f.homeHour != null && f.homeHour >= 19) ||
+      (f.homeHour == null && f.lastDepHour != null && f.lastDepHour >= 18),
     label: () => 'Something in for getting back',
     because: (f) =>
-      f.lastDepHour != null && f.lastDepHour >= 18
-        ? 'the last flight is an evening one, so you are home late and hungry'
-        : `${f.nights} nights away means an empty fridge`,
+      f.homeHour != null && f.homeHour >= 19
+        ? `you land back at ${f.homeLabel}, with nothing open after that`
+        : f.homeHour == null && f.lastDepHour != null && f.lastDepHour >= 18
+          ? 'the last flight is an evening one, so you are home late and hungry'
+          : `${f.nights} nights away means an empty fridge`,
   },
   {
     key: 'devices:charge',
@@ -222,35 +243,67 @@ const RULES: Rule[] = [
 ];
 
 /**
- * What this trip asks of you, in the order it happens. Pure: the screen passes
+ * What this trip asks of you, in the order it happens — including the lines
+ * put aside, flagged rather than dropped, so a rule that does not fit this
+ * trip can be set down without disappearing for good. Pure: the screen passes
  * the trip and its legs.
  */
 export function prepItems(trip: Trip, cities: City[]): PrepItem[] {
   const f = prepFacts(trip, cities);
   const done = new Set(trip.prep?.done ?? []);
+  const skipped = new Set(trip.prep?.skipped ?? []);
+  const groups = trip.prep?.groups ?? {};
   const items: PrepItem[] = RULES.filter((r) => r.when(f)).map((r) => ({
     key: r.key,
     label: r.label(f),
     because: r.because(f),
     group: r.group,
     done: done.has(r.key),
+    ...(skipped.has(r.key) ? { skipped: true } : {}),
     ...(r.after ? { after: r.after } : {}),
   }));
-  const keys = new Set(items.map((i) => i.key));
-  // A step that follows one the trip never got stands on its own.
-  for (const i of items) if (i.after && !keys.has(i.after)) delete i.after;
+  const byKey = new Map(items.map((i) => [i.key, i]));
+  // A step that follows one the trip never got — or one put aside — stands on
+  // its own; otherwise it names what it waits for, rather than just looking
+  // greyed out for no stated reason.
+  for (const i of items) {
+    const before = i.after ? byKey.get(i.after) : undefined;
+    if (!before || before.skipped) delete i.after;
+    else i.afterLabel = before.label;
+  }
   for (const text of trip.prep?.extra ?? []) {
     const key = `own:${text}`;
+    const group = groups[text];
     items.push({
       key,
       label: text,
       because: 'yours',
-      group: 'home',
+      // Where you filed it. Everything of your own used to land under the
+      // flat, which is only right for the things about the flat.
+      group: isPrepGroup(group) ? group : 'other',
       done: done.has(key),
+      ...(skipped.has(key) ? { skipped: true } : {}),
       own: true,
     });
   }
   return items;
+}
+
+/**
+ * Lines you have added on other trips, offered on this one. A standing item is
+ * a standing item; typing "pick up the parcel" again every time is the Notes
+ * list this is meant to replace. Nothing is added by itself — these are only
+ * one-tap suggestions.
+ */
+export function ownPrepSuggestions(trips: Trip[], tripId: string): string[] {
+  const here = new Set(trips.find((t) => t.id === tripId)?.prep?.extra ?? []);
+  const seen = new Map<string, number>();
+  for (const t of trips) {
+    if (t.id === tripId) continue;
+    for (const text of t.prep?.extra ?? [])
+      if (!here.has(text)) seen.set(text, Math.max(seen.get(text) ?? 0, t.updatedAt ?? 0));
+  }
+  return [...seen.entries()].sort((a, b) => b[1] - a[1]).map(([text]) => text);
 }
 
 /** How long before leaving this starts being worth looking at. */
@@ -275,6 +328,8 @@ export function prepIsDue(trip: Trip, cities: City[], now = Date.now()): boolean
 const prepOf = (trip: Trip) => ({
   done: [...(trip.prep?.done ?? [])],
   extra: [...(trip.prep?.extra ?? [])],
+  skipped: [...(trip.prep?.skipped ?? [])],
+  groups: { ...(trip.prep?.groups ?? {}) },
 });
 
 /** Tick or untick one line. */
@@ -284,12 +339,54 @@ export async function setPrepDone(trip: Trip, key: string, value: boolean): Prom
   await db.trips.update(trip.id, { prep, updatedAt: Date.now() });
 }
 
-/** Add something the rules did not think of, or take it away again. */
-export async function setOwnPrep(trip: Trip, text: string, keep: boolean): Promise<void> {
+/** Put a line aside as not applying to this trip, or bring it back. */
+export async function setPrepSkipped(trip: Trip, key: string, value: boolean): Promise<void> {
+  const prep = prepOf(trip);
+  prep.skipped = value
+    ? [...new Set([...prep.skipped, key])]
+    : prep.skipped.filter((k) => k !== key);
+  await db.trips.update(trip.id, { prep, updatedAt: Date.now() });
+}
+
+/**
+ * Add something the rules did not think of, or take it away again. `group`
+ * says which section it belongs in — anything of your own went under the flat
+ * before, whatever it was about.
+ */
+export async function setOwnPrep(
+  trip: Trip,
+  text: string,
+  keep: boolean,
+  group: PrepGroup = 'other',
+): Promise<void> {
   const t = text.trim();
   if (!t) return;
   const prep = prepOf(trip);
   prep.extra = keep ? [...new Set([...prep.extra, t])] : prep.extra.filter((x) => x !== t);
-  if (!keep) prep.done = prep.done.filter((k) => k !== `own:${t}`);
+  if (keep) prep.groups[t] = group;
+  else {
+    prep.done = prep.done.filter((k) => k !== `own:${t}`);
+    prep.skipped = prep.skipped.filter((k) => k !== `own:${t}`);
+    delete prep.groups[t];
+  }
+  await db.trips.update(trip.id, { prep, updatedAt: Date.now() });
+}
+
+/** Reword a line of your own, keeping its section and its tick. */
+export async function renameOwnPrep(trip: Trip, from: string, to: string): Promise<void> {
+  const next = to.trim();
+  const old = from.trim();
+  if (!next || next === old) return;
+  const prep = prepOf(trip);
+  if (!prep.extra.includes(old)) return;
+  prep.extra = [...new Set(prep.extra.map((x) => (x === old ? next : x)))];
+  const group = prep.groups[old];
+  if (group) {
+    delete prep.groups[old];
+    prep.groups[next] = group;
+  }
+  const rekey = (list: string[]) => list.map((k) => (k === `own:${old}` ? `own:${next}` : k));
+  prep.done = rekey(prep.done);
+  prep.skipped = rekey(prep.skipped);
   await db.trips.update(trip.id, { prep, updatedAt: Date.now() });
 }

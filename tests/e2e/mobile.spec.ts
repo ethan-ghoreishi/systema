@@ -141,6 +141,42 @@ test('the expense sheet is a modal dialog in the top layer, above the bars', asy
   await expect(dialog).toHaveCount(0);
 });
 
+/**
+ * The sheet is fixed to the layout viewport, so when the on-screen keyboard
+ * opens iOS pans the page rather than resizing it: the only way a field in the
+ * bottom half can come into view is for the sheet's own scroll pane to make
+ * room for the keyboard. Every long form in this app is one of these sheets,
+ * and none of them did — so tapping a field low down put it behind the keyboard
+ * with nowhere to scroll to.
+ *
+ * The keyboard cannot be summoned in a headless browser, but its height is one
+ * custom property (`--kb`, set from visualViewport), so what the fix has to do
+ * is testable: with a keyboard's worth of height taken away, the last field
+ * must still be scrollable clear of it.
+ */
+test('a sheet makes room for the on-screen keyboard', async ({ page }) => {
+  const { id } = await seed(page, 1);
+  await page.goto(`/#/trip/${id}/expenses`);
+  await page.getByRole('button', { name: 'Add' }).click();
+  const body = page.locator('dialog.modal[open] .modal-body');
+  await body.locator('details summary', { hasText: 'More details' }).click();
+  const notes = page.locator('#notes');
+
+  const scrollable = async () => body.evaluate((el) => el.scrollHeight);
+  const before = await scrollable();
+
+  // A 320px keyboard: the pane must have 320px more to scroll through, so the
+  // field that was at the bottom can come up above it.
+  await page.evaluate(() => document.documentElement.style.setProperty('--kb', '320px'));
+  expect(await scrollable()).toBeGreaterThanOrEqual(before + 320);
+
+  // And it really does clear the keyboard, with the whole pane scrolled down.
+  const box = (await body.boundingBox())!;
+  const kbTop = box.y + box.height - 320;
+  await body.evaluate((el) => (el.scrollTop = el.scrollHeight));
+  expect((await notes.boundingBox())!.y).toBeLessThan(kbTop);
+});
+
 test('copying happens inside the tap; a refused copy shows the text to copy by hand', async ({
   page,
 }) => {

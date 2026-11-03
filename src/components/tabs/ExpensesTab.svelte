@@ -122,7 +122,13 @@
               <span class="expense-desc">{e.description || e.subcategory}</span>
               <span class="expense-sub">{e.category} · {e.subcategory}</span>
             </span>
-            <span class="expense-amt expense-amt--muted">Tap to add</span>
+            <!-- A quoted fare is not spending, so it is not in the total — but
+                 it is what this row is expected to come to. -->
+            <span class="expense-amt expense-amt--muted"
+              >{e.quote && e.quote.amountGBP > 0
+                ? `quoted ${formatGBP(e.quote.amountGBP)}`
+                : 'Tap to add'}</span
+            >
           </button>
         {/each}
       </div>

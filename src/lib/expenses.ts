@@ -106,6 +106,105 @@ function round2(n: number): number {
   return Math.round((n + Number.EPSILON) * 100) / 100;
 }
 
+/** What was typed into the capture sheet, before anything is decided about it. */
+export interface AmountEntry {
+  /** The amount as typed, in `currency`. */
+  amount: number;
+  currency: string;
+  date: string;
+  /**
+   * A £ equivalent typed by hand. Ignored when `currency` is GBP: the amount
+   * *is* the £ then. Reading a hidden override instead is how editing a
+   * booking-made row used to save its original price straight back over the
+   * correction — the override field is only on screen for a foreign currency,
+   * but it was still deciding the figure.
+   */
+  overrideGBP?: number | null;
+  /** The day's rate for `currency`, where one is known. */
+  rate?: number | null;
+  /** The row as stored, when an existing one is being edited. */
+  recorded?: {
+    amount: number;
+    amountGBP: number;
+    currency: string;
+    date: string;
+    fxRate: number | null;
+    fxPending?: boolean;
+    skeleton?: boolean;
+  };
+}
+
+export interface PricedEntry {
+  amountGBP: number;
+  amountLocal: number;
+  currency: string;
+  fxRate: number | null;
+  fxPending: boolean;
+  /** The row keeps the £ it was recorded with: nothing that decides it changed. */
+  keepRecorded: boolean;
+  /** The rate actually used, for the Notes line and `fxDate`. Null when none was. */
+  autoRate: number | null;
+  /** The £ was typed by hand, so nothing may re-price it later. */
+  gbpManual: boolean;
+}
+
+/**
+ * The one place a saved expense's £ figure is decided — from the amount, its
+ * currency, the day's rate and any £ typed by hand.
+ *
+ * A row already recorded keeps its £ unless something that decided it moved
+ * (the amount, the currency, the date, or the £ itself): a rate fetched months
+ * later must never rewrite what was actually paid.
+ */
+export function priceEntry(e: AmountEntry): PricedEntry {
+  const currency = e.currency.trim().toUpperCase() || 'GBP';
+  const isGBP = currency === 'GBP';
+  const override = isGBP ? null : (e.overrideGBP ?? null);
+  const r = e.recorded;
+  const keepRecorded =
+    !!r &&
+    !r.skeleton &&
+    !r.fxPending &&
+    currency === r.currency &&
+    e.amount === r.amount &&
+    e.date === r.date &&
+    override == null;
+  if (keepRecorded)
+    return {
+      amountGBP: r.amountGBP,
+      amountLocal: isGBP ? 0 : e.amount,
+      currency,
+      fxRate: r.fxRate,
+      fxPending: false,
+      keepRecorded: true,
+      autoRate: null,
+      gbpManual: false,
+    };
+  const rate = e.rate ?? null;
+  const autoRate = isGBP || override != null ? null : rate;
+  // No £ and no rate: it saves anyway and prices itself from its own date's
+  // rate once online — or stays for a hand-typed £, for a currency the ECB
+  // does not publish.
+  const unpriced = !isGBP && override == null && rate == null;
+  const amountGBP = isGBP
+    ? round2(e.amount)
+    : override != null
+      ? round2(override)
+      : rate != null
+        ? round2(e.amount * rate)
+        : 0;
+  return {
+    amountGBP,
+    amountLocal: isGBP ? 0 : e.amount,
+    currency,
+    fxRate: isGBP ? null : override != null ? null : rate,
+    fxPending: unpriced,
+    keepRecorded: false,
+    autoRate,
+    gbpManual: override != null,
+  };
+}
+
 /** Filled (non-skeleton) expenses in row order — the rows that go to the sheet. */
 export function realExpenses(expenses: Expense[]): Expense[] {
   return [...expenses].filter((e) => !e.skeleton).sort((a, b) => a.order - b.order);

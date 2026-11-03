@@ -39,6 +39,12 @@ export const FINDER_ORIGIN_TRANSFER_PP: Record<string, number> = {
 export const FINDER_DEFAULT_TRANSFER_PP = 8;
 export const FINDER_DEST_TRANSFER_PP = 12;
 export const FINDER_HOTEL_PER_NIGHT = 60;
+/** For the whole party: bag storage on a hotel-less city day, and one eSIM. */
+export const FINDER_BAG_STORAGE_PER_DAY = 6;
+export const FINDER_ESIM_PER_TRIP = 3;
+/** For the party, when the London departure is before 06:30 (no train that early). */
+export const FINDER_EARLY_DEP_PENALTY = 25;
+export const FINDER_EARLY_DEP_BEFORE = '06:30';
 
 /** A fare older than this is a guess, not a price. */
 export const STALE_FARE_DAYS = 14;
@@ -48,10 +54,13 @@ export interface FinderAssumptions {
   travellers?: number;
   destTransferPP?: number;
   hotelPerNight?: number;
+  bagStoragePerDay?: number;
+  esimPerTrip?: number;
+  earlyDepPenalty?: number;
 }
 
 /**
- * Read a search's `<name>.config.json`. Only the three figures that decide a
+ * Read a search's `<name>.config.json`. Only the figures that decide a
  * re-priced total are taken; the rest of the run's settings are the finder's
  * business.
  */
@@ -68,6 +77,9 @@ export function parseFinderConfig(text: string): FinderAssumptions | null {
     travellers: n(cfg.travellers),
     destTransferPP: n(cfg.dest_transfer_pp),
     hotelPerNight: n(cfg.hotel_per_night),
+    bagStoragePerDay: n(cfg.bag_storage_per_day),
+    esimPerTrip: n(cfg.esim_per_trip),
+    earlyDepPenalty: n(cfg.early_dep_penalty),
   };
   return Object.values(out).some((v) => v !== undefined) ? out : null;
 }
@@ -355,9 +367,9 @@ export interface PricedOption {
   /**
    * 'finder' — the search's own true cost with the measured inputs swapped in.
    * 'parts' — a hand-written option, added up from the fares it states plus
-   * what the ledger knows. The two are close but not the same arithmetic (the
-   * finder also allows for an eSIM, bag storage and an early start), so a list
-   * holding both says so rather than pretending one ranking.
+   * what the ledger knows. Both carry the same allowances (transfers, nights,
+   * eSIM, bag storage, an early start), so the two figures can be ranked
+   * against each other; the card still says which was used.
    */
   basis: 'finder' | 'parts';
   blockers: string[];
@@ -483,6 +495,34 @@ export function priceOption(
     assumed.push(`the transfer in ${city || 'the destination'} at the finder's £${destWas} each`);
   }
   if (cities > 1) assumed.push(`the second city's transfer at the finder's £${destWas} each`);
+
+  // The three allowances the finder adds for the party and nothing here can
+  // measure. For its own rows they are already inside `finderPP`; a
+  // hand-written option has to carry them too, or a typed option would always
+  // undercut an imported one and the ranking would be a lie.
+  if (parts) {
+    const esim = o.finderAssumptions?.esimPerTrip ?? FINDER_ESIM_PER_TRIP;
+    if (esim > 0)
+      adjustments.push({
+        label: 'eSIM',
+        deltaPP: round2(esim / party),
+        basis: `${pounds(esim)} for the party, the same allowance the finder uses`,
+      });
+    const bag = o.finderAssumptions?.bagStoragePerDay ?? FINDER_BAG_STORAGE_PER_DAY;
+    if (bag > 0 && (o.paidNights ?? 0) === 0)
+      adjustments.push({
+        label: 'bag storage',
+        deltaPP: round2(bag / party),
+        basis: `${pounds(bag)} for the party — a day in a city with no room to leave a bag in`,
+      });
+    const early = o.finderAssumptions?.earlyDepPenalty ?? FINDER_EARLY_DEP_PENALTY;
+    if (early > 0 && o.outDep && o.outDep < FINDER_EARLY_DEP_BEFORE)
+      adjustments.push({
+        label: 'early start',
+        deltaPP: round2(early / party),
+        basis: `${pounds(early)} for the party — nothing runs before ${FINDER_EARLY_DEP_BEFORE}, so it is a taxi`,
+      });
+  }
 
   const nights = o.paidNights ?? 0;
   if (nights > 0) {
@@ -639,6 +679,32 @@ export function optionDates(o: TripOption): string {
   return `${a.month === b.month ? dayOf(a) : withMonth(a)} – ${withMonth(b)}`;
 }
 
+/**
+ * The fares as they were really quoted: '38 JOD + €62 each (£42 + £54)'. Two
+ * tickets bought separately are often sold in two currencies, and a figure
+ * that only ever shows sterling cannot be checked against either receipt.
+ */
+export function fareWords(o: TripOption): string {
+  const leg = (local?: number, ccy?: string, pp?: number) => {
+    if (local != null && ccy) return `${local} ${ccy}`;
+    return pp == null ? '' : pounds(pp);
+  };
+  const parts = [
+    leg(o.outFareLocal, o.outFareCcy, o.outFarePP),
+    leg(o.backFareLocal, o.backFareCcy, o.backFarePP),
+  ].filter(Boolean);
+  if (!parts.length) return '';
+  const native = parts.join(' + ');
+  const sterling =
+    o.outFareCcy || o.backFareCcy
+      ? [o.outFarePP, o.backFarePP]
+          .filter((v): v is number => v != null)
+          .map(pounds)
+          .join(' + ')
+      : '';
+  return `${native} each${sterling ? ` (${sterling})` : ''}`;
+}
+
 /** 'STN → NTE, back NTE → STN' — the airports, which decide the London end. */
 export function optionRoute(o: TripOption): string {
   const out = o.outRoute.join(' → ');
@@ -676,8 +742,6 @@ export interface OpportunityView {
   /** Options whose outbound date has gone — still here, just not in the running. */
   past: PricedOption[];
   pastCount: number;
-  /** Both kinds of figure are in this list, so neither ranking is the whole truth. */
-  mixedBasis: boolean;
 }
 
 /**
@@ -706,7 +770,6 @@ export function viewOpportunity(
     best: rows.find((r) => !r.blockers.length) ?? null,
     past,
     pastCount: past.length,
-    mixedBasis: new Set(rows.map((r) => r.basis)).size > 1,
   };
 }
 

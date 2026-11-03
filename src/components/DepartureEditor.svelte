@@ -1,14 +1,19 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
   import type { DepartPlan } from '../lib/db';
-  import { MODE_DEFAULTS, PREPARE_MIN } from '../lib/readiness';
+  import { MODE_DEFAULTS, PREPARE_MIN, planTiming } from '../lib/readiness';
   import { timeIn, tzLongName, wallToInstant } from '../lib/tz';
 
   /**
-   * One departure's plan — how you leave a city (or home): the time, the hub,
-   * how you get there and how much slack you want. Opened from the readiness
-   * card or a leg in Edit trip; everything is optional, and the leave-by time
-   * updates as you change it.
+   * One departure's plan, in the two halves it really has: the service you are
+   * catching, and how you get to it. They were one list of boxes before, which
+   * is how a coach's booking reference ended up in the flight's — and the trip
+   * then read as having a booked flight.
+   *
+   * The ride to the airport usually has a timetable. Given its times, leave-by
+   * counts back from the coach rather than from an assumed journey length, and
+   * the panel at the bottom shows the whole sum in words — including what the
+   * "get ready" figure does and does not move.
    */
   let {
     title,
@@ -16,6 +21,7 @@
     tz,
     plan,
     fromHint = '',
+    only,
     onSave,
     onClose,
   }: {
@@ -24,6 +30,8 @@
     tz?: string;
     plan: DepartPlan;
     fromHint?: string;
+    /** 'transfer' = the ride only (getting home from the airport has no service of its own). */
+    only?: 'transfer';
     onSave: (wall: string, plan: DepartPlan) => Promise<void>;
     onClose: () => void;
   } = $props();
@@ -40,6 +48,10 @@
   let ref = $state(init.plan.ref ?? '');
   let from = $state(init.plan.from ?? '');
   let transport = $state(init.plan.transport ?? '');
+  let transferAt = $state(init.plan.transferAt ?? '');
+  let transferArr = $state(init.plan.transferArr ?? '');
+  let transferRef = $state(init.plan.transferRef ?? '');
+  let payOnDay = $state(init.plan.payOnDay ?? false);
   let journey = $state(init.plan.journeyMin?.toString() ?? '');
   let buffer = $state(init.plan.bufferMin?.toString() ?? '');
   let contingency = $state(init.plan.contingencyMin?.toString() ?? '');
@@ -62,36 +74,63 @@
     const n = Number(v);
     return v.trim() !== '' && Number.isFinite(n) && n >= 0 ? Math.round(n) : undefined;
   };
+  const clean = (v: string) => v.trim() || undefined;
 
-  const leaveBy = $derived.by(() => {
+  const draft = $derived<DepartPlan>({
+    ...plan,
+    mode,
+    hub: clean(hub),
+    terminal: clean(terminal),
+    number: clean(number),
+    ref: clean(ref),
+    from: clean(from),
+    transport: clean(transport),
+    transferAt: clean(transferAt),
+    transferArr: clean(transferArr),
+    transferRef: clean(transferRef),
+    payOnDay: payOnDay || undefined,
+    journeyMin: num(journey),
+    bufferMin: num(buffer),
+    contingencyMin: num(contingency),
+    prepareMin: num(prepare),
+    notes: clean(notes),
+  });
+
+  const timing = $derived.by(() => {
     const t = wallToInstant(at, tz);
-    if (t == null) return '';
-    const mins =
-      (num(buffer) ?? defaults.bufferMin) +
-      (num(journey) ?? defaults.journeyMin) +
-      (num(contingency) ?? defaults.contingencyMin);
-    return timeIn(t - mins * 60_000, tz);
+    return t == null ? null : { t, ...planTiming(t, at, tz, draft, mode) };
+  });
+  const clock = (ms: number) => timeIn(ms, tz);
+
+  // The sum in words. Which facts it rests on is the whole point: a booked
+  // coach is a timetable, a journey nobody has timed is an allowance.
+  const explain = $derived.by(() => {
+    if (!timing) return [];
+    const lines: string[] = [];
+    if (timing.serviceAt)
+      lines.push(
+        `Leave by ${clock(timing.leaveBy)} — the ${clock(timing.serviceAt)} ${transport.trim().toLowerCase() || 'service'} with ${timing.contingencyMin} min to reach it.`,
+      );
+    else
+      lines.push(
+        `Leave by ${clock(timing.leaveBy)} = ${clock(timing.t)} departure − ${timing.bufferMin} min at ${hub.trim() || 'the airport'} − ${timing.journeyMin} min to get there${timing.assumed.includes('journey') ? ' (assumed)' : ''} − ${timing.contingencyMin} min spare.`,
+      );
+    if (timing.slackMin != null)
+      lines.push(
+        timing.slackMin <= 0
+          ? `That arrives after the departure. Look for an earlier service.`
+          : `Gets you there ${timing.slackMin} min before departure${timing.slackMin < timing.bufferMin ? ' — tighter than you asked for' : ''}.`,
+      );
+    lines.push(
+      `Start getting ready at ${clock(timing.prepareAt)} — that is just the earlier nudge; it never moves leave-by.`,
+    );
+    return lines;
   });
 
   async function save() {
     saving = true;
     error = '';
-    const clean = (v: string) => v.trim() || undefined;
-    const next: DepartPlan = {
-      ...plan,
-      mode,
-      hub: clean(hub),
-      terminal: clean(terminal),
-      number: clean(number),
-      ref: clean(ref),
-      from: clean(from),
-      transport: clean(transport),
-      journeyMin: num(journey),
-      bufferMin: num(buffer),
-      contingencyMin: num(contingency),
-      prepareMin: num(prepare),
-      notes: clean(notes),
-    };
+    const next = { ...$state.snapshot(draft) } as DepartPlan;
     // Drop unset keys so the stored plan stays small.
     for (const k of Object.keys(next) as (keyof DepartPlan)[])
       if (next[k] === undefined) delete next[k];
@@ -126,48 +165,59 @@
     <div class="modal-body">
       {#if error}<p role="alert" class="hint hint--warn">{error}</p>{/if}
 
-      <div class="chips" role="group" aria-label="How you travel">
-        {#each modes as [v, label] (v)}
-          <button class="chip" class:chip--on={mode === v} onclick={() => (mode = v)}
-            >{label}</button
-          >
-        {/each}
-      </div>
+      {#if only !== 'transfer'}
+        <span class="section-title">What you are catching</span>
+        <div class="chips" role="group" aria-label="How you travel">
+          {#each modes as [v, label] (v)}
+            <button class="chip" class:chip--on={mode === v} onclick={() => (mode = v)}
+              >{label}</button
+            >
+          {/each}
+        </div>
 
-      <label class="label" for="dep-at">Departs</label>
-      <input id="dep-at" class="field" type="datetime-local" bind:value={at} />
-      {#if tz}<p class="hint">{tzLongName(tz)} ({tz})</p>{/if}
+        <label class="label" for="dep-at">Departs</label>
+        <input id="dep-at" class="field" type="datetime-local" bind:value={at} />
+        {#if tz}<p class="hint">As printed on the ticket — {tzLongName(tz)}.</p>{/if}
 
-      <div class="dep-grid">
-        <div>
-          <label class="label" for="dep-hub"
-            >{mode === 'flight' ? 'Airport' : 'Station / stop'}</label
-          >
-          <input
-            id="dep-hub"
-            class="field"
-            placeholder={mode === 'flight' ? 'e.g. BLQ' : 'e.g. Bologna Centrale'}
-            autocapitalize="characters"
-            bind:value={hub}
-          />
+        <div class="dep-grid">
+          <div>
+            <label class="label" for="dep-hub"
+              >{mode === 'flight' ? 'Airport' : 'Station / stop'}</label
+            >
+            <input
+              id="dep-hub"
+              class="field"
+              placeholder={mode === 'flight' ? 'e.g. BLQ' : 'e.g. Bologna Centrale'}
+              autocapitalize="characters"
+              bind:value={hub}
+            />
+          </div>
+          <div>
+            <label class="label" for="dep-terminal">Terminal</label>
+            <input id="dep-terminal" class="field" placeholder="if known" bind:value={terminal} />
+          </div>
+          <div>
+            <label class="label" for="dep-number"
+              >{mode === 'flight' ? 'Flight no.' : 'Service no.'}</label
+            >
+            <input id="dep-number" class="field" placeholder="optional" bind:value={number} />
+          </div>
+          <div>
+            <label class="label" for="dep-ref"
+              >{mode === 'flight' ? 'Flight booking ref' : 'Ticket booking ref'}</label
+            >
+            <input id="dep-ref" class="field" placeholder="optional" bind:value={ref} />
+          </div>
         </div>
-        <div>
-          <label class="label" for="dep-terminal">Terminal</label>
-          <input id="dep-terminal" class="field" placeholder="if known" bind:value={terminal} />
-        </div>
-        <div>
-          <label class="label" for="dep-number"
-            >{mode === 'flight' ? 'Flight no.' : 'Service no.'}</label
-          >
-          <input id="dep-number" class="field" placeholder="optional" bind:value={number} />
-        </div>
-        <div>
-          <label class="label" for="dep-ref">Booking ref</label>
-          <input id="dep-ref" class="field" placeholder="optional" bind:value={ref} />
-        </div>
-      </div>
+        <p class="hint">
+          This reference belongs to the {mode === 'flight' ? 'flight' : 'service'} itself. The ride to
+          it has its own, below.
+        </p>
+      {/if}
 
-      <span class="section-title">Getting there</span>
+      <span class="section-title"
+        >{only === 'transfer' ? 'The journey' : `Getting to ${hub.trim() || 'the airport'}`}</span
+      >
       <div>
         <label class="label" for="dep-from">Setting off from</label>
         <input
@@ -198,7 +248,22 @@
 
       <div class="dep-grid">
         <div>
-          <label class="label" for="dep-journey">Journey (min)</label>
+          <label class="label" for="dep-tat">It leaves at</label>
+          <input id="dep-tat" class="field" type="time" bind:value={transferAt} />
+        </div>
+        <div>
+          <label class="label" for="dep-tarr">…and arrives</label>
+          <input id="dep-tarr" class="field" type="time" bind:value={transferArr} />
+        </div>
+      </div>
+      <p class="hint">
+        A booked coach or train has both on the ticket. Fill them in and the leave-by time counts
+        back from the service instead of from a guess.
+      </p>
+
+      {#if !transferAt.trim() || !transferArr.trim()}
+        <div>
+          <label class="label" for="dep-journey">Or just how long it takes (min)</label>
           <input
             id="dep-journey"
             class="field"
@@ -207,40 +272,67 @@
             bind:value={journey}
           />
         </div>
-        <div>
-          <label class="label" for="dep-buffer">Be there before (min)</label>
-          <input
-            id="dep-buffer"
-            class="field"
-            inputmode="numeric"
-            placeholder={String(defaults.bufferMin)}
-            bind:value={buffer}
-          />
-        </div>
-        <div>
-          <label class="label" for="dep-cont">Spare (min)</label>
-          <input
-            id="dep-cont"
-            class="field"
-            inputmode="numeric"
-            placeholder={String(defaults.contingencyMin)}
-            bind:value={contingency}
-          />
-        </div>
-        <div>
-          <label class="label" for="dep-prep">Get ready (min before)</label>
-          <input
-            id="dep-prep"
-            class="field"
-            inputmode="numeric"
-            placeholder={String(PREPARE_MIN)}
-            bind:value={prepare}
-          />
-        </div>
-      </div>
+      {/if}
 
-      {#if leaveBy}
-        <p class="hint hint--ok" role="status">Leave by {leaveBy}.</p>
+      <div class="dep-grid">
+        <div>
+          <label class="label" for="dep-tref">Ticket ref for this ride</label>
+          <input id="dep-tref" class="field" placeholder="optional" bind:value={transferRef} />
+        </div>
+        {#if only !== 'transfer'}
+          <div>
+            <label class="label" for="dep-buffer">Be at {hub.trim() || 'the hub'} (min early)</label
+            >
+            <input
+              id="dep-buffer"
+              class="field"
+              inputmode="numeric"
+              placeholder={String(defaults.bufferMin)}
+              bind:value={buffer}
+            />
+          </div>
+        {/if}
+      </div>
+      <label class="switch">
+        <input type="checkbox" bind:checked={payOnDay} />
+        <span class="hint">
+          Bought on the day, at the machine or on board — nothing to book, so this counts as sorted
+          once you know which ride it is.
+        </span>
+      </label>
+
+      {#if only !== 'transfer'}
+        <span class="section-title">Your own margins</span>
+        <div class="dep-grid">
+          <div>
+            <label class="label" for="dep-cont">Spare, before leaving (min)</label>
+            <input
+              id="dep-cont"
+              class="field"
+              inputmode="numeric"
+              placeholder={String(defaults.contingencyMin)}
+              bind:value={contingency}
+            />
+          </div>
+          <div>
+            <label class="label" for="dep-prep">Start getting ready (min before)</label>
+            <input
+              id="dep-prep"
+              class="field"
+              inputmode="numeric"
+              placeholder={String(PREPARE_MIN)}
+              bind:value={prepare}
+            />
+          </div>
+        </div>
+
+        {#if explain.length}
+          <div class="card card--inset" role="status">
+            {#each explain as line, i (line)}
+              <p class={i === 0 ? 'depart-title' : 'hint'}>{line}</p>
+            {/each}
+          </div>
+        {/if}
       {/if}
 
       <div>

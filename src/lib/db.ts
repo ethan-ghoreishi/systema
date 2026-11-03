@@ -47,6 +47,28 @@ export interface DepartPlan {
   /** How you get to the hub, e.g. 'Marconi Express', 'taxi', 'walk'. */
   transport?: string;
   journeyMin?: number;
+  /**
+   * The clock time the ride to the hub actually leaves ('HH:MM', the
+   * departure's own zone) — a booked coach has one, and it does not wait. When
+   * it is known, leave-by counts back from it instead of from an assumed
+   * journey length, and says so (see readiness.ts).
+   */
+  transferAt?: string;
+  /** And when it gets there, where the ticket says so. */
+  transferArr?: string;
+  /**
+   * You buy this ride at the machine or the gate: knowing which ride it is
+   * settles it, and no booking is coming. Without it, a mode and a time are
+   * only a plan — which is not the same as being sorted (see needs.ts).
+   */
+  payOnDay?: boolean;
+  /**
+   * The need key of a purchase that already covers this journey — a return
+   * ticket bought for the other direction. The two stay separate journeys
+   * (different hours, sometimes different stops), but one of them holds the
+   * money and this one is held all the same.
+   */
+  coveredBy?: string;
   /** How long before departure to be at the hub. */
   bufferMin?: number;
   /** Slack on top, for the unexpected. */
@@ -156,10 +178,22 @@ export interface Trip {
   /**
    * Getting home from the airport at the end — the other half of the London
    * end, and a journey of its own: a late landing is not the morning coach out.
+   * Its `at` is when the flight home lands, which is what decides whether you
+   * get in at a civilised hour (and so what the fridge needs).
    */
-  homeward?: DepartPlan;
-  /** Ticked personal preparation, and anything added by hand (see prep.ts). */
-  prep?: { done?: string[]; extra?: string[] };
+  homeward?: OutboundPlan;
+  /**
+   * Ticked personal preparation, anything added by hand, the lines put aside
+   * as not applying, and which section an added line belongs in (see prep.ts).
+   * `extra` stays a plain list of lines: a device on an older version reads it
+   * as one, and would show an object as text.
+   */
+  prep?: {
+    done?: string[];
+    extra?: string[];
+    skipped?: string[];
+    groups?: Record<string, string>;
+  };
   order: number;
   createdAt: number;
   updatedAt: number;
@@ -305,9 +339,22 @@ export interface TripOption {
   /** 'Ryanair 2232', or 'Vueling 8515 + Vueling 7642' through a stopover. */
   outFlights?: string;
   backFlights?: string;
-  /** Fares as quoted, £ per person. */
+  /**
+   * Fares as quoted, £ per person — always sterling, because that is what the
+   * comparison, the ranking and the finder's own figures are in.
+   */
   outFarePP?: number;
   backFarePP?: number;
+  /**
+   * The fare as it is actually sold, where that is not sterling: two tickets
+   * bought separately are often priced in two different currencies, and a
+   * dinar read as a pound is a tenfold error. The £ above is the conversion;
+   * these keep what was really quoted, so the figure can be checked.
+   */
+  outFareLocal?: number;
+  outFareCcy?: string;
+  backFareLocal?: number;
+  backFareCcy?: string;
   /** The finder's true cost per person, its usable daylight and ground hours. */
   finderPP?: number;
   usableH?: number;
@@ -337,7 +384,14 @@ export interface TripOption {
    * measured against that run rather than against constants mirrored here,
    * which drift the moment the finder's defaults change.
    */
-  finderAssumptions?: { travellers?: number; destTransferPP?: number; hotelPerNight?: number };
+  finderAssumptions?: {
+    travellers?: number;
+    destTransferPP?: number;
+    hotelPerNight?: number;
+    bagStoragePerDay?: number;
+    esimPerTrip?: number;
+    earlyDepPenalty?: number;
+  };
 }
 
 /**
@@ -417,6 +471,15 @@ export interface Expense {
    * See needs.ts. Absent on rows captured on the ground.
    */
   need?: string;
+  /**
+   * What this was quoted at when the trip was chosen — the fare off the
+   * option, for the whole party. Deliberately not `amountGBP`: the ledger
+   * records what was paid, and a quote in that column would be a purchase the
+   * totals, the insights and the sheet all believed in. It rides along so
+   * "Book it" can offer the figure instead of asking for it again, and it
+   * stays after payment as what the trip was expected to cost.
+   */
+  quote?: { amountGBP: number; note?: string };
   skeleton: boolean; // pre-seeded placeholder row vs. a real entry
   order: number;
   createdAt: number;
