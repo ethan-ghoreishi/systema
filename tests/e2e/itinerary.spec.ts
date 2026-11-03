@@ -42,11 +42,15 @@ test('a two-city stopover: scenario, zones, refused bad times, and a calm leave-
   await bologna.getByLabel('Departure', { exact: true }).blur();
   await expect(bologna.getByRole('alert')).toHaveCount(0);
 
-  await bologna.getByRole('button', { name: /Departs Fri 16 Oct, 19:00/ }).click();
+  await bologna.getByRole('button', { name: /Leaving Bologna · Fri 16 Oct, 19:00/ }).click();
   const editor = page.locator('dialog.modal[open]');
   await editor.getByLabel('Airport').fill('BLQ');
-  await editor.getByLabel('Journey (min)').fill('25');
-  await expect(editor.getByRole('status')).toHaveText('Leave by 16:50.');
+  await editor.getByLabel('Or just how long it takes (min)').fill('25');
+  // The sum is shown in words, so what the time rests on is never a mystery.
+  await expect(editor.getByRole('status')).toContainText(
+    'Leave by 16:50 = 19:00 departure − 90 min at BLQ − 25 min to get there − 15 min spare.',
+  );
+  await expect(editor.getByRole('status')).toContainText('it never moves leave-by');
   await editor.getByRole('button', { name: 'Save' }).click();
   await expect(editor).toHaveCount(0);
   await expect(bologna.getByText('leave by 16:50')).toBeVisible();

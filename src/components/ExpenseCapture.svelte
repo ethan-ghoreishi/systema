@@ -2,11 +2,12 @@
   import { onMount, untrack } from 'svelte';
   import { liveQuery } from 'dexie';
   import { db, type City, type Expense, type Trip } from '../lib/db';
-  import { getRate } from '../lib/fx';
+  import { ecbPublishes, getRate } from '../lib/fx';
   import {
     addExpense,
     deleteExpense,
     updateExpense,
+    priceEntry,
     resolvePendingFx,
     withFxNote,
   } from '../lib/expenses';
@@ -23,6 +24,7 @@
   } from '../lib/expense-defaults';
   import { categories, subcategories, paymentMethods } from '../lib/vocab';
   import { formatAmount, formatGBP, perPersonNote } from '../lib/money';
+  import { needWords } from '../lib/needs';
   import { todayIso } from '../lib/sheet';
   import { activeLegId } from '../lib/trip-shape';
   import { preparePhotos } from '../lib/photos';
@@ -102,8 +104,9 @@
   let destination = $state(init.destination);
   let destinationTouched = $state(untrack(() => !!expense));
   // A £ typed by hand stays in the override field, so editing the date or the
-  // amount can never swap it for a rate.
-  const manualGBP = untrack(() => !!expense && isManualGBP(expense));
+  // amount can never swap it for a rate. A row already in pounds has no
+  // override: its amount is the £.
+  const manualGBP = untrack(() => !!expense && expense.currency !== 'GBP' && isManualGBP(expense));
   let overrideGBP = $state(untrack(() => (manualGBP ? String(expense!.amountGBP) : '')));
   let saving = $state(false);
   let saveError = $state('');
@@ -150,24 +153,42 @@
   });
 
   const isGBP = $derived(currency === 'GBP');
+  /** No rate for this currency is ever coming, so asking for the £ is the honest move. */
+  const noRateEver = $derived(!isGBP && !ecbPublishes(currency));
   const localNum = $derived(parseFloat(amountStr) || 0);
   const computedGBP = $derived(isGBP ? localNum : rate != null ? round2(localNum * rate) : null);
-  const overrideNum = $derived(overrideGBP.trim() ? Number(overrideGBP) : null);
-  // An existing expense keeps the GBP value it was recorded with unless its
-  // source (amount, currency, date) or the £ itself is changed: a later rate
-  // never rewrites what was paid.
-  const keepRecorded = $derived(
-    expense &&
-      !expense.skeleton &&
-      !expense.fxPending &&
-      currency === init.currency &&
-      amountStr === init.amountStr &&
-      date === init.date &&
-      overrideNum == null,
+  const overrideNum = $derived(
+    !isGBP && overrideGBP.trim() && Number.isFinite(Number(overrideGBP))
+      ? Number(overrideGBP)
+      : null,
   );
-  const finalGBP = $derived(
-    keepRecorded ? expense!.amountGBP : overrideNum != null ? overrideNum : (computedGBP ?? 0),
+  // One pure decision (expenses.ts) for what the row's £ becomes: the amount in
+  // pounds, the rate, or a £ typed by hand — and the £ already recorded when
+  // nothing that decided it has moved.
+  const priced = $derived(
+    priceEntry({
+      amount: localNum,
+      currency,
+      date,
+      overrideGBP: overrideNum,
+      rate,
+      ...(expense && !expense.skeleton
+        ? {
+            recorded: {
+              amount: Number(init.amountStr) || 0,
+              amountGBP: expense.amountGBP,
+              currency: init.currency,
+              date: init.date,
+              fxRate: expense.fxRate,
+              fxPending: expense.fxPending,
+              skeleton: expense.skeleton,
+            },
+          }
+        : {}),
+    }),
   );
+  const keepRecorded = $derived(priced.keepRecorded);
+  const finalGBP = $derived(priced.amountGBP);
   const subOptions = $derived(category ? (subcategories[category] ?? []) : []);
 
   // No GBP required: a non-GBP amount with no rate saves as "awaiting rate"
@@ -226,8 +247,7 @@
   async function save() {
     if (!canSave) return;
 
-    const usingAutoRate = !keepRecorded && !isGBP && overrideNum == null && rate != null;
-    const unpriced = !keepRecorded && !isGBP && overrideNum == null && rate == null;
+    const usingAutoRate = priced.autoRate != null;
     const fields = {
       cityId: shared ? null : cityId,
       shared,
@@ -237,18 +257,20 @@
       subcategory,
       description: description.trim(),
       paymentMethod,
-      amountGBP: unpriced ? 0 : finalGBP,
-      amountLocal: isGBP ? 0 : localNum,
-      currency: isGBP ? 'GBP' : currency,
-      fxRate: keepRecorded ? expense!.fxRate : isGBP ? null : overrideNum != null ? null : rate,
+      amountGBP: priced.amountGBP,
+      amountLocal: priced.amountLocal,
+      currency: priced.currency,
+      fxRate: priced.fxRate,
       ...(keepRecorded
         ? {}
         : {
             fxDate: usingAutoRate ? (rateDate ?? date) : undefined,
-            gbpManual: overrideNum != null,
+            gbpManual: priced.gbpManual,
           }),
-      fxPending: unpriced,
-      notes: keepRecorded ? notes.trim() : withFxNote(notes, currency, usingAutoRate ? rate : null),
+      fxPending: priced.fxPending,
+      notes: keepRecorded
+        ? notes.trim()
+        : withFxNote(notes, currency, usingAutoRate ? priced.autoRate : null),
     };
 
     // A likely double entry: say so once, then save if asked again.
@@ -288,7 +310,11 @@
 
   async function remove() {
     if (!expense) return;
-    const msg = expense.skeleton ? 'Remove this skeleton row?' : 'Delete this expense?';
+    const msg = expense.skeleton
+      ? 'Remove this row from the list of things to add?'
+      : expense.need && needWords(expense.need)
+        ? `Delete this expense? ${needWords(expense.need)[0].toUpperCase()}${needWords(expense.need).slice(1)} goes back to Before you go as unpaid.`
+        : 'Delete this expense?';
     if (confirm(msg)) {
       await deleteExpense(expense.id);
       onClose();
@@ -341,7 +367,9 @@
         {#if !isGBP}
           <span class="amount-gbp">
             {#if rateMissing && overrideNum == null}
-              no rate right now — saves anyway, prices itself when online
+              {noRateEver
+                ? `no ${currency} rate is published — type the £ under More details`
+                : 'no rate right now — saves anyway, prices itself when online'}
             {:else}
               = {formatGBP(finalGBP)}{rateStale ? ' (cached rate)' : ''}
             {/if}
@@ -487,6 +515,11 @@
           </div>
           {#if manualGBP}
             <p class="hint">The £ was entered by hand and is kept; change it here if needed.</p>
+          {:else if noRateEver}
+            <p class="hint">
+              The ECB publishes no {currency} rate, so this one never prices itself — put the £ from your
+              statement here.
+            </p>
           {:else if rate != null && overrideNum == null && !keepRecorded}
             <p class="hint">
               ECB rate{rateDate ? ` for ${rateDate}` : ''}: 1 {currency} = £{rate}. Type a £ amount
@@ -518,6 +551,14 @@
           {/if}
         </div>
       </details>
+
+      {#if expense?.need && needWords(expense.need)}
+        <p class="hint">
+          This row answers for {needWords(expense.need)} on Before you go. Change the amount here and
+          that line follows; delete it and the trip asks for it again — the booking reference stays on
+          the flight or the journey it belongs to.
+        </p>
+      {/if}
 
       {#if expense}
         <button class="btn btn--danger delete-expense" onclick={remove}>

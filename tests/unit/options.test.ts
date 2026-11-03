@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
   FINDER_DEST_TRANSFER_PP,
+  fareWords,
+  FINDER_EARLY_DEP_PENALTY,
+  FINDER_ESIM_PER_TRIP,
   FINDER_HOTEL_PER_NIGHT,
   OptionParseError,
   blockers,
@@ -219,9 +222,63 @@ describe('what it really costs you', () => {
       'Faro',
     );
     expect(r.basis).toBe('parts');
-    // £35 of fares + £12 each way to Stansted + £12 in Faro + £30 of hotel.
-    expect(r.totalPP).toBe(35 + 12 + 12 + FINDER_DEST_TRANSFER_PP + FINDER_HOTEL_PER_NIGHT / 2);
+    // £35 of fares + £12 each way to Stansted + £12 in Faro + £30 of hotel,
+    // plus the party allowances the finder also carries, halved for two: one
+    // eSIM, and the 06:00 departure nothing runs for. Without them a typed
+    // option always undercut an imported one and the ranking was a lie.
+    expect(r.totalPP).toBe(
+      35 +
+        12 +
+        12 +
+        FINDER_DEST_TRANSFER_PP +
+        FINDER_HOTEL_PER_NIGHT / 2 +
+        FINDER_ESIM_PER_TRIP / 2 +
+        FINDER_EARLY_DEP_PENALTY / 2,
+    );
     expect(r.adjustments.every((a) => a.deltaPP > 0)).toBe(true);
+    // A paid night means a room to leave a bag in.
+    expect(r.adjustments.map((a) => a.label)).not.toContain('bag storage');
+  });
+
+  // The two figures have to be the same arithmetic, or the list cannot be
+  // ranked: both now carry the finder's party allowances.
+  it('carries the bag and the taxi a dawn day trip really costs', () => {
+    const r = priceOption(
+      option({
+        source: 'manual',
+        finderPP: undefined,
+        cities: undefined,
+        paidNights: 0,
+        overnight: undefined,
+        outDep: '06:05',
+      }),
+      facts(),
+      'Faro',
+    );
+    const labels = r.adjustments.map((a) => a.label);
+    expect(labels).toContain('bag storage');
+    expect(labels).toContain('early start');
+    expect(labels).toContain('eSIM');
+    expect(r.adjustments.find((a) => a.label === 'early start')?.deltaPP).toBe(
+      FINDER_EARLY_DEP_PENALTY / 2,
+    );
+  });
+
+  // A search that priced its own allowances differently is measured against
+  // the run it came from, not against constants mirrored here.
+  it('uses the search’s own allowances when it stated them', () => {
+    const r = priceOption(
+      option({
+        source: 'manual',
+        finderPP: undefined,
+        cities: undefined,
+        finderAssumptions: { travellers: 1, esimPerTrip: 9, bagStoragePerDay: 0 },
+      }),
+      facts(),
+      'Faro',
+    );
+    expect(r.adjustments.find((a) => a.label === 'eSIM')?.deltaPP).toBe(9);
+    expect(r.adjustments.map((a) => a.label)).not.toContain('bag storage');
   });
 
   it('still cannot price a hand-written option with no fares', () => {
@@ -393,5 +450,41 @@ describe('an opportunity that has quietly become history', () => {
     expect(isPast(opp(['2026-10-01']), false, now)).toBe(true);
     expect(isPast(opp(['2026-10-01']), true, now)).toBe(false);
     expect(isPast(opp(['2026-12-11']), false, now)).toBe(false);
+  });
+});
+
+// Two tickets bought separately are often sold in two currencies, and a figure
+// that only ever shows sterling cannot be checked against either receipt.
+describe('the fare as it was really quoted', () => {
+  it('shows each currency as sold, with the sterling beside it', () => {
+    expect(
+      fareWords({
+        id: 'o',
+        outDate: '2026-12-11',
+        backDate: '2026-12-13',
+        outRoute: ['STN', 'AMM'],
+        backRoute: ['AMM', 'STN'],
+        outFarePP: 54,
+        outFareLocal: 62,
+        outFareCcy: 'EUR',
+        backFarePP: 42,
+        backFareLocal: 38,
+        backFareCcy: 'JOD',
+      }),
+    ).toBe('62 EUR + 38 JOD each (£54 + £42)');
+  });
+
+  it('says nothing extra when both fares were in pounds', () => {
+    expect(
+      fareWords({
+        id: 'o',
+        outDate: '2026-12-11',
+        backDate: '2026-12-13',
+        outRoute: ['STN', 'FAO'],
+        backRoute: ['FAO', 'STN'],
+        outFarePP: 19,
+        backFarePP: 15.5,
+      }),
+    ).toBe('£19 + £15.50 each');
   });
 });

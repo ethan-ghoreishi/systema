@@ -30,6 +30,108 @@ export const PREPARE_MIN = 45;
 const SOON_MIN = 10;
 const MIN = 60_000;
 
+/**
+ * What the leave-by time rests on. A booked coach has a timetable, and it does
+ * not wait: once its own departure is known, counting back from an assumed
+ * journey length is guesswork laid over a fact. So the fact wins, and the card
+ * says which of the two it used.
+ */
+export interface Timing {
+  journeyMin: number;
+  bufferMin: number;
+  contingencyMin: number;
+  prepareMin: number;
+  /** Values filled from defaults, so the card can say so. */
+  assumed: ('journey' | 'buffer')[];
+  /** The instant the ride to the hub leaves, where its time is known. */
+  serviceAt?: number;
+  /** And arrives, where the ticket says so. */
+  serviceArr?: number;
+  leaveBy: number;
+  prepareAt: number;
+  /** Past this, the contingency is used up. */
+  latestLeave: number;
+  /** Minutes at the hub before departure on the booked ride, where it is known. */
+  slackMin?: number;
+}
+
+const n = (v: number | undefined) => (typeof v === 'number' && v >= 0 ? v : undefined);
+
+/**
+ * The instant of an 'HH:MM' ride on the day of a departure — or the day
+ * before, when that is the only reading that leaves before the departure (the
+ * 23:10 coach for the 06:30 flight).
+ */
+function rideInstant(
+  hhmm: string | undefined,
+  departAt: number,
+  wall: string,
+  tz: string | undefined,
+): number | undefined {
+  if (!/^\d{1,2}:\d{2}$/.test(hhmm?.trim() ?? '')) return undefined;
+  const time = hhmm!.trim().padStart(5, '0');
+  const sameDay = wallToInstant(`${wall.slice(0, 10)}T${time}`, tz);
+  if (sameDay == null) return undefined;
+  if (sameDay <= departAt) return sameDay;
+  const dayBefore = wallToInstant(
+    `${instantToWall(wallToInstant(wall.slice(0, 10), tz)! - 86_400_000, tz).slice(0, 10)}T${time}`,
+    tz,
+  );
+  return dayBefore ?? sameDay;
+}
+
+/**
+ * Every timing fact for one departure, from its plan. Pure, and the one place
+ * leave-by is worked out — the card, the calendar file, the trip list and
+ * "getting ready" all read it from here.
+ */
+export function planTiming(
+  departAt: number,
+  wall: string,
+  tz: string | undefined,
+  plan: DepartPlan,
+  mode = 'flight',
+): Timing {
+  const d = MODE_DEFAULTS[mode] ?? MODE_DEFAULTS.flight;
+  const serviceAt = rideInstant(plan.transferAt, departAt, wall, tz);
+  const serviceArr =
+    serviceAt == null ? undefined : rideInstant(plan.transferArr, departAt, wall, tz);
+  const timed = serviceAt != null && serviceArr != null && serviceArr > serviceAt;
+  const journeyMin = timed
+    ? Math.round((serviceArr! - serviceAt!) / MIN)
+    : (n(plan.journeyMin) ?? d.journeyMin);
+  const bufferMin = n(plan.bufferMin) ?? d.bufferMin;
+  const contingencyMin = n(plan.contingencyMin) ?? d.contingencyMin;
+  const prepareMin = n(plan.prepareMin) ?? PREPARE_MIN;
+  const assumed: Timing['assumed'] = [];
+  if (!timed && n(plan.journeyMin) == null) assumed.push('journey');
+  if (n(plan.bufferMin) == null) assumed.push('buffer');
+  // With a timetable, the spare minutes are the walk to the stop: miss the
+  // coach and the next one is not a cushion away. Without one, they are slack
+  // on top of a journey nobody has measured.
+  const leaveBy =
+    serviceAt != null
+      ? serviceAt - contingencyMin * MIN
+      : departAt - (bufferMin + journeyMin + contingencyMin) * MIN;
+  return {
+    journeyMin,
+    bufferMin,
+    contingencyMin,
+    prepareMin,
+    assumed,
+    ...(serviceAt != null ? { serviceAt } : {}),
+    ...(serviceArr != null ? { serviceArr } : {}),
+    leaveBy,
+    prepareAt: leaveBy - prepareMin * MIN,
+    // The coach you must be on is the last moment you can leave; otherwise the
+    // cushion is what is left.
+    latestLeave: serviceAt != null ? serviceAt : leaveBy + contingencyMin * MIN,
+    ...(serviceAt != null
+      ? { slackMin: Math.round((departAt - (serviceArr ?? serviceAt + journeyMin * MIN)) / MIN) }
+      : {}),
+  };
+}
+
 export interface Departure {
   /** 'outbound' (leaving home) or the leg's id. */
   key: string;
@@ -54,6 +156,10 @@ export interface Departure {
   prepareAt: number;
   /** Past this, the contingency is used up. */
   latestLeave: number;
+  /** The ride to the hub, where its own times are known (see planTiming). */
+  serviceAt?: number;
+  serviceArr?: number;
+  slackMin?: number;
 }
 
 function hubName(plan: DepartPlan, mode: string, from: string): string {
@@ -75,16 +181,6 @@ function build(
   const at = wallToInstant(wall, tz);
   if (at == null) return null;
   const mode = plan.mode && MODE_DEFAULTS[plan.mode] ? plan.mode : 'flight';
-  const d = MODE_DEFAULTS[mode];
-  const n = (v: number | undefined) => (typeof v === 'number' && v >= 0 ? v : undefined);
-  const journeyMin = n(plan.journeyMin) ?? d.journeyMin;
-  const bufferMin = n(plan.bufferMin) ?? d.bufferMin;
-  const contingencyMin = n(plan.contingencyMin) ?? d.contingencyMin;
-  const prepareMin = n(plan.prepareMin) ?? PREPARE_MIN;
-  const leaveBy = at - (bufferMin + journeyMin + contingencyMin) * MIN;
-  const assumed: Departure['assumed'] = [];
-  if (n(plan.journeyMin) == null) assumed.push('journey');
-  if (n(plan.bufferMin) == null) assumed.push('buffer');
   return {
     key,
     cityId,
@@ -96,14 +192,7 @@ function build(
     plan,
     mode,
     hub: hubName(plan, mode, from),
-    journeyMin,
-    bufferMin,
-    contingencyMin,
-    prepareMin,
-    assumed,
-    leaveBy,
-    prepareAt: leaveBy - prepareMin * MIN,
-    latestLeave: leaveBy + contingencyMin * MIN,
+    ...planTiming(at, wall, tz, plan, mode),
   };
 }
 
@@ -197,9 +286,20 @@ export function readiness(d: Departure, now: number, deviceTz?: string): Readine
     d.tz && deviceTz && d.tz !== deviceTz ? ` (${d.from === 'home' ? 'UK' : d.from} time)` : '';
   const leave = `${clockLabel(d.leaveBy, d.tz, now)}${zoneNote}`;
   const via = d.plan.transport?.trim() ? ` by ${d.plan.transport.trim()}` : '';
-  const assumed = d.assumed.includes('journey')
-    ? ` Assuming ${d.journeyMin} min to get there — set the real time.`
+  // A booked ride's own departure is a fact; a journey length nobody set is a
+  // guess. Say which this time is built on, every time.
+  const ride = d.serviceAt
+    ? ` The ${clockLabel(d.serviceAt, d.tz, now)}${d.plan.transport?.trim() ? ` ${d.plan.transport.trim().toLowerCase()}` : ' service'} does not wait.`
     : '';
+  const assumed = d.serviceAt
+    ? ''
+    : d.assumed.includes('journey')
+      ? ` Assuming ${d.journeyMin} min to get there — set the real time.`
+      : '';
+  const tight =
+    d.slackMin != null && d.slackMin < d.bufferMin
+      ? ` That gets you to ${d.hub} ${d.slackMin <= 0 ? 'after the departure' : `only ${d.slackMin} min before`} — check there is nothing earlier.`
+      : '';
   const ref = d.plan.ref?.trim() ? ` Booking ${d.plan.ref.trim()}.` : '';
   switch (stage) {
     case 'later': {
@@ -207,26 +307,28 @@ export function readiness(d: Departure, now: number, deviceTz?: string): Readine
       return {
         stage,
         title: `Leave for ${d.hub} by ${leave}.`,
-        detail: `You are on track.${until < 24 * 60 * MIN ? ` That's in ${duration(until)}.` : ''}${assumed}`,
+        detail: `You are on track.${until < 24 * 60 * MIN ? ` That's in ${duration(until)}.` : ''}${ride}${assumed}${tight}`,
       };
     }
     case 'prepare':
       return {
         stage,
         title: `Start getting ready — leave for ${d.hub} by ${leave}.`,
-        detail: `You are on track. ${d.journeyMin} min${via} to ${d.hub}.${assumed}`,
+        detail: `You are on track. ${d.journeyMin} min${via} to ${d.hub}.${ride}${assumed}${tight}`,
       };
     case 'leave-by':
       return {
         stage,
         title: `Leave for ${d.hub} by ${leave} — in ${duration(d.leaveBy - now)}.`,
-        detail: `${d.journeyMin} min${via} to ${d.hub}, then ${d.bufferMin} min before departure.${assumed}`,
+        detail: `${d.journeyMin} min${via} to ${d.hub}, then ${d.slackMin ?? d.bufferMin} min before departure.${ride}${assumed}${tight}`,
       };
     case 'go':
       return {
         stage,
         title: `Time to go — leave for ${d.hub} now.`,
-        detail: `Your ${d.contingencyMin}-minute cushion is in use; you're still fine.${ref}`,
+        detail: d.serviceAt
+          ? `The ${clockLabel(d.serviceAt, d.tz, now)} service leaves in ${duration(d.serviceAt - now)}.${ref}`
+          : `Your ${d.contingencyMin}-minute cushion is in use; you're still fine.${ref}`,
       };
     default: {
       const margin = Math.round((d.at - (now + d.journeyMin * MIN)) / MIN);

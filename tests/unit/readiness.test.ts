@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type { City, Trip } from '../../src/lib/db';
+import type { City, DepartPlan, Trip } from '../../src/lib/db';
 import {
   departuresIcs,
   nextDeparture,
@@ -124,5 +124,63 @@ describe('departuresIcs', () => {
   it('skips reminders already in the past', () => {
     const ics = departuresIcs('t', 'x', tripDepartures(trip(), cities), Z('2026-10-17T10:30'));
     expect(ics.match(/BEGIN:VEVENT/g)).toHaveLength(1); // only BLQ leave-now
+  });
+});
+
+// A booked coach has a timetable, and it does not wait. Counting back from an
+// assumed journey length when the ticket says 04:35 is a guess laid over a
+// fact — and the fact is what decides whether you make the flight.
+describe('a ride to the airport with its own clock', () => {
+  const withCoach = (over: Partial<DepartPlan> = {}) =>
+    tripDepartures(
+      trip({
+        outbound: {
+          at: '2026-10-16T06:30',
+          tz: 'Europe/London',
+          hub: 'STN',
+          transport: 'National Express',
+          transferAt: '03:50',
+          transferArr: '05:00',
+          contingencyMin: 10,
+          ...over,
+        },
+      }),
+      [],
+    )[0];
+
+  it('counts back from the service, not from an assumed journey', () => {
+    const d = withCoach();
+    expect(d.serviceAt).toBe(Z('2026-10-16T02:50'));
+    // 03:50 London (02:50Z) − 10 min to reach the stop.
+    expect(d.leaveBy).toBe(Z('2026-10-16T02:40'));
+    // The ticket's own two times are the journey; nothing is assumed about it.
+    expect(d.journeyMin).toBe(70);
+    expect(d.assumed).not.toContain('journey');
+    // 05:00 at Stansted for a 06:30 flight.
+    expect(d.slackMin).toBe(90);
+    expect(readiness(d, Z('2026-10-16T00:00'), 'Europe/London').detail).toContain('03:50');
+  });
+
+  it('says so when the booked ride cuts the margin fine', () => {
+    const d = withCoach({ transferAt: '05:10', transferArr: '06:05' });
+    expect(d.slackMin).toBe(25);
+    expect(readiness(d, Z('2026-10-16T00:00'), 'Europe/London').detail).toContain(
+      'only 25 min before',
+    );
+  });
+
+  // The 23:10 coach for the 06:30 flight leaves the night before.
+  it('reads a ride timed before midnight as the previous evening', () => {
+    const d = withCoach({ transferAt: '23:10', transferArr: '00:30' });
+    expect(d.serviceAt).toBe(Z('2026-10-15T22:10'));
+    expect(d.leaveBy).toBe(Z('2026-10-15T22:00'));
+  });
+
+  // You cannot leave later than the coach: there is no cushion past it.
+  it('makes the service the last moment you can leave', () => {
+    const d = withCoach();
+    expect(d.latestLeave).toBe(d.serviceAt);
+    expect(stageAt(d, Z('2026-10-16T02:45'))).toBe('go');
+    expect(stageAt(d, Z('2026-10-16T02:55'))).toBe('plan-b');
   });
 });

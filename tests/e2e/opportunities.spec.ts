@@ -180,11 +180,11 @@ test('a finder search becomes a compared shortlist, a trip, and a booked coach',
 
   // --- Booking the coach once: the requirement and the expense together ---
   await before.locator('.need', { hasText: 'Getting to LTN' }).getByRole('button').click();
-  await page.getByLabel('What it cost, for everyone (£)').fill('22');
+  await page.getByLabel('What it cost, for everyone').fill('22');
   await page.getByLabel('How you get there').fill('National Express');
-  await page.getByLabel('How long it takes (minutes)').fill('75');
+  await page.getByLabel('Or how long it takes (minutes)').fill('75');
   await page.getByRole('button', { name: 'Save' }).click();
-  await expect(page.getByText(/£22 is in Expenses/)).toBeVisible();
+  await expect(page.getByText(/£22.00 is in Expenses/)).toBeVisible();
 
   // It leaves the outstanding list for the settled one, and the 75 minutes
   // reach the countdown: leave-by stops being a guess.
@@ -221,10 +221,10 @@ test('a finder search becomes a compared shortlist, a trip, and a booked coach',
     .locator('.need', { hasText: 'Somewhere to stay in Faro' })
     .getByRole('button')
     .click();
-  await page.getByLabel('What it cost, for everyone (£)').fill('58');
+  await page.getByLabel('What it cost, for everyone').fill('58');
   await page.getByLabel('Where you are staying').fill('Hotel Faro Boutique');
   await page.getByRole('button', { name: 'Save' }).click();
-  await expect(page.getByText(/£58 is in Expenses/)).toBeVisible();
+  await expect(page.getByText(/£58.00 is in Expenses/)).toBeVisible();
   const hotel = await page.evaluate(async () => {
     const { db } = await import(/* @vite-ignore */ '/src/lib/db.ts');
     const t = (await db.trips.toArray()).find((x) => x.opportunityId);
@@ -247,9 +247,9 @@ test('a finder search becomes a compared shortlist, a trip, and a booked coach',
     .locator('.need', { hasText: 'Getting into Faro from FAO' })
     .getByRole('button')
     .click();
-  await page.getByLabel('What it cost, for everyone (£)').fill('9');
+  await page.getByLabel('What it cost, for everyone').fill('9');
   await page.getByLabel('How you get there').fill('Próximo bus 16');
-  await page.getByLabel('How long it takes (minutes)').fill('20');
+  await page.getByLabel('Or how long it takes (minutes)').fill('20');
   await page.getByText('The same ticket covers the way back').click();
   await page.getByRole('button', { name: 'Save' }).click();
   await expect(before.locator('.before > .need', { hasText: 'Getting into Faro' })).toHaveCount(0);
@@ -287,6 +287,9 @@ test('an option whose dates have gone stops asking, and the research is kept', a
   });
   await page.reload();
 
+  // Fares that have been overtaken are research to come back to, not a
+  // shortlist to read past: they fold away behind one line.
+  await page.locator('summary', { hasText: /dates have gone/ }).click();
   const card = page.locator('.trip-card', { hasText: 'Gdansk' });
   await expect(card).toContainText('dates passed');
   await card.click();
@@ -330,18 +333,23 @@ test('a destination and an option written by hand go all the way to a trip', asy
   const form = page.locator('dialog[open] .modal-body');
   await form.getByLabel('Out on').fill('2027-04-16');
   await form.getByLabel('Back on').fill('2027-04-18');
-  const fill = async (label: string, i: number, value: string) =>
-    form.getByLabel(label, { exact: true }).nth(i).fill(value);
+  const fill = async (label: string | RegExp, i: number, value: string) =>
+    form
+      .getByLabel(label, typeof label === 'string' ? { exact: true } : undefined)
+      .nth(i)
+      .fill(value);
   for (const [i, leg] of [
     { from: 'stn', to: 'vlc', dep: '07:10', arr: '10:45', no: 'Ryanair 3012', fare: '28' },
     { from: 'vlc', to: 'stn', dep: '19:20', arr: '21:05', no: 'Ryanair 3013', fare: '34' },
   ].entries()) {
     await fill('From', i, leg.from);
     await fill('To', i, leg.to);
-    await fill('Departs', i, leg.dep);
-    await fill('Arrives', i, leg.arr);
+    // Each clock names the airport it belongs to: 'Departs · STN time'.
+    await fill(/^Departs · /, i, leg.dep);
+    await fill(/^Arrives · /, i, leg.arr);
+    await form.locator('summary', { hasText: 'More about this flight' }).nth(i).click();
     await fill('Flight number', i, leg.no);
-    await fill('Fare, each (£)', i, leg.fare);
+    await fill('Fare, each', i, leg.fare);
   }
   await form.getByLabel('Where you sleep').selectOption('hotel');
   await form.getByLabel('Nights to pay for').fill('2');
@@ -353,7 +361,7 @@ test('a destination and an option written by hand go all the way to a trip', asy
   await expect(card).toContainText('STN → VLC');
   await expect(card.locator('.opt-total')).not.toContainText('—');
   await card.locator('summary').first().click();
-  await expect(card).toContainText('added up from what you typed');
+  await expect(card).toContainText('Added up from what you typed');
 
   await card.getByRole('button', { name: 'Choose this' }).click();
   await expect(page.getByText(/Trip created/)).toBeVisible();
@@ -417,7 +425,14 @@ test('picking everything the search saved finds the results and its settings', a
       const opp = await db.opportunities.toCollection().first();
       return opp?.options[0]?.finderAssumptions;
     }),
-  ).toEqual({ travellers: 3, destTransferPP: 14, hotelPerNight: 72 });
+  ).toEqual({
+    travellers: 3,
+    destTransferPP: 14,
+    hotelPerNight: 72,
+    bagStoragePerDay: undefined,
+    esimPerTrip: undefined,
+    earlyDepPenalty: undefined,
+  });
 });
 
 // The half of a trip no booking covers. The rules are unit-tested; what the
@@ -463,16 +478,144 @@ test('getting ready appears close to the day, and a tick sticks', async ({ page 
   await expect(prep).toBeVisible();
   // The reason is this trip's own: a 05:40 flight means leaving in the dark.
   await expect(prep).toContainText('nothing is open on the way');
-  await prep.locator('.need', { hasText: 'Buy the food' }).locator('input').check();
+  // 'Buy the food' also appears in what the next step waits for, so this is
+  // the line itself, not the one that names it.
+  await prep.getByRole('checkbox', { name: /^Buy the food/ }).check();
   // The card reads the trip back through its own live query, so this is the
   // write landing — reloading before it has is a race, not a test.
-  await expect(prep.locator('.need--done', { hasText: 'Buy the food' })).toBeVisible();
+  await expect(prep.locator('.need--done', { hasText: 'nuts, coffee' })).toBeVisible();
   await page.reload();
-  await expect(prep.locator('.need--done', { hasText: 'Buy the food' })).toBeVisible();
+  await expect(prep.locator('.need--done', { hasText: 'nuts, coffee' })).toBeVisible();
   expect(
     await page.evaluate(async () => {
       const { db } = await import(/* @vite-ignore */ '/src/lib/db.ts');
       return (await db.trips.get('soon'))?.prep?.done;
     }),
   ).toEqual(['food:buy']);
+});
+
+/**
+ * The money path, end to end, in the browser — the one that was broken.
+ *
+ * A trip typed by hand with the two tickets priced in different currencies;
+ * choosing it carries the fares forward as quotes, not as spending; booking
+ * writes the real price once; and correcting that price afterwards in Expenses
+ * actually sticks (it used to spring back to the original figure).
+ */
+test('a quoted fare becomes a booking, and a corrected price stays corrected', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Add a destination' }).click();
+  await page.getByLabel('Where').fill('Amman');
+  await page.getByLabel('Country').fill('Jordan');
+  await page.getByRole('button', { name: 'Add' }).click();
+
+  await page.getByRole('button', { name: 'Add an option' }).click();
+  const form = page.locator('dialog[open] .modal-body');
+
+  // Coming back before you set off is not offered at all now: moving the
+  // outbound past the return takes the return with it.
+  await form.getByLabel('Out on').fill('2027-05-14');
+  await form.getByLabel('Back on').fill('2027-05-17');
+  await form.getByLabel('Out on').fill('2027-05-20');
+  await expect(form.getByLabel('Back on')).toHaveValue('2027-05-20');
+  await form.getByLabel('Out on').fill('2027-05-14');
+  await form.getByLabel('Back on').fill('2027-05-17');
+
+  const nth = (label: string | RegExp, i: number) =>
+    form.getByLabel(label, typeof label === 'string' ? { exact: true } : undefined).nth(i);
+  await nth('From', 0).fill('stn');
+  await nth('To', 0).fill('amm');
+  await nth(/^Departs · /, 0).fill('09:30');
+  await nth(/^Arrives · /, 0).fill('17:05');
+  await nth('From', 1).fill('amm');
+  await nth('To', 1).fill('stn');
+  await nth(/^Departs · /, 1).fill('11:00');
+  await nth(/^Arrives · /, 1).fill('14:40');
+
+  // The clocks name the airport whose time they are: a 09:30 departure and a
+  // 17:05 arrival are two different clocks, and the card has to say so.
+  await expect(nth(/^Departs · /, 0)).toHaveAttribute('id', 'out-dep');
+  await expect(form.getByText('Departs · STN time')).toBeVisible();
+  await expect(form.getByText('Arrives · AMM time')).toBeVisible();
+
+  // Two tickets, two currencies. The dinar has no published rate, so the £ is
+  // asked for rather than promised.
+  await nth('Fare, each', 0).fill('180');
+  await nth('Paid in', 0).selectOption('GBP');
+  await nth('Fare, each', 1).fill('95');
+  await nth('Paid in', 1).selectOption('JOD');
+  await expect(form.getByText(/No JOD rate is published/)).toBeVisible();
+  await nth(/^…which is, in £ each$/, 0).fill('106');
+
+  await form.getByLabel('Where you sleep').selectOption('hotel');
+  await form.getByLabel('Nights to pay for').fill('3');
+  await page.getByRole('button', { name: 'Save' }).click();
+
+  // The fare is shown as it was really quoted, with the sterling beside it.
+  const card = page.locator('.opt').first();
+  await card.locator('summary').first().click();
+  await expect(card).toContainText('£180 + 95 JOD each (£180 + £106)');
+
+  await card.getByRole('button', { name: 'Choose this' }).click();
+  await expect(page.getByText(/Trip created/)).toBeVisible();
+  await page.locator('.opp-chosen').click();
+
+  // Jordan spends dinars, so nothing has to be typed for that either.
+  expect(
+    await page.evaluate(async () => {
+      const { db } = await import(/* @vite-ignore */ '/src/lib/db.ts');
+      return (await db.cities.toArray()).find((c) => c.name === 'Amman')?.currency;
+    }),
+  ).toBe('JOD');
+
+  // --- A quote is not a payment ---
+  const before = page.getByRole('region', { name: 'Before you go' });
+  await expect(before.locator('.need', { hasText: 'Ticket out' })).toContainText('quoted £360');
+  await expect(before.locator('.need', { hasText: 'Ticket home' })).toContainText('quoted £212');
+  await page.getByRole('link', { name: 'Expenses' }).click();
+  // Nothing has been spent: the quotes are beside the rows, not in the total.
+  await expect(
+    page.locator('.expense-row--skeleton', { hasText: 'Outbound flight' }),
+  ).toContainText('quoted £360.00');
+  await expect(page.getByText('£0.00').first()).toBeVisible();
+
+  // --- Booking it offers the quote, and records what was really paid ---
+  await page.getByRole('link', { name: 'Plan' }).click();
+  await before.locator('.need', { hasText: 'Ticket out' }).getByRole('button').click();
+  await expect(page.getByLabel('What it cost, for everyone')).toHaveValue('360');
+  await page.getByLabel('What it cost, for everyone').fill('372');
+  await page.getByLabel('Booking reference').fill('RY-99KL');
+  await page.getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByText(/£372.00 is in Expenses/)).toBeVisible();
+
+  // --- And a mistake in Expenses can be corrected ---
+  await page.getByRole('link', { name: 'Expenses' }).click();
+  const row = page.locator('.expense-row', { hasText: 'Outbound flight' });
+  await expect(row).toContainText('372');
+  await row.click();
+  await expect(page.getByText(/answers for the ticket out/)).toBeVisible();
+  // The booking wrote the £ as a hand-typed one, which used to be held in a
+  // hidden field and written straight back over any correction.
+  const keypad = page.locator('dialog[open]');
+  for (let i = 0; i < 3; i += 1)
+    await keypad.getByRole('button', { name: 'Delete', exact: true }).click();
+  for (const k of ['3', '0', '8'])
+    await keypad.getByRole('button', { name: k, exact: true }).click();
+  await keypad.getByRole('button', { name: 'Save' }).click();
+  await expect(row).toContainText('308');
+  expect(
+    await page.evaluate(async () => {
+      const { db } = await import(/* @vite-ignore */ '/src/lib/db.ts');
+      const e = (await db.expenses.toArray()).find((x) => x.need === 'flight:outbound');
+      return { amountGBP: e?.amountGBP, ref: e?.notes, quote: e?.quote?.amountGBP };
+    }),
+  ).toEqual({ amountGBP: 308, ref: 'Booking RY-99KL', quote: 360 });
+
+  // The reference went onto the flight, not into the ledger's description.
+  expect(
+    await page.evaluate(async () => {
+      const { db } = await import(/* @vite-ignore */ '/src/lib/db.ts');
+      return (await db.trips.toArray()).find((t) => t.opportunityId)?.outbound?.ref;
+    }),
+  ).toBe('RY-99KL');
 });

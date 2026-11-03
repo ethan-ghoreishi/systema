@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
 
-  /** Paste what Claude wrote for one city (or the whole trip), in a native top-layer sheet. */
+  /** Paste what the assistant wrote for one city (or the whole trip), in a native top-layer sheet. */
   let {
     title,
     hint,
@@ -59,7 +59,7 @@
       <textarea
         class="field plan-textarea"
         aria-label="Plan text"
-        placeholder="Paste Claude's answer here…"
+        placeholder="Paste the answer here…"
         bind:value={text}></textarea>
     </div>
   </div>

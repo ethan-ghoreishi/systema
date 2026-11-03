@@ -13,6 +13,7 @@
     SORT_LABEL,
     STALE_FARE_DAYS,
     describeDifference,
+    fareWords,
     optionDates,
     optionLeg,
     optionRoute,
@@ -93,7 +94,7 @@
     await updateOpportunity(id, { research: text });
   }
 
-  function askClaude() {
+  function copyResearchPrompt() {
     if (!opp) return;
     const airports = [
       ...new Set(view.rows.flatMap((r) => [r.option.outRoute.at(-1), r.option.backRoute[0]])),
@@ -112,7 +113,7 @@
     );
     void copied.then((ok) => {
       if (ok)
-        status = `Prompt copied — run it in Claude, then paste the answer back into what you know about ${opp.city}.`;
+        status = `Prompt copied — run it in your AI assistant, then paste the answer back into what you know about ${opp.city}.`;
     });
   }
 
@@ -170,22 +171,9 @@
       <span class="opt-dates">{optionDates(o)}</span>
       <span class="opt-total">{money(row.totalPP)}<small> each</small></span>
     </header>
-    <p class="opt-route">
-      {optionRoute(o)}{#if o.outFlights}
-        · {o.outFlights}{/if}{#if o.source === 'manual'}
-        · yours{/if}
-    </p>
-
-    {#if taken}
-      <a class="opt-diff" href={`#/trip/${taken.id}/plan`}
-        >Chosen — {tripDisplayName(
-          taken,
-          ($citiesQ ?? []).filter((c) => c.tripId === taken.id),
-        )}</a
-      >
-    {/if}
 
     {#if row.blockers.length}
+      <p class="opt-route">{optionRoute(o)}</p>
       <p class="hint hint--warn">{row.blockers.join(' ')}</p>
     {:else}
       <ul class="opt-facts">
@@ -197,74 +185,55 @@
           <span class="status-key">Back</span>
           <span class="status-val">{optionLeg(o, 'back') || '—'}</span>
         </li>
-        {#if o.outDep}
-          <li class="status-row">
-            <span class="status-key">Leave home</span>
-            <span class="status-val"
-              >{row.leaveHome?.time ?? '—'}{row.leaveHome?.dayBefore
-                ? ' the night before'
-                : ''}</span
-            >
-          </li>
-        {/if}
-        {#if row.usableH != null}
-          <li class="status-row">
-            <span class="status-key">Daylight there</span>
-            <span class="status-val"
-              >{row.usableH} h{#if row.groundH}<small>&nbsp;of {row.groundH} h on the ground</small
-                >{/if}</span
-            >
-          </li>
-        {/if}
-        {#if row.homeBy}
-          <li class="status-row">
-            <span class="status-key">Home by</span>
-            <span class="status-val"
-              >about {row.homeBy.time}{row.homeBy.dayAfter ? ' the next day' : ''}</span
-            >
-          </li>
-        {/if}
-        {#if o.overnight}
-          <li class="status-row">
-            <span class="status-key">Night</span><span class="status-val">{o.overnight}</span>
-          </li>
-        {/if}
-        {#if o.note}
-          <li class="status-row">
-            <span class="status-key">Note</span><span class="status-val">{o.note}</span>
-          </li>
-        {/if}
       </ul>
+      <!-- The shape of the day, on one line: what the trip is actually like. -->
+      <p class="opt-route">
+        {[
+          row.usableH != null ? `${row.usableH} h daylight` : '',
+          row.leaveHome
+            ? `leave ${row.leaveHome.time}${row.leaveHome.dayBefore ? ' the night before' : ''}`
+            : '',
+          row.homeBy ? `back ~${row.homeBy.time}${row.homeBy.dayAfter ? ' next day' : ''}` : '',
+          o.overnight ?? '',
+        ]
+          .filter(Boolean)
+          .join(' · ')}
+      </p>
+      {#if o.note}<p class="opt-route">{o.note}</p>{/if}
 
-      {#if live && view.best && o.id !== view.best.option.id}
+      {#if taken}
+        <a class="opt-diff" href={`#/trip/${taken.id}/plan`}
+          >Chosen — {tripDisplayName(
+            taken,
+            ($citiesQ ?? []).filter((c) => c.tripId === taken.id),
+          )}</a
+        >
+      {:else if live && view.best && o.id !== view.best.option.id}
         <p class="opt-diff">{describeDifference(row, view.best)}</p>
       {:else if live && view.best}
-        <p class="opt-diff opt-diff--best">
-          {SORT_LABEL[sort]} here, once your own costs are used.
-        </p>
+        <p class="opt-diff opt-diff--best">{SORT_LABEL[sort]} here, on your own costs.</p>
       {/if}
 
       {#if live && row.fareAgeDays != null && row.fareAgeDays >= STALE_FARE_DAYS}
         <p class="hint hint--warn">
-          Fare last checked {row.fareAgeDays} days ago — worth looking again before deciding.
+          Fare last checked {row.fareAgeDays} days ago — worth looking again.
         </p>
       {/if}
 
       <details class="opt-work">
-        <summary class="section-title">How this figure was reached</summary>
+        <summary class="section-title">Where {money(row.totalPP)} comes from</summary>
+        {#if fareWords(o)}
+          <p class="hint">Fares: {fareWords(o)}.</p>
+        {/if}
         {#if row.basis === 'parts'}
           <p class="hint">
-            Yours, so it is added up from what you typed: {row.farePP == null
+            Added up from what you typed — {row.farePP == null
               ? 'no fares yet'
-              : `${pounds(row.farePP)} of fares`} plus the transfers and nights below. The finder's own
-            figures also carry an eSIM, bag storage and an early-start allowance, so the two are close
-            arithmetic rather than the same.
+              : `${pounds(row.farePP)} of fares`} plus the transfers, nights and allowances below.
           </p>
         {:else if row.finderPP != null}
           <p class="hint">
-            The finder worked it out at {pounds(row.finderPP)} each (fares {row.farePP == null
-              ? 'unknown'
-              : pounds(row.farePP)}, plus its own transfer, hotel and sundry allowances).
+            The search worked it out at {pounds(row.finderPP)} each; your own costs move it from there.
           </p>
         {/if}
         {#if row.adjustments.length}
@@ -286,37 +255,35 @@
           </p>
         {/if}
         {#if row.assumed.length}
-          <p class="hint">
-            Still assumed, because nothing here measures it: {row.assumed.join('; ')}.
-          </p>
+          <p class="hint">Still assumed: {row.assumed.join('; ')}.</p>
         {/if}
-        <div class="cluster">
-          {#if safeLink(o.outLink)}<a
-              class="btn btn--ghost btn--sm"
-              href={safeLink(o.outLink)}
-              target="_blank"
-              rel="noreferrer">Re-check the fare out</a
-            >{/if}
-          {#if safeLink(o.backLink)}<a
-              class="btn btn--ghost btn--sm"
-              href={safeLink(o.backLink)}
-              target="_blank"
-              rel="noreferrer">…and back</a
-            >{/if}
-          <button class="btn btn--ghost btn--sm" onclick={() => (editing = { option: o })}
-            >Edit</button
-          >
-          <button class="btn btn--ghost btn--sm" onclick={() => void dropOption(row)}>Remove</button
-          >
-        </div>
+        {#if row.groundH}
+          <p class="hint">{row.groundH} h on the ground in all.</p>
+        {/if}
       </details>
+    {/if}
 
-      {#if live && !openTrip}
-        <button class="btn btn--primary" onclick={() => choose(row)} disabled={busy}
+    <div class="cluster cluster--wrap opt-actions">
+      {#if live && !openTrip && !row.blockers.length}
+        <button class="btn btn--primary btn--sm grow" onclick={() => choose(row)} disabled={busy}
           >Choose this</button
         >
       {/if}
-    {/if}
+      <button class="btn btn--ghost btn--sm" onclick={() => (editing = { option: o })}>Edit</button>
+      {#if safeLink(o.outLink)}<a
+          class="btn btn--ghost btn--sm"
+          href={safeLink(o.outLink)}
+          target="_blank"
+          rel="noreferrer">Re-check out</a
+        >{/if}
+      {#if safeLink(o.backLink)}<a
+          class="btn btn--ghost btn--sm"
+          href={safeLink(o.backLink)}
+          target="_blank"
+          rel="noreferrer">…and back</a
+        >{/if}
+      <button class="btn btn--ghost btn--sm" onclick={() => void dropOption(row)}>Remove</button>
+    </div>
   </article>
 {/snippet}
 
@@ -373,15 +340,9 @@
         </div>
 
         <p class="hint">
-          Leave-home times assume 45 minutes to the airport and the usual 90 before the flight. The
-          real journey goes on the trip once you choose.
+          Clock times are local to each airport. Leaving home assumes 45 min to the airport and 90
+          min before the flight.
         </p>
-        {#if view.mixedBasis}
-          <p class="hint">
-            This list holds both the finder's figures and your own, which are added up slightly
-            differently — each card says which, under "How this figure was reached".
-          </p>
-        {/if}
 
         {#each view.rows as row (row.option.id)}
           {@render optionCard(row, true)}
@@ -438,14 +399,17 @@
           {:else}
             <p class="hint">
               The transfer from the airport, anything closed on those dates, what has to be booked —
-              the things that outlive any particular fare. Ask Claude for them, or write your own.
+              the things that outlive any particular fare. Ask an AI assistant for them, or write
+              your own.
             </p>
           {/if}
-          <div class="cluster">
-            <button class="btn btn--ghost" onclick={askClaude}>Ask Claude what to check</button>
-            <button class="btn btn--ghost" onclick={() => (pasting = true)}>Paste the answer</button
+          <div class="cluster cluster--wrap">
+            <button class="btn btn--ghost btn--sm" onclick={copyResearchPrompt}>Copy a prompt</button
             >
-            <button class="btn btn--ghost" onclick={startResearch}>Write it myself</button>
+            <button class="btn btn--ghost btn--sm" onclick={() => (pasting = true)}
+              >Paste an answer</button
+            >
+            <button class="btn btn--ghost btn--sm" onclick={startResearch}>Write it</button>
           </div>
         {/if}
       </section>
@@ -455,7 +419,7 @@
   {#if pasting}
     <PastePlanDialog
       title={`What you know about ${opp.city}`}
-      hint="Paste Claude's answer. It replaces what is here, so keep anything you want from it."
+      hint="Paste the answer. It replaces what is here, so keep anything you want from it."
       onSave={saveResearch}
       onClose={() => (pasting = false)}
     />

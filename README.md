@@ -73,8 +73,12 @@ subscription.**
   **Opportunity** — durable knowledge about the place, which outlives every
   fare — holding the **options** being weighed: one dates/airports/fares
   configuration each. An option written by hand is added up from its own parts
-  (the fares you state plus your measured transfers and nights) instead of from
-  a figure the finder never gave, and each card says which arithmetic it used;
+  — the fares you state (each in the currency it was really sold in, converted
+  at the day's rate) plus your measured transfers and nights and the same party
+  allowances the finder carries, so the two figures can be ranked against each
+  other — and each card says which arithmetic it used; clock times are labelled
+  with the airport whose time they are, and a return can never be dated before
+  its outbound;
   where its dates span a night it asks where that night is spent, so an airport
   sleep typed by hand becomes the same trip shape a finder row would.
   Two places of the same name in different countries stay two destinations. The finder has already ranked the world on true cost per
@@ -87,17 +91,25 @@ subscription.**
   (not a flat "early departure" penalty) and when you would be back, a sentence
   saying how each option differs from the leading one, and a warning when a fare
   is a fortnight old. **Choose this** lays out an ordinary trip — legs, times,
-  airports, flight numbers, the hotel night, and for a two-city row the stopover
+  airports, flight numbers, connections, the landing time back home, the hotel
+  night, the destination's currency, and for a two-city row the stopover
   scenario — and says plainly what the row could not tell it. Nothing is priced:
-  a quoted fare is not a payment. Choosing throws nothing away: the options that
+  a quoted fare is not a payment, so the fares travel as **quotes** beside the
+  ledger rows they will settle, and Book it offers the figure when the ticket is
+  really bought — never counted in a total, an insight or the exported sheet
+  until it is paid. Choosing throws nothing away: the options that
   lost, the dates that have gone and what you learned about the place are all
   still there, and the trip's Plan tab links back to them. A destination leaves
   Considering only while a trip from it is still to happen — once that trip is
   Done the place is open again, research and all. An opportunity with no dates
   still ahead and no trip chosen quietly reads as past.
-  **Ask Claude what to check** copies a prompt for just the gaps that could
+  **Copy a research prompt** gives you a prompt for just the gaps that could
   change the decision (the way in from each airport and what it costs, anything
-  closed on those dates, what must be booked), to paste back.
+  closed on those dates, what must be booked), to run in whichever AI assistant
+  you use and paste back. Editing an option keeps everything the edit does not
+  touch — the search's own figures, its links, when the fare was checked — and a
+  fare you change yourself replaces the search's total rather than sitting
+  under it.
 - **Before you go** — a card on the Plan tab: what is still unresolved, worked
   out rather than ticked. Every line is derived from the trip itself, in the
   state its own record puts it: **planned** (you know how you are getting there
@@ -108,8 +120,13 @@ subscription.**
   "chosen, not booked". Each thing's reference lives on the thing itself — a
   coach reference is never read as a booked flight. The list shrinks as the trip
   comes together and empties itself at the end. **Book it** records a booking
-  once: the fare goes into Expenses and the mode and journey time go onto the
-  journey, so leave-by stops being a guess and £22 is never typed twice. A
+  once: the fare goes into Expenses — in whatever currency it was charged — and
+  the mode, the ride's own departure and arrival times and its reference go onto
+  the journey, so leave-by stops being a guess and £22 is never typed twice.
+  Knowing how you are travelling is not the same as holding a ticket: a ride
+  counts as sorted once it is booked, or once you say it is bought on the day.
+  Anything sorted but not yet paid for keeps a **Price it** button, so a coach
+  bought last week never has to be hunted down in Expenses. A
   return ticket is one purchase — tick "the same ticket covers the way back" and
   it settles both journeys without pretending they are one.
   Checking in is the one plain tick (the airline's window leaves no trace in the
@@ -119,15 +136,24 @@ subscription.**
   with the fact about _this_ trip that earned it, so a 04:00 dash is fed and
   packed nothing like a four-night multi-city break and an airport sleep gets
   what only that night needs. Food runs in order (buy it, make it, take it out
-  of the fridge). Anything the rules miss you add by hand. It appears a week
-  before you leave, not three months.
+  of the fridge). Anything the rules miss you add by hand, in the
+  section you choose, and it is offered again on your next trip. A line that
+  does not apply is put aside and kept, so it returns if the trip changes; a
+  line of your own can be reworded or deleted; a step that waits on another says
+  which one, in words. It opens itself a week before you leave, and sits folded
+  away until then.
 - A trip is described by its **legs** — each city with its arrival and
   departure (as printed on the tickets, in that city's own time zone), where you
   slept (nothing / airport / hotel), an optional hotel/base, how you get in from
   the airport, and how you leave (airport or station, terminal, flight number,
   booking reference, how you get there and how long it takes, how early you want
   to be there). Getting in and getting out are two journeys, kept apart.
-  Leaving home is a departure too, and so is getting home from the airport. From those the app derives the trip's shape (same-day dash,
+  Leaving home is a departure too, and so is getting home from the airport —
+  both edited together on the trip's London end. A booked coach or train has its
+  own departure and arrival printed on the ticket: given those, leave-by counts
+  back from the service itself instead of from an assumed journey length, says
+  which of the two it used, and warns when the ride reaches the airport later
+  than you asked to be there. From those the app derives the trip's shape (same-day dash,
   airport sleep, city break, multi-city, **two-city stopover** 1–4…), dates and
   name — so nothing has to be kept in sync by hand. A departure before its own
   arrival is refused, with how to fix it; other timing clashes are explained.
@@ -206,7 +232,10 @@ journal photo references, quick-capture defaults and duplicates, CSV round trip,
 insights, what the London airports and a hotel night have really cost, reading
 and re-pricing a finder search (and refusing its price map), the four states of
 the Before-you-go list, which preparation each trip shape earns,
-NAS failure classes, EXIF — and that a snapshot from this version still passes
+NAS failure classes, EXIF — what a saved expense's £ comes to (a corrected
+price stays corrected), leave-by from a booked coach's own timetable, the
+fare as it was really quoted in two currencies, which section a line of
+preparation belongs in — and that a snapshot from this version still passes
 the **previous version's** validator and merge (frozen in
 `tests/unit/fixtures`).
 
@@ -217,7 +246,8 @@ policy, the expense `<dialog>` in the top layer, copying inside the tap and
 the fallback sheet, itinerary zones and refusals, city-local maps and covers,
 moments and library imports, quick capture and the CSV, a finder search through
 to a chosen trip and a booked coach, a destination and an option written by
-hand, v3 → v4 → v5 database upgrades, and NAS sync, partial backups, retries and diagnostics against a fake
+hand, a quoted fare through booking to a corrected price in Expenses, a sheet
+making room for the on-screen keyboard, v3 → v4 → v5 database upgrades, and NAS sync, partial backups, retries and diagnostics against a fake
 receiver — plus the real PHP receiver (current, previous and original) in CI.
 
 ### On the iPhone (what emulation can't show)
@@ -230,6 +260,8 @@ After a deploy, on the installed app (Add to Home Screen):
    Pinch still zooms.
 3. Add an expense; type in Description and close the keyboard: Cancel/Save
    stay at the top, and the page is back in place after the keyboard goes.
+   Then open Add an option (Considering → a destination) and tap the last
+   field: the keyboard opens _below_ it, not over it.
 4. Research prompt → Research a city: "copied" appears; paste in Claude. (If
    it ever refuses, a sheet shows the text to copy or share.)
 5. Open a stop from far down the list, then the header's ‹ Stops: same place.
@@ -280,6 +312,7 @@ src/
     Keypad.svelte          Numeric keypad
     ExpenseCapture.svelte  Quick expense capture (native <dialog>)
     CopySheet.svelte       Text the clipboard refused, to copy or share by hand
+    CurrencyField.svelte   Which currency a place is priced in (a real picker)
     NextDeparture.svelte   The calm leave-by card
     DepartureEditor.svelte A departure's plan (native <dialog>)
     MomentCapture.svelte   "What happened?" (native <dialog>)

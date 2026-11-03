@@ -22,7 +22,7 @@
     updateCity,
     updateTrip,
   } from '../lib/trips';
-  import { commonCurrencies } from '../lib/currencies';
+  import CurrencyField from '../components/CurrencyField.svelte';
   import {
     STOPOVER_SCENARIOS,
     legBaseName,
@@ -131,6 +131,7 @@
     tz?: string;
     plan: DepartPlan;
     from: string;
+    only?: 'transfer';
   } | null>(null);
 
   function editLegDeparture(c: City) {
@@ -148,7 +149,7 @@
     if (!trip) return;
     editing = {
       key: 'outbound',
-      title: 'Leaving home',
+      title: 'The flight out',
       wall: trip.outbound?.at ?? '',
       tz: trip.outbound?.tz ?? HOME_TZ,
       plan: trip.outbound ?? {},
@@ -156,9 +157,28 @@
     };
   }
 
+  /**
+   * The ride home from the airport you land at. Not a departure — nothing is
+   * counted down to — so only the journey half of the editor is shown.
+   */
+  function editHomeward() {
+    if (!trip) return;
+    editing = {
+      key: 'homeward',
+      title: `Getting home from ${trip.homeward?.hub || 'the airport'}`,
+      wall: trip.homeward?.at ?? '',
+      tz: trip.homeward?.tz ?? HOME_TZ,
+      plan: trip.homeward ?? {},
+      from: trip.homeward?.hub ?? 'the airport',
+      only: 'transfer',
+    };
+  }
+
   async function saveDeparture(key: string, wall: string, plan: DepartPlan) {
     if (key === 'outbound') {
       await updateTrip(id, { outbound: { ...trip?.outbound, ...plan, at: wall || undefined } });
+    } else if (key === 'homeward') {
+      await updateTrip(id, { homeward: { ...trip?.homeward, ...plan } });
     } else {
       await updateCity(key, { departure: wall || undefined, exit: plan });
       delete legErrors[key];
@@ -306,11 +326,10 @@
               aria-label="Stopover city"
               bind:value={stopName}
             />
-            <input
-              class="field city-ccy"
-              aria-label="Stopover currency"
-              list="ccy-list"
-              bind:value={stopCcy}
+            <CurrencyField
+              label="Stopover currency"
+              value={stopCcy}
+              onchange={(code) => (stopCcy = code)}
             />
           </div>
           <div class="leg-add">
@@ -320,11 +339,10 @@
               aria-label="Destination"
               bind:value={destName}
             />
-            <input
-              class="field city-ccy"
-              aria-label="Destination currency"
-              list="ccy-list"
-              bind:value={destCcy}
+            <CurrencyField
+              label="Destination currency"
+              value={destCcy}
+              onchange={(code) => (destCcy = code)}
             />
           </div>
           <button
@@ -342,11 +360,16 @@
       {/if}
 
       <div class="card">
-        <h2 class="section-title">Leaving home</h2>
+        <h2 class="section-title">The London end</h2>
+        <p class="hint">
+          Two journeys of its own: getting to the airport on the way out, and getting home from the
+          one you land at. The flights between them belong to the legs below.
+        </p>
         {#if trip.outbound?.at}
           <button class="depart-row" onclick={editOutbound}>
             <span
-              >{wallLabel(trip.outbound.at)} · {trip.outbound.hub || 'airport'}{trip.outbound.number
+              >Flight out · {wallLabel(trip.outbound.at)} · {trip.outbound.hub || 'airport'}{trip
+                .outbound.number
                 ? ` · ${trip.outbound.number}`
                 : ''}</span
             >
@@ -358,6 +381,16 @@
             Gets you a calm "leave by" time for the airport, like every other departure.
           </p>
         {/if}
+        <button class="depart-row" onclick={editHomeward}>
+          <span
+            >Getting home from {trip.homeward?.hub || 'the airport'}{trip.homeward?.at
+              ? ` · lands ${wallLabel(trip.homeward.at)}`
+              : ''}</span
+          >
+          <span class="hint"
+            >{trip.homeward?.transport || trip.homeward?.transferRef ? 'change' : 'add'}</span
+          >
+        </button>
       </div>
 
       <div class="card">
@@ -380,15 +413,10 @@
                 onchange={(e) =>
                   patchCity(c.id, { name: (e.currentTarget as HTMLInputElement).value })}
               />
-              <input
-                class="field city-ccy"
-                aria-label="Currency"
-                list="ccy-list"
+              <CurrencyField
+                label="Currency"
                 value={c.currency}
-                onchange={(e) =>
-                  patchCity(c.id, {
-                    currency: (e.currentTarget as HTMLInputElement).value.toUpperCase(),
-                  })}
+                onchange={(code) => patchCity(c.id, { currency: code })}
               />
             </div>
 
@@ -541,9 +569,13 @@
 
             <button class="depart-row" onclick={() => editLegDeparture(c)}>
               <span
-                >{c.departure ? `Departs ${wallLabel(c.departure)}` : 'Departure plan'}{c.exit?.hub
-                  ? ` · ${c.exit.hub}`
-                  : ''}{c.exit?.throughTicket ? ' · protected connection' : ''}</span
+                >{i === cities.length - 1
+                  ? 'The flight home'
+                  : `Leaving ${c.name || 'here'}`}{c.departure
+                  ? ` · ${wallLabel(c.departure)}`
+                  : ''}{c.exit?.hub ? ` · ${c.exit.hub}` : ''}{c.exit?.throughTicket
+                  ? ' · protected connection'
+                  : ''}</span
               >
               <span class="hint">{leaveByFor(c.id) || 'add'}</span>
             </button>
@@ -559,22 +591,16 @@
 
         <div class="leg-add">
           <input class="field" placeholder="Add a city" bind:value={newCityName} />
-          <input
-            class="field city-ccy"
-            aria-label="Currency"
-            list="ccy-list"
-            bind:value={newCityCurrency}
+          <CurrencyField
+            label="Currency"
+            value={newCityCurrency}
+            onchange={(code) => (newCityCurrency = code)}
           />
           <button class="icon-btn" aria-label="Add city" onclick={addCityNow}>
             <Icon name="plus" />
           </button>
         </div>
 
-        <datalist id="ccy-list">
-          {#each commonCurrencies as ccy (ccy.code)}
-            <option value={ccy.code}>{ccy.name}</option>
-          {/each}
-        </datalist>
         {#if zonePickerFor}
           <!-- ~420 zones: only in the page while a zone is being picked. -->
           <datalist id="tz-list">
@@ -648,6 +674,7 @@
       tz={e.tz}
       plan={e.plan}
       fromHint={e.from}
+      only={e.only}
       onSave={(wall, plan) => saveDeparture(e.key, wall, plan)}
       onClose={() => (editing = null)}
     />

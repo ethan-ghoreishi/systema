@@ -2,6 +2,7 @@ import { db, type City, type DepartPlan, type Expense, type Stop, type Trip } fr
 import { cityBlock } from './headings';
 import { newId } from './ids';
 import { lastPaymentMethod, sharedDestination } from './expense-defaults';
+import { withFxNote } from './expenses';
 import { researchCities } from './prompt';
 import { tripDepartures } from './readiness';
 import { recomputeTripDerived } from './trips';
@@ -59,14 +60,23 @@ export const STATE_WORD: Record<NeedState, string> = {
 
 /**
  * Whether a state settles a need. A ride you buy at the machine is sorted once
- * you know which ride it is; a bed, a seat or a timed entry is not sorted until
- * it is actually held, however firm the intention.
+ * you know which ride it is — but only once you have said that is what it is:
+ * picking "Coach" from a list is choosing how to travel, not holding a ticket,
+ * and a trip that reads as sorted because of it is a trip you miss. A bed, a
+ * seat or a timed entry is never sorted until it is actually held, however firm
+ * the intention.
  */
-export function settles(kind: NeedKind, state: NeedState): boolean {
+export function settles(kind: NeedKind, state: NeedState, payOnDay = false): boolean {
   if (state === 'open') return false;
-  if (state === 'planned') return kind === 'transfer' || kind === 'transfer-uk';
+  if (state === 'planned') return payOnDay && (kind === 'transfer' || kind === 'transfer-uk');
   return true;
 }
+
+/**
+ * Rides nobody books: you walk, you tap in, you flag one down. Saying so is
+ * what settles them, and these say it for themselves.
+ */
+const NEVER_BOOKED = /\b(walk|walking|metro|underground|tube|taxi|uber|cab|on foot)\b/i;
 
 /** What the booking sheet should write into the ledger for this need. */
 export interface BookSpec {
@@ -130,6 +140,14 @@ const paid = (
 
 const gbp = (n: number) => `£${Number.isInteger(n) ? n : n.toFixed(2)}`;
 
+/** 'quoted £74' — what the chosen option said this would cost, before anything was paid. */
+const quoted = (row: Expense | undefined): string | undefined =>
+  row?.quote && row.quote.amountGBP > 0 ? `quoted ${gbp(row.quote.amountGBP)}` : undefined;
+
+/** The row carrying this need, paid or not — a skeleton row holds the quote. */
+const rowFor = (expenses: Expense[], key: string): Expense | undefined =>
+  expenses.find((e) => e.need === key);
+
 /**
  * One journey on the ground, in whichever state its own record puts it: a
  * reference means it is held, a mode and a time mean you know how you are
@@ -144,32 +162,41 @@ function groundNeed(
   row: Expense | undefined,
   book: BookSpec,
   kind: NeedKind = 'transfer',
+  quote?: string,
 ): Need {
   const ref = plan.transferRef?.trim();
   const how = plan.transport?.trim();
-  const way = [how, plan.journeyMin != null ? `${plan.journeyMin} min` : '']
+  const covered = plan.coveredBy?.trim();
+  const payOnDay = plan.payOnDay === true || (!!how && NEVER_BOOKED.test(how));
+  const timed = plan.transferAt?.trim()
+    ? `the ${plan.transferAt.trim()}${plan.transferArr?.trim() ? `, in at ${plan.transferArr.trim()}` : ''}`
+    : '';
+  const way = [how, timed || (plan.journeyMin != null ? `${plan.journeyMin} min` : '')]
     .filter(Boolean)
     .join(', ');
-  const state: NeedState = row ? 'paid' : ref ? 'booked' : way ? 'planned' : 'open';
+  const state: NeedState = row ? 'paid' : ref || covered ? 'booked' : way ? 'planned' : 'open';
+  const done = settles(kind, state, payOnDay);
   return {
     key,
     kind,
     label,
     detail:
       state === 'open'
-        ? 'Not sorted yet'
+        ? (quote ?? 'Not sorted yet')
         : state === 'planned'
-          ? `${way} — not booked`
+          ? `${way} — ${payOnDay ? 'you pay on the day' : 'not booked yet'}`
           : way || STATE_WORD[state],
     state,
-    done: settles(kind, state),
+    done,
     evidence: row
       ? gbp(row.amountGBP)
       : ref
-        ? `Booking ${ref}`
-        : way
-          ? `${way} — pay on the day`
-          : undefined,
+        ? `${way ? `${way} · ` : ''}booking ${ref}`
+        : covered
+          ? `${way ? `${way} · ` : ''}on the same return ticket`
+          : way
+            ? `${way} — pay on the day`
+            : undefined,
     book,
   };
 }
@@ -239,11 +266,14 @@ export function tripNeeds(
     },
   ]) {
     const state: NeedState = t.row ? 'paid' : t.ref ? 'booked' : 'open';
+    const quote = quoted(rowFor(expenses, t.key));
     out.push({
       key: t.key,
       kind: 'flight',
       label: t.label,
-      detail: t.detail,
+      // What the fare was when the trip was chosen, until it is actually
+      // bought: a quote the ledger deliberately does not hold as a payment.
+      detail: [t.detail, state === 'paid' ? '' : quote].filter(Boolean).join(' · '),
       state,
       done: settles('flight', state),
       evidence: t.ref ? `Booking ${t.ref}` : t.row ? gbp(t.row.amountGBP) : undefined,
@@ -268,6 +298,7 @@ export function tripNeeds(
       paid(expenses, 'transfer-uk:out', 'Airport transfer (UK) — outbound'),
       { ...UK_TRANSFER, description: 'Airport transfer (UK) — outbound' },
       'transfer-uk',
+      quoted(rowFor(expenses, 'transfer-uk:out')),
     ),
     groundNeed(
       'transfer-uk:back',
@@ -276,6 +307,7 @@ export function tripNeeds(
       paid(expenses, 'transfer-uk:back', 'Airport transfer (UK) — return'),
       { ...UK_TRANSFER, description: 'Airport transfer (UK) — return' },
       'transfer-uk',
+      quoted(rowFor(expenses, 'transfer-uk:back')),
     ),
   );
 
@@ -437,6 +469,35 @@ export function tripNeeds(
   return out;
 }
 
+/**
+ * What a stamped expense settles, in words, for a screen that has the row but
+ * not the trip's needs: 'the ticket out', 'the ride to the airport'. So the
+ * ledger can say which line of Before-you-go a row answers for, and what
+ * deleting it would reopen.
+ */
+export function needWords(key: string | undefined): string {
+  if (!key) return '';
+  const [kind] = key.split(':');
+  const back = key.endsWith(':back') || key.endsWith(':inbound');
+  switch (kind) {
+    case 'flight':
+      return back ? 'the ticket home' : 'the ticket out';
+    case 'transfer-uk':
+      return back ? 'getting home from the airport' : 'getting to the airport';
+    case 'transfer-in':
+      return 'the way in from the airport';
+    case 'transfer-out':
+    case 'transfer':
+      return 'the way to the airport';
+    case 'hotel':
+      return 'somewhere to stay';
+    case 'book':
+      return 'a place booked ahead';
+    default:
+      return '';
+  }
+}
+
 /** The ones still outstanding — what the card leads with. */
 export function outstanding(needs: Need[]): Need[] {
   return needs.filter((n) => !n.done);
@@ -455,7 +516,21 @@ export function tripIsOver(trip: Trip, cities: City[], now = Date.now()): boolea
 // ---- Booking one ----
 
 export interface BookInput {
+  /** What it came to, in sterling — the figure the ledger and the sheet keep. */
   amountGBP: number;
+  /** What was actually charged, where that was not sterling. */
+  amountLocal?: number;
+  currency?: string;
+  fxRate?: number | null;
+  /** The £ was typed by hand, so no later rate may rewrite it. */
+  gbpManual?: boolean;
+  /** Saved with no £ yet: it prices itself from its own date's rate when online. */
+  fxPending?: boolean;
+  /** The clock times on a booked ride's ticket ('HH:MM'). */
+  transferAt?: string;
+  transferArr?: string;
+  /** Bought on the day: knowing which ride it is settles it. */
+  payOnDay?: boolean;
   /** Booking reference, where the thing booked has one. */
   ref?: string;
   /** How you get there, for a transfer. */
@@ -496,6 +571,9 @@ export async function bookNeed(
   const journey = {
     ...(input.transport?.trim() ? { transport: input.transport.trim() } : {}),
     ...(input.journeyMin != null ? { journeyMin: input.journeyMin } : {}),
+    ...(input.transferAt?.trim() ? { transferAt: input.transferAt.trim() } : {}),
+    ...(input.transferArr?.trim() ? { transferArr: input.transferArr.trim() } : {}),
+    ...(input.payOnDay ? { payOnDay: true } : {}),
     ...(ref ? { transferRef: ref } : {}),
   };
   const something = Object.keys(journey).length > 0;
@@ -503,7 +581,20 @@ export async function bookNeed(
   // other journey reading as sorted: it is a return ticket, so say so — under
   // anything already recorded there.
   const cover = !!input.bothWays && !something ? { transport: 'Return ticket' } : null;
-  const merge = (plan?: DepartPlan) => ({ ...cover, ...plan, ...journey });
+  // The direction that does not hold the money is still held: a £9 return bus
+  // ticket is a ticket for the way back too. Only once there is actually a
+  // purchase or a reference, though — ticking the box over an empty form is
+  // still just a plan.
+  const held =
+    input.bothWays && (ref || input.amountGBP > 0 || (input.amountLocal ?? 0) > 0)
+      ? { coveredBy: need.key }
+      : null;
+  const merge = (plan?: DepartPlan, other = false) => ({
+    ...cover,
+    ...plan,
+    ...journey,
+    ...(other && held ? held : {}),
+  });
   const legOf = (prefix: string) => legs.find((c) => c.id === need.key.slice(prefix.length));
 
   // --- The structured half: the reference goes on the thing it books ---
@@ -512,19 +603,21 @@ export async function bookNeed(
   if (need.key === 'flight:inbound' && ref && last)
     await db.cities.update(last.id, { exit: { ...last.exit, ref } });
   const both = !!input.bothWays;
-  if (need.kind === 'transfer-uk' && (something || cover))
+  if (need.kind === 'transfer-uk' && (something || cover)) {
+    const isOut = need.key === 'transfer-uk:out';
     await db.trips.update(trip.id, {
-      ...(both || need.key === 'transfer-uk:out' ? { outbound: merge(trip.outbound) } : {}),
-      ...(both || need.key === 'transfer-uk:back' ? { homeward: merge(trip.homeward) } : {}),
+      ...(both || isOut ? { outbound: merge(trip.outbound, !isOut) } : {}),
+      ...(both || !isOut ? { homeward: merge(trip.homeward, isOut) } : {}),
       updatedAt: Date.now(),
     });
+  }
   if (need.kind === 'transfer' && (something || cover)) {
     const inbound = need.key.startsWith('transfer-in:');
     const leg = legOf(inbound ? 'transfer-in:' : 'transfer-out:');
     if (leg)
       await db.cities.update(leg.id, {
-        ...(both || inbound ? { entry: merge(leg.entry) } : {}),
-        ...(both || !inbound ? { exit: merge(leg.exit) } : {}),
+        ...(both || inbound ? { entry: merge(leg.entry, !inbound) } : {}),
+        ...(both || !inbound ? { exit: merge(leg.exit, inbound) } : {}),
       });
   }
   if (need.kind === 'hotel') {
@@ -545,7 +638,10 @@ export async function bookNeed(
   if (need.kind === 'flight' || need.kind === 'transfer') await recomputeTripDerived(trip.id);
 
   // --- The ledger half ---
-  if (!need.book || !(input.amountGBP > 0)) return { expenseId: null };
+  // Nothing paid, nothing to record. A charge in a currency with no rate yet
+  // still counts: it has an amount, just not a £ one.
+  if (!need.book || !(input.amountGBP > 0 || (input.amountLocal ?? 0) > 0))
+    return { expenseId: null };
   const spec = need.book;
   const all = await db.expenses.where('tripId').equals(trip.id).toArray();
   // A return ticket says so in its description, the way the spending sheet has
@@ -564,11 +660,18 @@ export async function bookNeed(
     description,
     paymentMethod: input.paymentMethod || lastPaymentMethod(all, trip.id) || 'Online Payment',
     amountGBP: input.amountGBP,
-    amountLocal: 0,
-    notes: ref ? `Booking ${ref}` : '',
-    currency: 'GBP',
-    fxRate: null,
-    gbpManual: true,
+    amountLocal: input.amountLocal ?? 0,
+    // The rate actually used goes in Notes, the way a row captured on the
+    // ground records it — the exported sheet has no column for it.
+    notes: withFxNote(
+      ref ? `Booking ${ref}` : '',
+      input.currency ?? 'GBP',
+      input.gbpManual ? null : (input.fxRate ?? null),
+    ),
+    currency: input.currency?.trim().toUpperCase() || 'GBP',
+    fxRate: input.fxRate ?? null,
+    gbpManual: input.gbpManual ?? true,
+    ...(input.fxPending ? { fxPending: true } : {}),
     ...(spec.shared ? { shared: true } : {}),
     need: need.key,
     skeleton: false,

@@ -235,6 +235,7 @@ a {
   overscroll-behavior: contain;
   /* Room for the last fields above the on-screen keyboard (see viewport.ts). */
   padding: var(--s4) var(--s4) calc(var(--s4) + var(--kb, 0px));
+  scroll-padding-bottom: var(--kb, 0px);
   display: flex;
   flex-direction: column;
   gap: var(--s4);
@@ -301,6 +302,13 @@ a {
   flex-direction: column;
   gap: var(--s3);
   box-shadow: var(--shadow);
+}
+
+/* A quiet panel inside a sheet: the working-out, not another card of its own. */
+.card--inset {
+  background: var(--surface-sunken);
+  box-shadow: none;
+  gap: var(--s1);
 }
 
 .section-title {
@@ -469,7 +477,8 @@ textarea.field {
   text-transform: uppercase;
 }
 
-.city-ccy {
+/* Only the typed-code box shouts; the wheel reads "JOD · Jordanian dinar". */
+input.city-ccy {
   text-transform: uppercase;
 }
 
@@ -520,6 +529,7 @@ textarea.field {
 }
 .leg-head {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--s2);
   align-items: center;
 }
@@ -540,8 +550,11 @@ textarea.field {
   flex: 1;
   min-width: 0;
 }
-.leg-head .city-ccy {
-  flex: 0 0 88px;
+/* Full width under the city: the wheel says "JOD · Jordanian dinar", and a
+   code clipped to "JOD · JO" is how the field read as broken before. */
+.leg-head .city-ccy,
+.leg-add .city-ccy {
+  flex: 1 0 100%;
 }
 .leg-times {
   display: flex;
@@ -571,6 +584,7 @@ textarea.field {
 }
 .leg-add {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--s2);
   align-items: center;
 }
@@ -578,9 +592,7 @@ textarea.field {
   flex: 1;
   min-width: 0;
 }
-.leg-add .city-ccy {
-  flex: 0 0 88px;
-}
+
 
 .cover-grid {
   display: grid;
@@ -1215,7 +1227,11 @@ textarea.field {
   min-height: 0; /* let the 1fr grid row shrink so this pane actually scrolls */
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: var(--s4) var(--s4) calc(env(safe-area-inset-bottom) + var(--s6));
+  /* Room for the last fields above the on-screen keyboard (see viewport.ts):
+     the sheet is fixed to the layout viewport, so iOS cannot pan a field into
+     view unless this pane can scroll past it. */
+  padding: var(--s4) var(--s4) calc(env(safe-area-inset-bottom) + var(--s6) + var(--kb, 0px));
+  scroll-padding-bottom: var(--kb, 0px);
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -2435,6 +2451,11 @@ textarea.field {
   cursor: pointer;
   padding: var(--s1) 0;
 }
+/* The card's own actions sit on its floor, the choice first and widest. */
+.opt-actions {
+  margin-top: var(--s1);
+}
+
 /* Airports and clock times, two to a row where there is space for two. */
 .opt-fields {
   display: grid;
@@ -2442,9 +2463,20 @@ textarea.field {
   gap: 0 var(--s3);
 }
 
-/* A prep line waiting on the one above it: visible, not hidden. */
-.need--waiting {
-  opacity: 0.65;
+/* A whole prep line is the tick target; the label and its reason sit beside it. */
+.need-tick {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s2);
+  flex: 1;
+  min-width: 0;
+}
+.prep-summary {
+  cursor: pointer;
+  list-style: none;
+}
+.prep-summary::-webkit-details-marker {
+  display: none;
 }
 .need input[type='checkbox'] {
   width: 22px;
@@ -2483,8 +2515,13 @@ textarea.field {
 }
 
 /* Before you go. */
-.before {
+.before,
+.prep {
   gap: var(--s2);
+}
+/* The getting-ready card's own body, which folds away until the week before. */
+.prep details > *:not(summary) {
+  margin-top: var(--s2);
 }
 .before-count {
   font-size: 13px;

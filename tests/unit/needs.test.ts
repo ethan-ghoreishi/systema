@@ -120,23 +120,68 @@ describe('what is left before a trip', () => {
 
   // A ride you buy at the machine is sorted once you know which ride it is —
   // but it is not booked, and the card says so rather than implying a ticket.
-  it('settles a transfer on knowing how, while still calling it unbooked', () => {
+  // Picking "Coach" from a list is choosing how to travel, not holding a
+  // ticket. Before this, it quietly moved the ride into "already sorted" — and
+  // a coach you never booked is a flight you miss.
+  it('does not take knowing how as having sorted it', () => {
     const t = trip({
       outbound: { ...trip().outbound, transport: 'National Express', journeyMin: 75 },
     });
     const uk = tripNeeds(t, [leg()], [], [], NOW).find((n) => n.key === 'transfer-uk:out')!;
+    expect(uk.state).toBe('planned');
+    expect(uk.done).toBe(false);
+    expect(uk.detail).toBe('National Express, 75 min — not booked yet');
+  });
+
+  it('settles a ride you buy on the day, once you say that is what it is', () => {
+    const t = trip({
+      outbound: {
+        ...trip().outbound,
+        transport: 'National Express',
+        journeyMin: 75,
+        payOnDay: true,
+      },
+    });
+    const uk = tripNeeds(t, [leg()], [], [], NOW).find((n) => n.key === 'transfer-uk:out')!;
     expect(uk.done).toBe(true);
     expect(uk.state).toBe('planned');
-    expect(uk.detail).toBe('National Express, 75 min — not booked');
+    expect(uk.detail).toBe('National Express, 75 min — you pay on the day');
     expect(uk.evidence).toBe('National Express, 75 min — pay on the day');
+  });
+
+  // Nobody books a walk or the metro, so saying so twice is friction.
+  it('takes a walk or the metro as needing no booking at all', () => {
     const city = tripNeeds(
       trip(),
-      [leg({ exit: { hub: 'FAO', transport: 'Próximo bus', journeyMin: 20 } })],
+      [leg({ exit: { hub: 'FAO', transport: 'Metro', journeyMin: 20 } })],
       [],
       [],
       NOW,
     ).find((n) => n.key === 'transfer-out:c1')!;
     expect(city.done).toBe(true);
+  });
+
+  // A booked coach has a timetable on the ticket, and the leave-by time should
+  // count back from it rather than from a journey length nobody measured.
+  it('reads the booked ride’s own clock times', () => {
+    const uk = tripNeeds(
+      trip({
+        outbound: {
+          ...trip().outbound,
+          transport: 'National Express',
+          transferAt: '04:35',
+          transferArr: '05:50',
+          transferRef: 'NX7788',
+        },
+      }),
+      [leg()],
+      [],
+      [],
+      NOW,
+    ).find((n) => n.key === 'transfer-uk:out')!;
+    expect(uk.state).toBe('booked');
+    expect(uk.detail).toContain('the 04:35, in at 05:50');
+    expect(uk.evidence).toContain('booking NX7788');
   });
 
   // The bug this replaces: a coach reference written where the flight's lives
@@ -215,6 +260,32 @@ describe('what is left before a trip', () => {
     );
     expect(needs.find((n) => n.key === 'transfer-out:c1')?.state).toBe('paid');
     expect(needs.find((n) => n.key === 'transfer-in:c1')?.done).toBe(false);
+  });
+
+  // A £9 return bus ticket is a ticket for the way back too. The two journeys
+  // keep their own lines, but only one of them holds the money — and before
+  // this the other read as merely planned once a plain mode stopped settling.
+  it('counts the other direction as held when one return ticket covers it', () => {
+    const back = tripNeeds(
+      trip(),
+      [
+        leg({
+          entry: { transport: 'Próximo bus', journeyMin: 20 },
+          exit: {
+            hub: 'FAO',
+            transport: 'Próximo bus',
+            journeyMin: 20,
+            coveredBy: 'transfer-in:c1',
+          },
+        }),
+      ],
+      [expense({ need: 'transfer-in:c1', amountGBP: 9 })],
+      [],
+      NOW,
+    ).find((n) => n.key === 'transfer-out:c1')!;
+    expect(back.state).toBe('booked');
+    expect(back.done).toBe(true);
+    expect(back.evidence).toContain('on the same return ticket');
   });
 
   // The £22 coach: one payment settles the requirement and is the expense.
@@ -305,12 +376,23 @@ describe('what is left before a trip', () => {
   it('empties itself completely once the trip is together', () => {
     const t = trip({
       planText: '## Route\n\n### Igreja do Carmo\n',
-      outbound: { ...trip().outbound, ref: 'XY12AB', transport: 'National Express' },
+      outbound: {
+        ...trip().outbound,
+        ref: 'XY12AB',
+        transport: 'National Express',
+        payOnDay: true,
+      },
     });
     const legs = [
       leg({
-        entry: { transport: 'Próximo bus', journeyMin: 20 },
-        exit: { hub: 'FAO', ref: 'ZZ99', transport: 'Próximo bus', journeyMin: 20 },
+        entry: { transport: 'Próximo bus', journeyMin: 20, payOnDay: true },
+        exit: {
+          hub: 'FAO',
+          ref: 'ZZ99',
+          transport: 'Próximo bus',
+          journeyMin: 20,
+          payOnDay: true,
+        },
         base: { name: 'Hotel Faro', bookingRef: 'HB-991' },
       }),
     ];

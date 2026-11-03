@@ -29,11 +29,11 @@ export function validateBackup(value: unknown): asserts value is Backup {
     (object(v) &&
       optional(
         v,
-        'mode hub terminal number ref transferRef notes from transport at tz',
+        'mode hub terminal number ref transferRef notes from transport at tz transferAt transferArr coveredBy',
         'string',
       ) &&
       optionalNumbers(v, 'journeyMin bufferMin contingencyMin prepareMin') &&
-      optional(v, 'checkedIn', 'boolean') &&
+      optional(v, 'checkedIn payOnDay', 'boolean') &&
       (v.throughTicket === undefined || ['outbound', 'return'].includes(v.throughTicket)));
   if (!object(value) || value.app !== 'systema' || value.version !== 1)
     fail('not a version 1 systema backup');
@@ -69,11 +69,14 @@ export function validateBackup(value: unknown): asserts value is Backup {
       departPlan(r.homeward) &&
       (r.prep === undefined ||
         (object(r.prep) &&
-          ['done', 'extra'].every(
+          ['done', 'extra', 'skipped'].every(
             (k) =>
               r.prep[k] === undefined ||
               (Array.isArray(r.prep[k]) && r.prep[k].every((v: unknown) => typeof v === 'string')),
-          ))) &&
+          ) &&
+          (r.prep.groups === undefined ||
+            (object(r.prep.groups) &&
+              Object.values(r.prep.groups).every((v) => typeof v === 'string'))))) &&
       (r.coverMode === undefined || ['auto', 'map', 'route-card', 'photo'].includes(r.coverMode)) &&
       (r.promptPrefs === undefined ||
         (object(r.promptPrefs) &&
@@ -141,6 +144,11 @@ export function validateBackup(value: unknown): asserts value is Backup {
       typeof r.skeleton === 'boolean' &&
       optional(r, 'fxPending gbpManual shared', 'boolean') &&
       optional(r, 'fxDate need', 'string') &&
+      (r.quote === undefined ||
+        (object(r.quote) &&
+          typeof r.quote.amountGBP === 'number' &&
+          Number.isFinite(r.quote.amountGBP) &&
+          optional(r.quote, 'note', 'string'))) &&
       (r.fxRate === null ||
         (typeof r.fxRate === 'number' && Number.isFinite(r.fxRate) && r.fxRate > 0)),
   );
@@ -168,17 +176,20 @@ export function validateBackup(value: unknown): asserts value is Backup {
       ) &&
       optional(
         v,
-        'outDep outArr backDep backArr outFlights backFlights cities overnight checked outLink backLink note',
+        'outDep outArr backDep backArr outFlights backFlights cities overnight checked outLink backLink note outFareCcy backFareCcy',
         'string',
       ) &&
       optionalNumbers(
         v,
-        'outArrDay backArrDay outFarePP backFarePP finderPP usableH groundH paidNights scenario',
+        'outArrDay backArrDay outFarePP backFarePP outFareLocal backFareLocal finderPP usableH groundH paidNights scenario',
       ) &&
       (v.source === undefined || v.source === 'manual') &&
       (v.finderAssumptions === undefined ||
         (object(v.finderAssumptions) &&
-          optionalNumbers(v.finderAssumptions, 'travellers destTransferPP hotelPerNight')));
+          optionalNumbers(
+            v.finderAssumptions,
+            'travellers destTransferPP hotelPerNight bagStoragePerDay esimPerTrip earlyDepPenalty',
+          )));
     rows(
       'opportunities',
       'id',

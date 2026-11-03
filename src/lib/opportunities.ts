@@ -9,6 +9,7 @@ import {
   updateTrip,
 } from './trips';
 import { destTransferByCity, hotelNightCost, ukTransferByAirport } from './insights';
+import { currencyForCountry } from './currencies';
 import { scenarioPattern, type StopoverScenario } from './trip-shape';
 import { suggestTz, HOME_TZ } from './tz';
 import type { Facts, ParsedRow } from './options';
@@ -180,6 +181,20 @@ function lastFlight(v: string | undefined): string | undefined {
   return v?.split('+').pop()?.trim() || undefined;
 }
 
+/**
+ * The whole service, where the row describes more than one flight: the numbers
+ * as given and where the planes change. Only the first number goes in the
+ * departure's own field, so without this the second flight — and the airport
+ * you change at — would be dropped on the way into the trip.
+ */
+function connectionNote(o: TripOption, which: 'out' | 'back'): string | undefined {
+  const route = which === 'out' ? o.outRoute : o.backRoute;
+  const flights = (which === 'out' ? o.outFlights : o.backFlights)?.trim();
+  const via = route.length > 2 ? route.slice(1, -1).join(', ') : '';
+  if (!via && (!flights || !flights.includes('+'))) return undefined;
+  return [flights, via ? `change at ${via}` : ''].filter(Boolean).join(' · ') || undefined;
+}
+
 /** The stopover city named in '4 · back via BCN, night at the destination'. */
 function viaCode(o: TripOption): string | undefined {
   return o.overnight?.match(/via\s+([A-Z]{3})/)?.[1];
@@ -194,16 +209,57 @@ export function presetForOption(o: TripOption): string {
   return 'weekend';
 }
 
-/** The currency this city was last visited with, so it needn't be typed again. */
-function currencySeen(city: string, cities: City[]): string {
+/**
+ * What this city is priced in: what it was last visited with, or what its
+ * country spends. Left blank, Expenses offers only pounds for a trip to Amman,
+ * which is how a dinar gets typed into a £ box.
+ */
+function currencySeen(city: string, cities: City[], country?: string): string {
   const key = city.trim().toLowerCase();
-  return cities.find((c) => c.name.trim().toLowerCase() === key)?.currency ?? '';
+  return (
+    cities.find((c) => c.name.trim().toLowerCase() === key)?.currency || currencyForCountry(country)
+  );
 }
 
 export interface ChosenTrip {
   tripId: string;
   /** What the row could not say, in plain words, for the screen to pass on. */
   toFill: string[];
+}
+
+/**
+ * Carry the fares forward as quotes, not as spending.
+ *
+ * The fares are the one number the research definitely knows, and typing them
+ * into Expenses by hand after choosing is exactly the duplicate entry this app
+ * exists to remove. But a quoted fare is not a payment: putting it in
+ * `amountGBP` would have the running total, the per-category summary, the
+ * insights and the exported sheet all reporting money that has not left the
+ * account. So it rides beside the figure, on the row that is already waiting
+ * for this booking, and "Book it" offers it when the ticket is really bought.
+ */
+async function carryQuotes(tripId: string, option: TripOption, party: number): Promise<void> {
+  const rows = await db.expenses.where('tripId').equals(tripId).toArray();
+  const each = (pp: number | undefined, ccy: string | undefined, local: number | undefined) =>
+    pp == null
+      ? null
+      : {
+          amountGBP: Math.round(pp * party * 100) / 100,
+          note:
+            local != null && ccy
+              ? `${local} ${ccy} each × ${party}, as quoted`
+              : `£${pp} each × ${party}, as quoted`,
+        };
+  for (const [key, quote] of [
+    ['flight:outbound', each(option.outFarePP, option.outFareCcy, option.outFareLocal)],
+    ['flight:inbound', each(option.backFarePP, option.backFareCcy, option.backFareLocal)],
+  ] as const) {
+    if (!quote) continue;
+    const row = rows.find((e) => e.need === key);
+    // No row waiting (a Custom trip seeds none): the quote is not worth
+    // inventing a ledger row for, and Before-you-go still asks for the ticket.
+    if (row) await db.expenses.update(row.id, { quote });
+  }
 }
 
 /**
@@ -214,7 +270,7 @@ export interface ChosenTrip {
 export async function chooseOption(opp: Opportunity, option: TripOption): Promise<ChosenTrip> {
   const toFill: string[] = [];
   const allCities = await db.cities.toArray();
-  const currency = currencySeen(opp.city, allCities);
+  const currency = currencySeen(opp.city, allCities, opp.country);
   if (!currency) toFill.push(`the currency for ${opp.city}`);
   const tripId = await createTrip(presetForOption(option));
   // The fares are per person for the party the search priced; starting the
@@ -232,6 +288,7 @@ export async function chooseOption(opp: Opportunity, option: TripOption): Promis
       mode: 'flight',
       ...(option.outRoute[0] ? { hub: option.outRoute[0] } : {}),
       ...(firstFlight(option.outFlights) ? { number: firstFlight(option.outFlights) } : {}),
+      ...(connectionNote(option, 'out') ? { notes: connectionNote(option, 'out') } : {}),
     },
   });
 
@@ -250,12 +307,31 @@ export async function chooseOption(opp: Opportunity, option: TripOption): Promis
   // from it is a journey of its own.
   const landsAt = option.backRoute[option.backRoute.length - 1];
   if (landsAt && landsAt !== option.outRoute[0]) toFill.push(`how you get home from ${landsAt}`);
-  if (landsAt) await updateTrip(tripId, { homeward: { hub: landsAt } });
+  // When the flight home lands, which is the other half of the London end: a
+  // 23:40 landing is a different evening from a 14:00 one.
+  const homeAt = wall(option.backDate, option.backArr, option.backArrDay ?? 0);
+  if (landsAt || homeAt)
+    await updateTrip(tripId, {
+      homeward: {
+        ...(landsAt ? { hub: landsAt } : {}),
+        ...(homeAt ? { at: homeAt, tz: HOME_TZ } : {}),
+        ...(connectionNote(option, 'back') ? { notes: connectionNote(option, 'back') } : {}),
+      },
+    });
   const landing = wall(option.outDate, option.outArr, option.outArrDay ?? 0);
   const leaving = wall(option.backDate, option.backDep);
   // Where you land at the far end: the way in from it is its own journey.
   const arriveAt = option.outRoute[option.outRoute.length - 1];
   const entry = arriveAt && arriveAt !== option.outRoute[0] ? { hub: arriveAt } : undefined;
+  // An open jaw: you fly home from somewhere other than where you landed, so
+  // the trip has a second place in it that the row never names. One leg with
+  // an arrival in one city and a departure from another would be a lie, so the
+  // trip is laid out as the row states and this is said plainly instead.
+  const leavesFrom = option.backRoute[0];
+  if (!option.scenario && arriveAt && leavesFrom && leavesFrom !== arriveAt)
+    toFill.push(
+      `the leg you fly home from (${leavesFrom}) — you land at ${arriveAt}, so this trip has two places in it`,
+    );
 
   if (option.scenario) {
     const pattern = scenarioPattern(option.scenario as StopoverScenario);
@@ -315,6 +391,7 @@ export async function chooseOption(opp: Opportunity, option: TripOption): Promis
     if (night) toFill.push('where you are staying');
   }
 
+  await carryQuotes(tripId, option, Math.max(1, travellers ?? DEFAULT_PARTY_SIZE));
   return { tripId, toFill };
 }
 

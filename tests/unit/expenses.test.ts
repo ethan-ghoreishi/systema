@@ -15,6 +15,7 @@ import {
   categorySummary,
   looksAnomalous,
   assignTransactionNumbers,
+  priceEntry,
   withFxNote,
 } from '../../src/lib/expenses';
 import type { Expense } from '../../src/lib/db';
@@ -183,5 +184,90 @@ describe('isManualGBP', () => {
     expect(isManualGBP({ ...row, fxPending: true, amountGBP: 0 })).toBe(false);
     expect(isManualGBP({ ...row, currency: 'GBP' })).toBe(false);
     expect(isManualGBP({ ...row, gbpManual: false })).toBe(false); // the flag wins
+  });
+});
+
+// The bug: a booking written by "Book it" stores the £ as a hand-typed one, so
+// the capture sheet pre-filled its hidden override field — hidden, because the
+// override is only on screen for a foreign currency. Editing the amount then
+// saved the override: the original price, straight back over the correction.
+describe('what a saved expense’s £ comes to', () => {
+  const booked = {
+    amount: 22,
+    amountGBP: 22,
+    currency: 'GBP',
+    date: '2026-12-01',
+    fxRate: null,
+  };
+
+  it('takes a corrected £ amount, on a row a booking made', () => {
+    const r = priceEntry({
+      amount: 25,
+      currency: 'GBP',
+      date: '2026-12-01',
+      // What the component used to carry invisibly for a row of this kind.
+      overrideGBP: 22,
+      recorded: booked,
+    });
+    expect(r.amountGBP).toBe(25);
+    expect(r.keepRecorded).toBe(false);
+    expect(r.gbpManual).toBe(false);
+  });
+
+  it('keeps the £ it was recorded with while nothing that decided it moves', () => {
+    const r = priceEntry({ amount: 22, currency: 'GBP', date: '2026-12-01', recorded: booked });
+    expect(r.amountGBP).toBe(22);
+    expect(r.keepRecorded).toBe(true);
+  });
+
+  it('prices a foreign amount at the day’s rate, and keeps what was typed over it', () => {
+    const auto = priceEntry({ amount: 50, currency: 'EUR', date: '2026-12-01', rate: 0.86 });
+    expect(auto.amountGBP).toBe(43);
+    expect(auto.amountLocal).toBe(50);
+    expect(auto.fxRate).toBe(0.86);
+    expect(auto.autoRate).toBe(0.86);
+    expect(auto.gbpManual).toBe(false);
+
+    const typed = priceEntry({
+      amount: 50,
+      currency: 'EUR',
+      date: '2026-12-01',
+      rate: 0.86,
+      overrideGBP: 44.1,
+    });
+    expect(typed.amountGBP).toBe(44.1);
+    expect(typed.fxRate).toBeNull();
+    expect(typed.gbpManual).toBe(true);
+    expect(typed.autoRate).toBeNull();
+  });
+
+  // A dinar has no ECB rate, ever. It saves with the amount it has and waits.
+  it('saves an amount it cannot price, rather than refusing it', () => {
+    const r = priceEntry({ amount: 38, currency: 'JOD', date: '2026-12-01', rate: null });
+    expect(r.fxPending).toBe(true);
+    expect(r.amountGBP).toBe(0);
+    expect(r.amountLocal).toBe(38);
+  });
+
+  it('re-prices once the amount, the currency or the date changes', () => {
+    const recorded = {
+      amount: 50,
+      amountGBP: 43,
+      currency: 'EUR',
+      date: '2026-12-01',
+      fxRate: 0.86,
+    };
+    expect(
+      priceEntry({ amount: 60, currency: 'EUR', date: '2026-12-01', rate: 0.9, recorded })
+        .amountGBP,
+    ).toBe(54);
+    expect(
+      priceEntry({ amount: 50, currency: 'EUR', date: '2026-12-02', rate: 0.9, recorded })
+        .amountGBP,
+    ).toBe(45);
+    expect(
+      priceEntry({ amount: 50, currency: 'EUR', date: '2026-12-01', rate: 0.9, recorded })
+        .keepRecorded,
+    ).toBe(true);
   });
 });

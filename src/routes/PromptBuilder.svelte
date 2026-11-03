@@ -71,7 +71,7 @@
     remember();
     void copied.then((ok) => {
       if (ok)
-        status = `${name} prompt copied — paste it into Claude, then come back and paste ${name}'s plan.`;
+        status = `${name} prompt copied — paste it into your AI assistant, then come back and paste ${name}'s plan.`;
     });
   }
 
@@ -101,7 +101,7 @@
     void copied.then((ok) => {
       if (ok)
         status =
-          'Prompt copied — paste it into Claude (or any LLM), then paste the plan it returns here.';
+          'Prompt copied — paste it into your AI assistant, then paste the plan it returns here.';
     });
   }
 
@@ -294,7 +294,7 @@
       {:else}
         <button class="btn btn--primary" onclick={copyNow}>Copy prompt</button>
         <button class="btn btn--ghost" onclick={() => (pasting = { cityId: null })}
-          >Paste the plan Claude wrote</button
+          >Paste the plan you were given</button
         >
         <button class="btn btn--ghost" onclick={downloadNow}>Download prompt (.md)</button>
         {#if status}<p class="hint hint--ok" role="status">{status}</p>{/if}
@@ -312,7 +312,7 @@
     <PastePlanDialog
       title={city ? `${city.name} plan` : 'Plan'}
       hint={city
-        ? `Paste Claude's answer for ${city.name}. It replaces ${city.name}'s part of the plan; other cities stay as they are. New stops are added to Stops.`
+        ? `Paste the answer for ${city.name}. It replaces ${city.name}'s part of the plan; other cities stay as they are. New stops are added to Stops.`
         : trip.planText.trim()
           ? 'Paste the plan. It replaces the current plan (Edit plan on the Plan tab can undo it while editing). New stops are added to Stops.'
           : 'Paste the plan. New stops are added to Stops.'}
