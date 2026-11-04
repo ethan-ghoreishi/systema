@@ -246,11 +246,19 @@ describe('transfer arrival dates', () => {
     const d = timed('2027-02-12T06:30', '07:00', '07:45');
     expect(d.serviceAt).toBe(Z('2027-02-11T07:00'));
     expect(d.hubDayBefore).toBe(true);
-    for (const now of [d.prepareAt - MIN, d.prepareAt, d.leaveBy + MIN, d.at - MIN]) {
+    for (const now of [
+      d.prepareAt - MIN,
+      d.prepareAt,
+      d.leaveBy - MIN,
+      d.leaveBy + MIN,
+      d.at - MIN,
+    ]) {
       const { detail } = readiness(d, now);
       expect(detail).toContain('day before the flight');
       expect(detail).not.toContain('on track');
       expect(detail).not.toContain('still reach');
+      // Never a bare minute count for most of a day.
+      expect(detail).not.toMatch(/\d{3,} min/);
     }
   });
 

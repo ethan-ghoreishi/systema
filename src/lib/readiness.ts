@@ -350,7 +350,7 @@ export function readiness(d: Departure, now: number, deviceTz?: string): Readine
       return {
         stage,
         title: `Leave for ${d.hub} by ${leave} — in ${duration(d.leaveBy - now)}.`,
-        detail: `${d.journeyMin} min${via} to ${d.hub}, then ${d.slackMin ?? d.bufferMin} min before departure.${ride}${assumed}${tight}`,
+        detail: `${d.journeyMin} min${via} to ${d.hub}, then ${duration((d.slackMin ?? d.bufferMin) * MIN)} before departure.${ride}${assumed}${tight}`,
       };
     case 'go':
       return {

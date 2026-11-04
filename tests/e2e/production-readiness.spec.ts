@@ -361,6 +361,44 @@ test('changed Finder accommodation and airports recalculate costs, while unknown
   expect(result.trips).toBe(0);
 });
 
+// An option that names its night in words but has no night count is not
+// undecided, and opening its editor must not turn those words into nothing.
+test('editing an option that names its hotel night keeps the night and the cost', async ({
+  page,
+}) => {
+  const oppId = await page.evaluate(async () => {
+    const { createOpportunity, putOption } = await import('/src/lib/opportunities.ts');
+    const id = await createOpportunity('Faro', 'Portugal');
+    await putOption(id, {
+      id: 'named-night',
+      source: 'manual',
+      outDate: '2027-02-12',
+      backDate: '2027-02-13',
+      outRoute: ['LTN', 'FAO'],
+      backRoute: ['FAO', 'LTN'],
+      outDep: '07:00',
+      outArr: '09:50',
+      backDep: '18:00',
+      backArr: '20:50',
+      outFarePP: 20,
+      backFarePP: 30,
+      overnight: 'Hotel ×1',
+    });
+    return id;
+  });
+  await page.goto(`/#/opp/${oppId}`);
+  await page.getByRole('button', { name: 'Edit', exact: true }).first().click();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(page.locator('dialog[open]')).toHaveCount(0);
+  const saved = await page.evaluate(async (id) => {
+    const { db } = await import('/src/lib/db.ts');
+    const { accommodationUndecided } = await import('/src/lib/options.ts');
+    const o = (await db.opportunities.get(id))!.options[0];
+    return { overnight: o.overnight, nights: o.paidNights, undecided: accommodationUndecided(o) };
+  }, oppId);
+  expect(saved).toEqual({ overnight: 'Hotel ×1', nights: 1, undecided: false });
+});
+
 test('choosing a trip rolls back all new rows when a leg cannot be written', async ({ page }) => {
   const result = await page.evaluate(async () => {
     const { db } = await import('/src/lib/db.ts');

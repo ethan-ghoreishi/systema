@@ -89,7 +89,7 @@
     // trips that really do.
     sleep: (/airport sleep/i.test(option?.overnight ?? '')
       ? 'airport'
-      : (option?.paidNights ?? 0) > 0
+      : (option?.paidNights ?? 0) > 0 || /hotel/i.test(option?.overnight ?? '')
         ? 'hotel'
         : option?.paidNights === 0
           ? 'none'

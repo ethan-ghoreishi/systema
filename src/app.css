@@ -2561,6 +2561,10 @@ input.city-ccy {
   font-size: 15px;
   font-weight: 600;
 }
+.need > .btn {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
 .need-detail {
   font-size: 13px;
   color: var(--ink-soft);
