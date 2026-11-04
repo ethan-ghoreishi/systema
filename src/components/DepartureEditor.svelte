@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
   import type { DepartPlan } from '../lib/db';
-  import { MODE_DEFAULTS, PREPARE_MIN, planTiming } from '../lib/readiness';
+  import { MODE_DEFAULTS, PREPARE_MIN, duration, planTiming } from '../lib/readiness';
   import { timeIn, tzLongName, wallToInstant } from '../lib/tz';
 
   /**
@@ -115,12 +115,6 @@
       lines.push(
         `Leave by ${clock(timing.leaveBy)} = ${clock(timing.t)} departure − ${timing.bufferMin} min at ${hub.trim() || 'the airport'} − ${timing.journeyMin} min to get there${timing.assumed.includes('journey') ? ' (assumed)' : ''} − ${timing.contingencyMin} min spare.`,
       );
-    if (timing.slackMin != null)
-      lines.push(
-        timing.slackMin <= 0
-          ? `That arrives after the departure. Look for an earlier service.`
-          : `Gets you there ${timing.slackMin} min before departure${timing.slackMin < timing.bufferMin ? ' — tighter than you asked for' : ''}.`,
-      );
     lines.push(
       `Start getting ready at ${clock(timing.prepareAt)} — that is just the earlier nudge; it never moves leave-by.`,
     );
@@ -147,6 +141,7 @@
 
 <dialog
   class="modal"
+  aria-labelledby="departure-title"
   bind:this={dialogEl}
   onclose={onClose}
   oncancel={(e) => {
@@ -158,7 +153,7 @@
       <button class="btn btn--ghost btn--sm" onclick={() => dialogEl.close()} disabled={saving}
         >Cancel</button
       >
-      <h2 class="modal-title">{title}</h2>
+      <h2 class="modal-title" id="departure-title">{title}</h2>
       <button class="btn btn--primary btn--sm" onclick={save} disabled={saving}>Save</button>
     </header>
 
@@ -210,8 +205,7 @@
           </div>
         </div>
         <p class="hint">
-          This reference belongs to the {mode === 'flight' ? 'flight' : 'service'} itself. The ride to
-          it has its own, below.
+          The {mode === 'flight' ? 'flight' : 'service'} and its transfer have separate references.
         </p>
       {/if}
 
@@ -256,10 +250,24 @@
           <input id="dep-tarr" class="field" type="time" bind:value={transferArr} />
         </div>
       </div>
-      <p class="hint">
-        A booked coach or train has both on the ticket. Fill them in and the leave-by time counts
-        back from the service instead of from a guess.
-      </p>
+      {#if only !== 'transfer' && timing?.slackMin != null}
+        {@const warn = timing.hubDayBefore || timing.slackMin < timing.bufferMin}
+        <p class="hint" class:hint--warn={warn} role={warn ? 'alert' : undefined}>
+          {#if timing.hubDayBefore}
+            These times read as the day before the departure, arriving {duration(
+              timing.slackMin * 60_000,
+            )} early. Check them.
+          {:else if timing.slackMin <= 0}
+            That arrives at or after the departure. Look for an earlier service.
+          {:else}
+            Arrives {duration(timing.slackMin * 60_000)} before departure{timing.slackMin <
+            timing.bufferMin
+              ? ', less than your arrival margin'
+              : ''}.
+          {/if}
+        </p>
+      {/if}
+      <p class="hint">Use the transfer ticket's times. Leave-by counts back from its departure.</p>
 
       {#if !transferAt.trim() || !transferArr.trim()}
         <div>
@@ -276,13 +284,12 @@
 
       <div class="dep-grid">
         <div>
-          <label class="label" for="dep-tref">Ticket ref for this ride</label>
+          <label class="label" for="dep-tref">Transfer booking ref</label>
           <input id="dep-tref" class="field" placeholder="optional" bind:value={transferRef} />
         </div>
         {#if only !== 'transfer'}
           <div>
-            <label class="label" for="dep-buffer">Be at {hub.trim() || 'the hub'} (min early)</label
-            >
+            <label class="label" for="dep-buffer">Arrive early (min)</label>
             <input
               id="dep-buffer"
               class="field"
@@ -295,10 +302,7 @@
       </div>
       <label class="switch">
         <input type="checkbox" bind:checked={payOnDay} />
-        <span class="hint">
-          Bought on the day, at the machine or on board — nothing to book, so this counts as sorted
-          once you know which ride it is.
-        </span>
+        <span class="hint"> Pay on the day. Name the ride and add its times or duration. </span>
       </label>
 
       {#if only !== 'transfer'}

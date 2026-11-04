@@ -12,7 +12,12 @@ import { destTransferByCity, hotelNightCost, ukTransferByAirport } from './insig
 import { currencyForCountry } from './currencies';
 import { scenarioPattern, type StopoverScenario } from './trip-shape';
 import { suggestTz, HOME_TZ } from './tz';
-import type { Facts, ParsedRow } from './options';
+import {
+  accommodationUndecided,
+  invalidateOptionEstimates,
+  type Facts,
+  type ParsedRow,
+} from './options';
 
 /**
  * Opportunities: the destinations under consideration, and turning the winner
@@ -54,7 +59,7 @@ export async function putOption(oppId: string, option: TripOption): Promise<void
     const options = [...opp.options];
     const i = options.findIndex((o) => o.id === option.id);
     if (i < 0) options.push(option);
-    else options[i] = option;
+    else options[i] = invalidateOptionEstimates(option, options[i]);
     await db.opportunities.put({ ...opp, options });
   });
 }
@@ -268,131 +273,134 @@ async function carryQuotes(tripId: string, option: TripOption, party: number): P
  * for a two-city row — the stopover pattern the app already knows.
  */
 export async function chooseOption(opp: Opportunity, option: TripOption): Promise<ChosenTrip> {
-  const toFill: string[] = [];
-  const allCities = await db.cities.toArray();
-  const currency = currencySeen(opp.city, allCities, opp.country);
-  if (!currency) toFill.push(`the currency for ${opp.city}`);
-  const tripId = await createTrip(presetForOption(option));
-  // The fares are per person for the party the search priced; starting the
-  // trip with a different number would make its own figures disagree with the
-  // one that was compared.
-  const travellers = option.finderAssumptions?.travellers;
+  if (accommodationUndecided(option)) throw new Error('Choose where you will sleep in Edit first.');
+  return db.transaction('rw', db.trips, db.cities, db.expenses, async () => {
+    const toFill: string[] = [];
+    const allCities = await db.cities.toArray();
+    const currency = currencySeen(opp.city, allCities, opp.country);
+    if (!currency) toFill.push(`the currency for ${opp.city}`);
+    const tripId = await createTrip(presetForOption(option));
+    // The fares are per person for the party the search priced; starting the
+    // trip with a different number would make its own figures disagree with the
+    // one that was compared.
+    const travellers = option.finderAssumptions?.travellers;
 
-  await updateTrip(tripId, {
-    opportunityId: opp.id,
-    optionId: option.id,
-    ...(travellers && travellers !== DEFAULT_PARTY_SIZE ? { partySize: travellers } : {}),
-    outbound: {
-      at: wall(option.outDate, option.outDep),
-      tz: HOME_TZ,
-      mode: 'flight',
-      ...(option.outRoute[0] ? { hub: option.outRoute[0] } : {}),
-      ...(firstFlight(option.outFlights) ? { number: firstFlight(option.outFlights) } : {}),
-      ...(connectionNote(option, 'out') ? { notes: connectionNote(option, 'out') } : {}),
-    },
-  });
-
-  // The city you leave from, and the service that takes you: the first flight
-  // of the return route, not its last — with a connection, the last one lands
-  // in London, and it is this city's departure the readiness card counts back
-  // from.
-  const homeExit = {
-    mode: 'flight',
-    ...(option.backRoute[0] ? { hub: option.backRoute[0] } : {}),
-    ...(firstFlight(option.backFlights) ? { number: firstFlight(option.backFlights) } : {}),
-  };
-
-  // Both ends of the London side, which the row does state: the airport the
-  // return route lands at is often not the one it left from, and the ride home
-  // from it is a journey of its own.
-  const landsAt = option.backRoute[option.backRoute.length - 1];
-  if (landsAt && landsAt !== option.outRoute[0]) toFill.push(`how you get home from ${landsAt}`);
-  // When the flight home lands, which is the other half of the London end: a
-  // 23:40 landing is a different evening from a 14:00 one.
-  const homeAt = wall(option.backDate, option.backArr, option.backArrDay ?? 0);
-  if (landsAt || homeAt)
     await updateTrip(tripId, {
-      homeward: {
-        ...(landsAt ? { hub: landsAt } : {}),
-        ...(homeAt ? { at: homeAt, tz: HOME_TZ } : {}),
-        ...(connectionNote(option, 'back') ? { notes: connectionNote(option, 'back') } : {}),
+      opportunityId: opp.id,
+      optionId: option.id,
+      ...(travellers && travellers !== DEFAULT_PARTY_SIZE ? { partySize: travellers } : {}),
+      outbound: {
+        at: wall(option.outDate, option.outDep),
+        tz: HOME_TZ,
+        mode: 'flight',
+        ...(option.outRoute[0] ? { hub: option.outRoute[0] } : {}),
+        ...(firstFlight(option.outFlights) ? { number: firstFlight(option.outFlights) } : {}),
+        ...(connectionNote(option, 'out') ? { notes: connectionNote(option, 'out') } : {}),
       },
     });
-  const landing = wall(option.outDate, option.outArr, option.outArrDay ?? 0);
-  const leaving = wall(option.backDate, option.backDep);
-  // Where you land at the far end: the way in from it is its own journey.
-  const arriveAt = option.outRoute[option.outRoute.length - 1];
-  const entry = arriveAt && arriveAt !== option.outRoute[0] ? { hub: arriveAt } : undefined;
-  // An open jaw: you fly home from somewhere other than where you landed, so
-  // the trip has a second place in it that the row never names. One leg with
-  // an arrival in one city and a departure from another would be a lie, so the
-  // trip is laid out as the row states and this is said plainly instead.
-  const leavesFrom = option.backRoute[0];
-  if (!option.scenario && arriveAt && leavesFrom && leavesFrom !== arriveAt)
-    toFill.push(
-      `the leg you fly home from (${leavesFrom}) — you land at ${arriveAt}, so this trip has two places in it`,
-    );
 
-  if (option.scenario) {
-    const pattern = scenarioPattern(option.scenario as StopoverScenario);
-    const stopoverName = viaCode(option) ?? 'Stopover';
-    await applyStopoverScenario(
-      tripId,
-      option.scenario as StopoverScenario,
-      { name: stopoverName, currency: currencySeen(stopoverName, allCities) },
-      { name: opp.city, currency },
-    );
-    const legs = await db.cities.where('tripId').equals(tripId).sortBy('order');
-    const [first, second] = legs;
-    // Whichever way round the stopover falls, both tickets touch the
-    // destination: the outbound ends there and the journey home begins there.
-    // So that leg gets both times. The stopover's own clock times are not in
-    // the row — only the flight that leaves it — so they stay blank rather
-    // than being invented.
-    const [destLeg, stopLeg] =
-      pattern.order === 'stopover-first' ? [second, first] : [first, second];
-    if (destLeg)
-      await db.cities.update(destLeg.id, {
-        arrival: landing,
-        departure: leaving,
-        ...(entry && pattern.order !== 'stopover-first' ? { entry } : {}),
-        exit: { ...destLeg.exit, ...homeExit },
-        ...(suggestTz(opp.city, currency) ? { tz: suggestTz(opp.city, currency) } : {}),
-      });
-    if (stopLeg)
-      await db.cities.update(stopLeg.id, {
-        exit: {
-          ...stopLeg.exit,
-          mode: 'flight',
-          hub: stopoverName,
-          // Out via the stopover, the flight on is the last of the outbound;
-          // back via it, the flight home is the last of the return.
-          ...(pattern.order === 'stopover-first'
-            ? lastFlight(option.outFlights)
-              ? { number: lastFlight(option.outFlights) }
-              : {}
-            : lastFlight(option.backFlights)
-              ? { number: lastFlight(option.backFlights) }
-              : {}),
+    // The city you leave from, and the service that takes you: the first flight
+    // of the return route, not its last — with a connection, the last one lands
+    // in London, and it is this city's departure the readiness card counts back
+    // from.
+    const homeExit = {
+      mode: 'flight',
+      ...(option.backRoute[0] ? { hub: option.backRoute[0] } : {}),
+      ...(firstFlight(option.backFlights) ? { number: firstFlight(option.backFlights) } : {}),
+    };
+
+    // Both ends of the London side, which the row does state: the airport the
+    // return route lands at is often not the one it left from, and the ride home
+    // from it is a journey of its own.
+    const landsAt = option.backRoute[option.backRoute.length - 1];
+    if (landsAt && landsAt !== option.outRoute[0]) toFill.push(`how you get home from ${landsAt}`);
+    // When the flight home lands, which is the other half of the London end: a
+    // 23:40 landing is a different evening from a 14:00 one.
+    const homeAt = wall(option.backDate, option.backArr, option.backArrDay ?? 0);
+    if (landsAt || homeAt)
+      await updateTrip(tripId, {
+        homeward: {
+          ...(landsAt ? { hub: landsAt } : {}),
+          ...(homeAt ? { at: homeAt, tz: HOME_TZ } : {}),
+          ...(connectionNote(option, 'back') ? { notes: connectionNote(option, 'back') } : {}),
         },
       });
-    toFill.push(`the clock times in ${stopoverName}`, `the city behind the code ${stopoverName}`);
-    await recomputeTripDerived(tripId);
-  } else {
-    const night = (option.paidNights ?? 0) > 0 || /hotel/i.test(option.overnight ?? '');
-    await addCity(tripId, opp.city, currency, {
-      arrival: landing,
-      departure: leaving,
-      ...(entry ? { entry } : {}),
-      sleep: night ? 'hotel' : /airport sleep/i.test(option.overnight ?? '') ? 'airport' : 'none',
-      ...(suggestTz(opp.city, currency) ? { tz: suggestTz(opp.city, currency) } : {}),
-      exit: homeExit,
-    });
-    if (night) toFill.push('where you are staying');
-  }
+    const landing = wall(option.outDate, option.outArr, option.outArrDay ?? 0);
+    const leaving = wall(option.backDate, option.backDep);
+    // Where you land at the far end: the way in from it is its own journey.
+    const arriveAt = option.outRoute[option.outRoute.length - 1];
+    const entry = arriveAt && arriveAt !== option.outRoute[0] ? { hub: arriveAt } : undefined;
+    // An open jaw: you fly home from somewhere other than where you landed, so
+    // the trip has a second place in it that the row never names. One leg with
+    // an arrival in one city and a departure from another would be a lie, so the
+    // trip is laid out as the row states and this is said plainly instead.
+    const leavesFrom = option.backRoute[0];
+    if (!option.scenario && arriveAt && leavesFrom && leavesFrom !== arriveAt)
+      toFill.push(
+        `the leg you fly home from (${leavesFrom}) — you land at ${arriveAt}, so this trip has two places in it`,
+      );
 
-  await carryQuotes(tripId, option, Math.max(1, travellers ?? DEFAULT_PARTY_SIZE));
-  return { tripId, toFill };
+    if (option.scenario) {
+      const pattern = scenarioPattern(option.scenario as StopoverScenario);
+      const stopoverName = viaCode(option) ?? 'Stopover';
+      await applyStopoverScenario(
+        tripId,
+        option.scenario as StopoverScenario,
+        { name: stopoverName, currency: currencySeen(stopoverName, allCities) },
+        { name: opp.city, currency },
+      );
+      const legs = await db.cities.where('tripId').equals(tripId).sortBy('order');
+      const [first, second] = legs;
+      // Whichever way round the stopover falls, both tickets touch the
+      // destination: the outbound ends there and the journey home begins there.
+      // So that leg gets both times. The stopover's own clock times are not in
+      // the row — only the flight that leaves it — so they stay blank rather
+      // than being invented.
+      const [destLeg, stopLeg] =
+        pattern.order === 'stopover-first' ? [second, first] : [first, second];
+      if (destLeg)
+        await db.cities.update(destLeg.id, {
+          arrival: landing,
+          departure: leaving,
+          ...(entry && pattern.order !== 'stopover-first' ? { entry } : {}),
+          exit: { ...destLeg.exit, ...homeExit },
+          ...(suggestTz(opp.city, currency) ? { tz: suggestTz(opp.city, currency) } : {}),
+        });
+      if (stopLeg)
+        await db.cities.update(stopLeg.id, {
+          exit: {
+            ...stopLeg.exit,
+            mode: 'flight',
+            hub: stopoverName,
+            // Out via the stopover, the flight on is the last of the outbound;
+            // back via it, the flight home is the last of the return.
+            ...(pattern.order === 'stopover-first'
+              ? lastFlight(option.outFlights)
+                ? { number: lastFlight(option.outFlights) }
+                : {}
+              : lastFlight(option.backFlights)
+                ? { number: lastFlight(option.backFlights) }
+                : {}),
+          },
+        });
+      toFill.push(`the clock times in ${stopoverName}`, `the city behind the code ${stopoverName}`);
+      await recomputeTripDerived(tripId);
+    } else {
+      const night = (option.paidNights ?? 0) > 0 || /hotel/i.test(option.overnight ?? '');
+      await addCity(tripId, opp.city, currency, {
+        arrival: landing,
+        departure: leaving,
+        ...(entry ? { entry } : {}),
+        sleep: night ? 'hotel' : /airport sleep/i.test(option.overnight ?? '') ? 'airport' : 'none',
+        ...(suggestTz(opp.city, currency) ? { tz: suggestTz(opp.city, currency) } : {}),
+        exit: homeExit,
+      });
+      if (night) toFill.push('where you are staying');
+    }
+
+    await carryQuotes(tripId, option, Math.max(1, travellers ?? DEFAULT_PARTY_SIZE));
+    return { tripId, toFill };
+  });
 }
 
 // ---- What the ledger knows ----

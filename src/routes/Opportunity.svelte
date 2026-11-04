@@ -68,6 +68,10 @@
       : { rows: [], best: null, past: [], pastCount: 0, mixedBasis: false },
   );
 
+  // Rows priced for different party sizes cannot be compared on cost, so each
+  // one says whose cost it is — and only then, or it is noise on every row.
+  const mixedParties = $derived(new Set(view.rows.map((r) => r.party)).size > 1);
+
   // Chosen is per option, not per destination: a place you have been is a
   // place worth going back to, and the trip that was taken says nothing about
   // whether this week's fares are worth a look.
@@ -171,6 +175,15 @@
       <span class="opt-dates">{optionDates(o)}</span>
       <span class="opt-total">{money(row.totalPP)}<small> each</small></span>
     </header>
+    {#if mixedParties}
+      <p class="hint">Estimate for {row.party} {row.party === 1 ? 'person' : 'people'}.</p>
+    {/if}
+    {#if row.unknown.length}
+      <p class="hint hint--warn">{row.unknown.join(' ')}</p>
+      <p class="hint">Choose where you will sleep in Edit before choosing this trip.</p>
+    {:else if row.totalPP == null}
+      <p class="hint hint--warn">Cost not worked out yet.</p>
+    {/if}
 
     {#if row.blockers.length}
       <p class="opt-route">{optionRoute(o)}</p>
@@ -208,10 +221,13 @@
             ($citiesQ ?? []).filter((c) => c.tripId === taken.id),
           )}</a
         >
-      {:else if live && view.best && o.id !== view.best.option.id}
+      {:else if live && view.best && o.id !== view.best.option.id && !row.unknown.length}
         <p class="opt-diff">{describeDifference(row, view.best)}</p>
       {:else if live && view.best}
-        <p class="opt-diff opt-diff--best">{SORT_LABEL[sort]} here, on your own costs.</p>
+        <p class="opt-diff opt-diff--best">{SORT_LABEL[sort]} here, using these estimates.</p>
+      {/if}
+      {#if row.totalPP != null && (row.assumed.length || row.adjustments.some( (a) => a.basis.includes('allowance'), ))}
+        <p class="hint">Includes allowances. Check the cost breakdown before choosing.</p>
       {/if}
 
       {#if live && row.fareAgeDays != null && row.fareAgeDays >= STALE_FARE_DAYS}
@@ -221,7 +237,11 @@
       {/if}
 
       <details class="opt-work">
-        <summary class="section-title">Where {money(row.totalPP)} comes from</summary>
+        <summary class="section-title"
+          >{row.totalPP == null
+            ? 'Cost details'
+            : `Where ${money(row.totalPP)} comes from`}</summary
+        >
         {#if fareWords(o)}
           <p class="hint">Fares: {fareWords(o)}.</p>
         {/if}
@@ -265,8 +285,10 @@
 
     <div class="cluster cluster--wrap opt-actions">
       {#if live && !openTrip && !row.blockers.length}
-        <button class="btn btn--primary btn--sm grow" onclick={() => choose(row)} disabled={busy}
-          >Choose this</button
+        <button
+          class="btn btn--primary btn--sm grow"
+          onclick={() => choose(row)}
+          disabled={busy || row.unknown.length > 0}>Choose this</button
         >
       {/if}
       <button class="btn btn--ghost btn--sm" onclick={() => (editing = { option: o })}>Edit</button>
@@ -329,6 +351,11 @@
       {/if}
 
       {#if view.rows.length}
+        {#if mixedParties}
+          <p class="hint hint--warn">
+            These estimates use different party sizes. Check each option's assumptions.
+          </p>
+        {/if}
         <div class="chips chips--sort">
           {#each Object.entries(SORT_LABEL) as [key, label] (key)}
             <button

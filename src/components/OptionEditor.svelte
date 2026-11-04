@@ -89,9 +89,11 @@
     // trips that really do.
     sleep: (/airport sleep/i.test(option?.overnight ?? '')
       ? 'airport'
-      : (option?.paidNights ?? 0) > 0
+      : (option?.paidNights ?? 0) > 0 || /hotel/i.test(option?.overnight ?? '')
         ? 'hotel'
-        : 'none') as 'none' | 'airport' | 'hotel',
+        : option?.paidNights === 0
+          ? 'none'
+          : 'unknown') as 'none' | 'airport' | 'hotel' | 'unknown',
     note: option?.note ?? '',
     out: legOf(option, 'out'),
     back: legOf(option, 'back'),
@@ -205,7 +207,9 @@
         ? { paidNights, overnight: `Hotel ×${paidNights}` }
         : spansNight && sleep === 'airport'
           ? { paidNights: 0, overnight: 'Airport sleep' }
-          : { paidNights: 0, overnight: undefined };
+          : spansNight && sleep === 'unknown'
+            ? { paidNights: undefined, overnight: undefined }
+            : { paidNights: 0, overnight: undefined };
     const fares = { ...fareFields(out, 'out'), ...fareFields(back, 'back') };
     // Everything the editor does not ask about belongs to the option still:
     // the finder's own figures, its links, its ranking inputs. Rebuilding the
@@ -246,14 +250,6 @@
       next.backFareLocal !== option?.backFareLocal;
     if (fareMoved && (next.outFarePP != null || next.backFarePP != null))
       next.checked = `${todayIso()} 00:00`;
-    // A fare you have changed yourself is no longer the one the search totalled
-    // up, so its true cost cannot stand: the figure is added up from these
-    // parts instead. Everything the fare does not touch — the daylight hours,
-    // the links to re-check it, which run it came from — stays.
-    if (fareMoved && option?.finderPP != null) {
-      delete next.finderPP;
-      next.source = 'manual';
-    }
     for (const k of Object.keys(next) as (keyof TripOption)[])
       if (next[k] === undefined) delete next[k];
     return next;
@@ -261,6 +257,9 @@
 
   const problems = $derived([
     ...blockers(built),
+    ...(spansNight && sleep === 'hotel' && !(Number(nights) > 0)
+      ? ['Enter the hotel nights to pay for.']
+      : []),
     ...(built.outRoute.length < 2 ? ['Say which airport you leave from and where you land.'] : []),
   ]);
 
@@ -434,6 +433,7 @@
       {#if spansNight}
         <label class="label" for="opt-sleep">Where you sleep</label>
         <select id="opt-sleep" class="field" bind:value={sleep}>
+          <option value="unknown">Not decided yet</option>
           <option value="none">Nowhere — travelling through</option>
           <option value="airport">At the airport</option>
           <option value="hotel">A hotel</option>

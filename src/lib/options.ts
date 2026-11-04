@@ -382,6 +382,8 @@ export interface PricedOption {
   adjustments: Adjustment[];
   /** Finder assumptions nothing here could improve on, named rather than hidden. */
   assumed: string[];
+  unknown: string[];
+  party: number;
   usableH: number | null;
   groundH: number | null;
   /** £ per usable daylight hour, on the re-priced total. */
@@ -391,6 +393,57 @@ export interface PricedOption {
   homeBy: { time: string; dayAfter: boolean } | null;
   /** Days since the fare was checked, when it is known. */
   fareAgeDays: number | null;
+}
+
+/** Drop only estimates whose inputs changed; keep the original quote's other history. */
+export function invalidateOptionEstimates(next: TripOption, original: TripOption): TripOption {
+  const changed = (keys: (keyof TripOption)[]) =>
+    keys.some((key) => JSON.stringify(next[key]) !== JSON.stringify(original[key]));
+  const timingChanged = changed([
+    'outDate',
+    'backDate',
+    'outRoute',
+    'backRoute',
+    'outDep',
+    'outArr',
+    'backDep',
+    'backArr',
+    'outArrDay',
+    'backArrDay',
+  ]);
+  const result = { ...next };
+  if (timingChanged) {
+    delete result.usableH;
+    delete result.groundH;
+  }
+  if (
+    original.finderPP != null &&
+    (timingChanged ||
+      changed([
+        'outFarePP',
+        'backFarePP',
+        'outFareLocal',
+        'backFareLocal',
+        'outFareCcy',
+        'backFareCcy',
+        'paidNights',
+        'overnight',
+        'finderAssumptions',
+      ]))
+  ) {
+    delete result.finderPP;
+    result.source = 'manual';
+  }
+  return result;
+}
+
+export function accommodationUndecided(o: TripOption): boolean {
+  // Nights unknown *and* nothing said about the night at all. A row that names
+  // its arrangement ("Hotel ×1", "Airport sleep") was priced on that before
+  // this existed and still is: only a blank one is genuinely undecided.
+  return (
+    o.source === 'manual' && o.backDate > o.outDate && o.paidNights == null && !o.overnight?.trim()
+  );
 }
 
 function addMinutes(hhmm: string, delta: number): { time: string; day: number } {
@@ -435,6 +488,7 @@ export function priceOption(
     o.outFarePP != null || o.backFarePP != null ? (o.outFarePP ?? 0) + (o.backFarePP ?? 0) : null;
   const adjustments: Adjustment[] = [];
   const assumed: string[] = [];
+  const unknown: string[] = [];
 
   // A hand-written option has no finder figure to adjust, so its parts are
   // added up instead: the fares it states, plus the same inputs, measured where
@@ -494,7 +548,15 @@ export function priceOption(
   } else if (cities > 0) {
     assumed.push(`the transfer in ${city || 'the destination'} at the finder's £${destWas} each`);
   }
-  if (cities > 1) assumed.push(`the second city's transfer at the finder's £${destWas} each`);
+  if (cities > 1) {
+    if (parts)
+      adjustments.push({
+        label: "second city's transfer",
+        deltaPP: destWas * (cities - 1),
+        basis: `£${destWas} each per city — the search allowance`,
+      });
+    else assumed.push(`the second city's transfer at the finder's £${destWas} each`);
+  }
 
   // The three allowances the finder adds for the party and nothing here can
   // measure. For its own rows they are already inside `finderPP`; a
@@ -525,6 +587,7 @@ export function priceOption(
   }
 
   const nights = o.paidNights ?? 0;
+  if (accommodationUndecided(o)) unknown.push('Overnight accommodation has not been decided.');
   if (nights > 0) {
     if (facts.hotelNight) {
       const perPersonNight = facts.hotelNight.perPerson / party;
@@ -556,7 +619,9 @@ export function priceOption(
       : null
     : (o.finderPP ?? null);
   const totalPP =
-    base == null ? null : round2(base + adjustments.reduce((a, x) => a + x.deltaPP, 0));
+    base == null || unknown.length
+      ? null
+      : round2(base + adjustments.reduce((a, x) => a + x.deltaPP, 0));
 
   const flight = MODE_DEFAULTS.flight;
   const leave = o.outDep
@@ -573,6 +638,8 @@ export function priceOption(
     totalPP,
     adjustments,
     assumed,
+    unknown,
+    party,
     usableH: o.usableH ?? null,
     groundH: o.groundH ?? null,
     perHour: totalPP != null && o.usableH ? Math.round((totalPP / o.usableH) * 100) / 100 : null,
@@ -604,17 +671,18 @@ export const SORT_LABEL: Record<OptionSort, string> = {
   perHour: 'Best per hour',
 };
 
+const optionMetric = (r: PricedOption, by: OptionSort): number | null =>
+  by === 'cost' ? r.totalPP : by === 'daylight' ? r.usableH : r.perHour;
+
 /**
  * Order the options, with a blocked one and an unknown figure last — an
  * unknown is not a bad score, so it never beats a real one either way.
  */
 export function sortPriced(rows: PricedOption[], by: OptionSort): PricedOption[] {
-  const key = (r: PricedOption): number | null =>
-    by === 'cost' ? r.totalPP : by === 'daylight' ? r.usableH : r.perHour;
   const better = by === 'daylight' ? -1 : 1;
   return [...rows].sort((a, b) => {
     if (!!a.blockers.length !== !!b.blockers.length) return a.blockers.length ? 1 : -1;
-    const [ka, kb] = [key(a), key(b)];
+    const [ka, kb] = [optionMetric(a, by), optionMetric(b, by)];
     if (ka == null && kb == null) return a.option.outDate.localeCompare(b.option.outDate);
     if (ka == null) return 1;
     if (kb == null) return -1;
@@ -765,9 +833,13 @@ export function viewOpportunity(
   const past = [...priced.filter((r) => r.option.outDate < today)].sort((a, b) =>
     b.option.outDate.localeCompare(a.option.outDate),
   );
+  const eligible = rows.filter((r) => !r.blockers.length && optionMetric(r, by) != null);
   return {
     rows,
-    best: rows.find((r) => !r.blockers.length) ?? null,
+    best:
+      by === 'daylight' || new Set(eligible.map((r) => r.party)).size < 2
+        ? (eligible[0] ?? null)
+        : null,
     past,
     pastCount: past.length,
   };

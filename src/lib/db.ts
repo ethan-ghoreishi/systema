@@ -468,7 +468,8 @@ export interface Expense {
    * The thing that had to be sorted before the trip and this payment settles
    * ('flight:outbound', 'transfer-uk:back', 'hotel:<legId>'…). Booking writes
    * the amount and the travel details in one go, so £22 is never typed twice.
-   * See needs.ts. Absent on rows captured on the ground.
+   * See needs.ts. Absent on rows captured on the ground; empty after an explicit
+   * reclassification, so legacy description matching cannot reattach it.
    */
   need?: string;
   /**

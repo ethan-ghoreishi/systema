@@ -380,6 +380,7 @@ describe('what is left before a trip', () => {
         ...trip().outbound,
         ref: 'XY12AB',
         transport: 'National Express',
+        journeyMin: 75,
         payOnDay: true,
       },
     });
@@ -435,4 +436,80 @@ describe('what is left before a trip', () => {
       false,
     );
   });
+});
+
+describe('payment and journey evidence', () => {
+  it.each([
+    { payOnDay: true },
+    { payOnDay: true, journeyMin: 30 },
+    { payOnDay: true, transport: 'Coach' },
+    { payOnDay: true, transport: 'Coach', journeyMin: 0 },
+    { payOnDay: true, transport: 'Coach', transferAt: '05:10' },
+  ])('keeps an incomplete pay-on-day ride outstanding: %j', (plan) => {
+    const need = tripNeeds(
+      trip({ outbound: { ...trip().outbound, ...plan } }),
+      [leg()],
+      [],
+      [],
+      NOW,
+    ).find((n) => n.key === 'transfer-uk:out')!;
+    expect(need.done).toBe(false);
+  });
+
+  // Nobody books a walk, so asking for a booking is asking for the impossible:
+  // what is missing is the duration leave-by counts back from.
+  it('asks an unbookable ride for its duration, not for a booking', () => {
+    const need = tripNeeds(
+      trip({ outbound: { ...trip().outbound, transport: 'Walk' } }),
+      [leg()],
+      [],
+      [],
+      NOW,
+    ).find((n) => n.key === 'transfer-uk:out')!;
+    expect(need.done).toBe(false);
+    expect(need.detail).toBe('Walk — add how long it takes');
+    expect(need.evidence).toBe('Walk — add how long it takes');
+  });
+
+  it('counts a pending foreign-currency payment as paid without inventing GBP', () => {
+    const need = tripNeeds(
+      trip(),
+      [leg()],
+      [
+        expense({
+          need: 'transfer-in:c1',
+          amountGBP: 0,
+          amountLocal: 12,
+          currency: 'EUR',
+          fxPending: true,
+        }),
+      ],
+      [],
+      NOW,
+    ).find((n) => n.key === 'transfer-in:c1')!;
+    expect(need.state).toBe('paid');
+    expect(need.evidence).toBe('Paid — GBP amount pending');
+  });
+
+  it('reopens return coverage when its only payment disappears but preserves a reservation', () => {
+    const city = leg({ entry: { transport: 'Bus' }, exit: { coveredBy: 'transfer-in:c1' } });
+    const payment = expense({ need: 'transfer-in:c1' });
+    const done = (c: City, es: Expense[]) =>
+      tripNeeds(trip(), [c], es, [], NOW).find((n) => n.key === 'transfer-out:c1')!.done;
+    expect(done(city, [payment])).toBe(true);
+    expect(done(city, [])).toBe(false);
+    expect(done({ ...city, entry: { ...city.entry, transferRef: 'RETURN' } }, [])).toBe(true);
+  });
+});
+
+it('does not infer a booking from an explicitly detached payment’s old description', () => {
+  const row = expense({ need: '' });
+  expect(
+    tripNeeds(trip(), [leg()], [row], [], NOW).find((n) => n.key === 'flight:outbound')!.state,
+  ).toBe('open');
+  const legacy = { ...row };
+  delete legacy.need;
+  expect(
+    tripNeeds(trip(), [leg()], [legacy], [], NOW).find((n) => n.key === 'flight:outbound')!.state,
+  ).toBe('paid');
 });

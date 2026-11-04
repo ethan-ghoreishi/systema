@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  invalidateOptionEstimates,
   FINDER_DEST_TRANSFER_PP,
   fareWords,
   FINDER_EARLY_DEP_PENALTY,
@@ -487,4 +488,144 @@ describe('the fare as it was really quoted', () => {
       }),
     ).toBe('£19 + £15.50 each');
   });
+});
+
+describe('honest comparison estimates', () => {
+  const original: TripOption = {
+    id: 'estimate',
+    outDate: '2027-02-12',
+    backDate: '2027-02-13',
+    outRoute: ['LTN', 'FAO'],
+    backRoute: ['FAO', 'LTN'],
+    outFarePP: 20,
+    backFarePP: 30,
+    finderPP: 100,
+    paidNights: 1,
+    overnight: 'Hotel ×1',
+    usableH: 20,
+    groundH: 30,
+  };
+  it('does not give an undecided overnight stay a zero-cost ranking', () => {
+    const row = priceOption(
+      {
+        ...original,
+        source: 'manual',
+        finderPP: undefined,
+        paidNights: undefined,
+        overnight: undefined,
+      },
+      facts(),
+      'Faro',
+    );
+    expect(row.totalPP).toBeNull();
+    expect(row.perHour).toBeNull();
+    expect(row.unknown).toContain('Overnight accommodation has not been decided.');
+  });
+
+  // An older overnight row says what it is in words even when the night count
+  // is blank: it was priced on that before and still is.
+  it('still prices an overnight option that names its arrangement', () => {
+    const row = priceOption(
+      {
+        ...original,
+        source: 'manual',
+        finderPP: undefined,
+        paidNights: undefined,
+        overnight: 'Airport sleep',
+      },
+      facts(),
+      'Faro',
+    );
+    expect(row.unknown).toEqual([]);
+    expect(row.totalPP).not.toBeNull();
+  });
+
+  it('includes both destination transfers after a two-city option is edited', () => {
+    const row = priceOption(
+      { ...original, source: 'manual', finderPP: undefined, cities: 'TNG 10h + BCN* 8h' },
+      facts(),
+      'Tangier',
+    );
+    expect(row.adjustments.find((a) => a.label === "second city's transfer")?.deltaPP).toBe(
+      FINDER_DEST_TRANSFER_PP,
+    );
+  });
+
+  it('never names an unpriced option as the best cost', () => {
+    const view = viewOpportunity(
+      {
+        id: 'opp',
+        city: 'Faro',
+        options: [{ ...original, source: 'manual', finderPP: undefined, outFarePP: undefined }],
+        createdAt: 1,
+      },
+      facts(),
+      'cost',
+      Date.parse('2027-01-01'),
+    );
+    expect(view.best).toBeNull();
+  });
+});
+
+describe('editing imported estimates', () => {
+  const original: TripOption = {
+    id: 'estimate',
+    outDate: '2027-02-12',
+    backDate: '2027-02-13',
+    outRoute: ['LTN', 'FAO'],
+    backRoute: ['FAO', 'LTN'],
+    outFarePP: 20,
+    backFarePP: 30,
+    finderPP: 100,
+    paidNights: 1,
+    overnight: 'Hotel ×1',
+    usableH: 20,
+    groundH: 30,
+  };
+  it.each([
+    { paidNights: 3, overnight: 'Hotel ×3' },
+    { outRoute: ['STN', 'FAO'] },
+    { backRoute: ['FAO', 'LHR'] },
+    { outDep: '05:30' },
+    { outFarePP: 60 },
+  ])('invalidates a search total whose inputs moved: %j', (patch) => {
+    const next = invalidateOptionEstimates({ ...original, ...patch }, original);
+    expect(next.finderPP).toBeUndefined();
+    expect(next.source).toBe('manual');
+    expect(priceOption(next, facts(), 'Faro').totalPP).not.toBe(100);
+  });
+  it('keeps history for a note edit and clears daylight estimates only when timing changes', () => {
+    expect(invalidateOptionEstimates({ ...original, note: 'Cabin bag' }, original).finderPP).toBe(
+      100,
+    );
+    expect(invalidateOptionEstimates({ ...original, paidNights: 3 }, original).usableH).toBe(20);
+    expect(
+      invalidateOptionEstimates({ ...original, outDep: '11:00' }, original).usableH,
+    ).toBeUndefined();
+  });
+});
+
+it('does not call one party size the cheapest for another', () => {
+  const base: TripOption = {
+    id: 'one',
+    outDate: '2027-02-12',
+    backDate: '2027-02-12',
+    outRoute: ['LTN', 'FAO'],
+    backRoute: ['FAO', 'LTN'],
+    finderPP: 100,
+    finderAssumptions: { travellers: 1 },
+  };
+  const view = viewOpportunity(
+    {
+      id: 'opp',
+      city: 'Faro',
+      createdAt: 1,
+      options: [base, { ...base, id: 'two', finderPP: 90, finderAssumptions: { travellers: 2 } }],
+    },
+    facts(),
+    'cost',
+    Date.parse('2027-01-01'),
+  );
+  expect(view.best).toBeNull();
+  expect(view.rows.map((r) => r.party)).toEqual([2, 1]);
 });

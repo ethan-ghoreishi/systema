@@ -134,6 +134,7 @@
     rate = null;
     rateStale = false;
     rateMissing = true;
+    if (!ecbPublishes(c)) return;
     let cancelled = false;
     getRate(c, date).then((r) => {
       if (cancelled) return;
@@ -191,13 +192,13 @@
   const finalGBP = $derived(priced.amountGBP);
   const subOptions = $derived(category ? (subcategories[category] ?? []) : []);
 
-  // No GBP required: a non-GBP amount with no rate saves as "awaiting rate"
-  // and prices itself from the ECB rate for its date once online.
+  // Only currencies with a published rate may wait for automatic pricing.
   const canSave = $derived(
     !saving &&
       Number.isFinite(localNum) &&
       localNum > 0 &&
-      (overrideNum == null || (Number.isFinite(overrideNum) && overrideNum >= 0)) &&
+      !(noRateEver && priced.fxPending) &&
+      (overrideNum == null || overrideNum > 0) &&
       category !== '' &&
       subcategory !== '' &&
       paymentMethod !== '' &&
@@ -219,13 +220,21 @@
     duplicateOf = null;
   }
 
+  function setCurrency(c: string) {
+    if (c === currency) return;
+    currency = c;
+    // The £ belonged to the old currency, and after the switch this field may
+    // be inside the collapsed "More details" — a hidden figure deciding the row.
+    overrideGBP = '';
+  }
+
   function pickCity(id: string) {
     shared = false;
     cityId = id;
     const c = cities.find((x) => x.id === id);
     if (c) {
       if (!destinationTouched) destination = c.name;
-      if (c.currency) currency = c.currency.trim().toUpperCase();
+      if (c.currency) setCurrency(c.currency.trim().toUpperCase());
     }
   }
 
@@ -313,11 +322,19 @@
     const msg = expense.skeleton
       ? 'Remove this row from the list of things to add?'
       : expense.need && needWords(expense.need)
-        ? `Delete this expense? ${needWords(expense.need)[0].toUpperCase()}${needWords(expense.need).slice(1)} goes back to Before you go as unpaid.`
+        ? `Delete this payment for ${needWords(expense.need)}? Booking references and journey details are kept.`
         : 'Delete this expense?';
     if (confirm(msg)) {
-      await deleteExpense(expense.id);
-      onClose();
+      saving = true;
+      saveError = '';
+      try {
+        await deleteExpense(expense.id);
+        onClose();
+      } catch (err) {
+        saveError = `Not deleted: ${err instanceof Error ? err.message : String(err)}`;
+      } finally {
+        saving = false;
+      }
     }
   }
 
@@ -332,6 +349,7 @@
 <!-- Escape triggers the dialog's native cancel → close → onClose. -->
 <dialog
   class="modal"
+  aria-labelledby="expense-title"
   bind:this={dialogEl}
   onclose={onClose}
   oncancel={(e) => {
@@ -345,7 +363,9 @@
       <button class="btn btn--ghost btn--sm modal-cancel" onclick={onClose} disabled={saving}
         >Cancel</button
       >
-      <h2 class="modal-title">{expense && !expense.skeleton ? 'Edit expense' : 'Add expense'}</h2>
+      <h2 class="modal-title" id="expense-title">
+        {expense && !expense.skeleton ? 'Edit expense' : 'Add expense'}
+      </h2>
       <button class="btn btn--primary btn--sm modal-save" onclick={save} disabled={!canSave}
         >{duplicateOf ? 'Save anyway' : 'Save'}</button
       >
@@ -368,7 +388,7 @@
           <span class="amount-gbp">
             {#if rateMissing && overrideNum == null}
               {noRateEver
-                ? `no ${currency} rate is published — type the £ under More details`
+                ? `No ${currency} rate is available. Enter the GBP total below.`
                 : 'no rate right now — saves anyway, prices itself when online'}
             {:else}
               = {formatGBP(finalGBP)}{rateStale ? ' (cached rate)' : ''}
@@ -379,13 +399,35 @@
 
       <div class="chips ccy-chips">
         {#each currencyOptions as c (c)}
-          <button class="chip" class:chip--on={currency === c} onclick={() => (currency = c)}
+          <button class="chip" class:chip--on={currency === c} onclick={() => setCurrency(c)}
             >{c}</button
           >
         {/each}
       </div>
 
       <Keypad bind:value={amountStr} />
+
+      {#if noRateEver}
+        <div>
+          <label class="label" for="gbp-required">Amount (GBP)</label>
+          <input
+            id="gbp-required"
+            class="field"
+            type="text"
+            inputmode="decimal"
+            bind:value={overrideGBP}
+          />
+          {#if overrideGBP.trim() && !(overrideNum != null && overrideNum > 0)}<p
+              class="hint hint--warn"
+              role="alert"
+            >
+              Enter the GBP total from your statement — £0 would leave this payment out of every
+              total.
+            </p>{:else if manualGBP}<p class="hint">
+              The £ was entered by hand and is kept; change it here if needed.
+            </p>{/if}
+        </div>
+      {/if}
 
       <div>
         <span class="label">Quick pick</span>
@@ -499,7 +541,7 @@
           <input id="exp-date" class="field" type="date" bind:value={date} />
         </div>
 
-        {#if !isGBP}
+        {#if !isGBP && !noRateEver}
           <div class="field-row">
             <label class="label" for="gbp-override"
               >Amount (GBP){rateMissing ? '' : ' override'}</label
@@ -513,13 +555,12 @@
               bind:value={overrideGBP}
             />
           </div>
-          {#if manualGBP}
-            <p class="hint">The £ was entered by hand and is kept; change it here if needed.</p>
-          {:else if noRateEver}
-            <p class="hint">
-              The ECB publishes no {currency} rate, so this one never prices itself — put the £ from your
-              statement here.
+          {#if overrideGBP.trim() && !(overrideNum != null && overrideNum > 0)}
+            <p class="hint hint--warn" role="alert">
+              Type a £ amount above zero, or leave it blank for the rate.
             </p>
+          {:else if manualGBP}
+            <p class="hint">The £ was entered by hand and is kept; change it here if needed.</p>
           {:else if rate != null && overrideNum == null && !keepRecorded}
             <p class="hint">
               ECB rate{rateDate ? ` for ${rateDate}` : ''}: 1 {currency} = £{rate}. Type a £ amount
