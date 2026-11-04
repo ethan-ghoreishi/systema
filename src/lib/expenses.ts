@@ -53,10 +53,19 @@ export async function updateExpense(id: string, patch: Partial<Expense>): Promis
     // inferred from its 'CityA/CityB' destination, and the editor writes that
     // same reading back as `shared: true`. Comparing the raw flag would call
     // that a reclassification and cut a paid flight loose from its booking.
+    // Filling a seeded placeholder is not moving a payment: the row is the
+    // trip's own list of things to pay for, so naming its city or its scope
+    // must leave the booking it was seeded for attached. Its category is a
+    // different matter -- a seeded row carries one, so paying for a hotel on
+    // the 'Outbound flight' row is a reclassification like any other and must
+    // still cut it loose, or that hotel would report the flight as paid.
     const moved =
-      (['category', 'subcategory', 'cityId'] as const).some(
+      (['category', 'subcategory'] as const).some(
         (key) => key in patch && (patch[key] ?? null) !== (current[key] ?? null),
-      ) || isShared({ ...current, ...patch }) !== isShared(current);
+      ) ||
+      (!current.skeleton &&
+        (('cityId' in patch && (patch.cityId ?? null) !== (current.cityId ?? null)) ||
+          isShared({ ...current, ...patch }) !== isShared(current)));
     // An empty key means deliberately detached; an absent key permits legacy matching.
     await db.expenses.update(id, { ...patch, ...(moved ? { need: '' } : {}) });
   });
