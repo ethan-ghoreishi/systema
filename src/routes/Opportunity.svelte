@@ -68,6 +68,10 @@
       : { rows: [], best: null, past: [], pastCount: 0, mixedBasis: false },
   );
 
+  // Rows priced for different party sizes cannot be compared on cost, so each
+  // one says whose cost it is — and only then, or it is noise on every row.
+  const mixedParties = $derived(new Set(view.rows.map((r) => r.party)).size > 1);
+
   // Chosen is per option, not per destination: a place you have been is a
   // place worth going back to, and the trip that was taken says nothing about
   // whether this week's fares are worth a look.
@@ -171,7 +175,9 @@
       <span class="opt-dates">{optionDates(o)}</span>
       <span class="opt-total">{money(row.totalPP)}<small> each</small></span>
     </header>
-    <p class="hint">Estimate for {row.party} {row.party === 1 ? 'person' : 'people'}.</p>
+    {#if mixedParties}
+      <p class="hint">Estimate for {row.party} {row.party === 1 ? 'person' : 'people'}.</p>
+    {/if}
     {#if row.unknown.length}
       <p class="hint hint--warn">{row.unknown.join(' ')}</p>
       <p class="hint">Choose where you will sleep in Edit before choosing this trip.</p>
@@ -215,7 +221,7 @@
             ($citiesQ ?? []).filter((c) => c.tripId === taken.id),
           )}</a
         >
-      {:else if live && view.best && o.id !== view.best.option.id}
+      {:else if live && view.best && o.id !== view.best.option.id && !row.unknown.length}
         <p class="opt-diff">{describeDifference(row, view.best)}</p>
       {:else if live && view.best}
         <p class="opt-diff opt-diff--best">{SORT_LABEL[sort]} here, using these estimates.</p>
@@ -345,7 +351,7 @@
       {/if}
 
       {#if view.rows.length}
-        {#if new Set(view.rows.map((r) => r.party)).size > 1}
+        {#if mixedParties}
           <p class="hint hint--warn">
             These estimates use different party sizes. Check each option's assumptions.
           </p>

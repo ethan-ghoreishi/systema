@@ -26,6 +26,8 @@ export const MODE_DEFAULTS: Record<string, ModeDefaults> = {
   other: { bufferMin: 30, contingencyMin: 15, journeyMin: 30 },
 };
 export const PREPARE_MIN = 45;
+/** Past this much waiting at the hub, a day-before reading is worth querying. */
+const DAY_EARLY_MIN = 12 * 60;
 /** "Leave by" turns from Prepare into its own stage this close to the time. */
 const SOON_MIN = 10;
 const MIN = 60_000;
@@ -53,6 +55,14 @@ export interface Timing {
   latestLeave: number;
   /** Minutes at the hub before departure on the booked ride, where it is known. */
   slackMin?: number;
+  /**
+   * The only reading of these times that leaves before the departure puts the
+   * ride most of a day early, on the day before. The 23:10 coach for the 06:30
+   * flight is not that — it lands at 00:40 the same morning — and nor is the
+   * 23:00 arrival for a 00:30 flight. A 07:00 ride typed against a 06:30 flight
+   * is: a wrong time far more often than a plan, and silence would hide it.
+   */
+  hubDayBefore?: boolean;
 }
 
 const n = (v: number | undefined) => (typeof v === 'number' && v >= 0 ? v : undefined);
@@ -94,11 +104,14 @@ export function planTiming(
 ): Timing {
   const d = MODE_DEFAULTS[mode] ?? MODE_DEFAULTS.flight;
   const serviceAt = rideInstant(plan.transferAt, departAt, wall, tz);
-  const serviceArr =
+  const arrivesAt =
     serviceAt == null
       ? undefined
       : rideInstant(plan.transferArr, serviceAt, instantToWall(serviceAt, tz), tz, true);
-  const timed = serviceAt != null && serviceArr != null && serviceArr > serviceAt;
+  const timed = serviceAt != null && arrivesAt != null && arrivesAt > serviceAt;
+  // Two equal times are not a timetable: counting the ride as instant would
+  // claim a margin the journey eats.
+  const serviceArr = timed ? arrivesAt : undefined;
   const journeyMin = timed
     ? Math.round((serviceArr! - serviceAt!) / MIN)
     : (n(plan.journeyMin) ?? d.journeyMin);
@@ -115,6 +128,9 @@ export function planTiming(
     serviceAt != null
       ? serviceAt - contingencyMin * MIN
       : departAt - (bufferMin + journeyMin + contingencyMin) * MIN;
+  // When you are at the hub on the booked ride: its own arrival where the
+  // ticket states one, else the journey laid on its departure.
+  const hubAt = serviceAt == null ? undefined : (serviceArr ?? serviceAt + journeyMin * MIN);
   return {
     journeyMin,
     bufferMin,
@@ -128,8 +144,14 @@ export function planTiming(
     // The coach you must be on is the last moment you can leave; otherwise the
     // cushion is what is left.
     latestLeave: serviceAt != null ? serviceAt : leaveBy + contingencyMin * MIN,
-    ...(serviceAt != null
-      ? { slackMin: Math.round((departAt - (serviceArr ?? serviceAt + journeyMin * MIN)) / MIN) }
+    ...(hubAt != null
+      ? {
+          slackMin: Math.round((departAt - hubAt) / MIN),
+          ...(instantToWall(hubAt, tz).slice(0, 10) < wall.slice(0, 10) &&
+          departAt - hubAt > DAY_EARLY_MIN * MIN
+            ? { hubDayBefore: true }
+            : {}),
+        }
       : {}),
   };
 }
@@ -162,6 +184,7 @@ export interface Departure {
   serviceAt?: number;
   serviceArr?: number;
   slackMin?: number;
+  hubDayBefore?: boolean;
 }
 
 function hubName(plan: DepartPlan, mode: string, from: string): string {
@@ -258,7 +281,7 @@ export const STAGE_LABEL: Record<Stage, string> = {
   'plan-b': 'Plan B',
 };
 
-function duration(ms: number): string {
+export function duration(ms: number): string {
   const m = Math.max(0, Math.round(ms / MIN));
   if (m < 60) return `${m} min`;
   const h = Math.floor(m / 60);
@@ -290,16 +313,20 @@ export function readiness(d: Departure, now: number, deviceTz?: string): Readine
   const via = d.plan.transport?.trim() ? ` by ${d.plan.transport.trim()}` : '';
   // A booked ride's own departure is a fact; a journey length nobody set is a
   // guess. Say which this time is built on, every time.
-  const ride = d.serviceAt
-    ? ` The ${clockLabel(d.serviceAt, d.tz, now)}${d.plan.transport?.trim() ? ` ${d.plan.transport.trim().toLowerCase()}` : ' service'} does not wait.`
+  const service = d.serviceAt
+    ? `the ${clockLabel(d.serviceAt, d.tz, now)}${d.plan.transport?.trim() ? ` ${d.plan.transport.trim().toLowerCase()}` : ' service'}`
     : '';
+  // Where the times only read as a ride at all by being put on the day before,
+  // saying it "does not wait" would dress a wrong time up as a timetable.
+  const ride = service && !d.hubDayBefore ? ` The ${service} does not wait.` : '';
   const assumed = d.serviceAt
     ? ''
     : d.assumed.includes('journey')
       ? ` Assuming ${d.journeyMin} min to get there — set the real time.`
       : '';
-  const tight =
-    d.slackMin != null && d.slackMin < d.bufferMin
+  const tight = d.hubDayBefore
+    ? ` ${service.charAt(0).toUpperCase()}${service.slice(1)} is read as the day before the flight, reaching ${d.hub} ${duration(d.slackMin! * MIN)} early.`
+    : d.slackMin != null && d.slackMin < d.bufferMin
       ? ` That gets you to ${d.hub} ${d.slackMin <= 0 ? 'after the departure' : `only ${d.slackMin} min before`} — check there is nothing earlier.`
       : '';
   const ref = d.plan.ref?.trim() ? ` Booking ${d.plan.ref.trim()}.` : '';
@@ -341,7 +368,7 @@ export function readiness(d: Departure, now: number, deviceTz?: string): Readine
           : margin < d.bufferMin / 2
             ? `Going now you'd reach ${d.hub} about ${margin} min before departure — take the fastest option and check when the gate or bag drop closes.`
             : `Going now you'd still reach ${d.hub} about ${margin} min before departure. Take the quickest way.`;
-      return { stage, title: `Plan B for ${d.hub}.`, detail: `${advice}${ref}` };
+      return { stage, title: `Plan B for ${d.hub}.`, detail: `${advice}${tight}${ref}` };
     }
   }
 }

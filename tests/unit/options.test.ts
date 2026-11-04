@@ -522,6 +522,24 @@ describe('honest comparison estimates', () => {
     expect(row.unknown).toContain('Overnight accommodation has not been decided.');
   });
 
+  // An older overnight row says what it is in words even when the night count
+  // is blank: it was priced on that before and still is.
+  it('still prices an overnight option that names its arrangement', () => {
+    const row = priceOption(
+      {
+        ...original,
+        source: 'manual',
+        finderPP: undefined,
+        paidNights: undefined,
+        overnight: 'Airport sleep',
+      },
+      facts(),
+      'Faro',
+    );
+    expect(row.unknown).toEqual([]);
+    expect(row.totalPP).not.toBeNull();
+  });
+
   it('includes both destination transfers after a two-city option is edited', () => {
     const row = priceOption(
       { ...original, source: 'manual', finderPP: undefined, cities: 'TNG 10h + BCN* 8h' },

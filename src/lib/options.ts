@@ -438,7 +438,12 @@ export function invalidateOptionEstimates(next: TripOption, original: TripOption
 }
 
 export function accommodationUndecided(o: TripOption): boolean {
-  return o.source === 'manual' && o.backDate > o.outDate && o.paidNights == null;
+  // Nights unknown *and* nothing said about the night at all. A row that names
+  // its arrangement ("Hotel ×1", "Airport sleep") was priced on that before
+  // this existed and still is: only a blank one is genuinely undecided.
+  return (
+    o.source === 'manual' && o.backDate > o.outDate && o.paidNights == null && !o.overnight?.trim()
+  );
 }
 
 function addMinutes(hhmm: string, delta: number): { time: string; day: number } {

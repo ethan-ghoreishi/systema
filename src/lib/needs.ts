@@ -180,7 +180,11 @@ function groundNeed(
   const how = plan.transport?.trim();
   const covered = coverageHeld;
   const specified = groundJourneySpecified(plan);
-  const payOnDay = specified && (plan.payOnDay === true || NEVER_BOOKED.test(how!));
+  // Nobody books a walk, so "not booked yet" would be the wrong thing to ask
+  // for: what is missing is how long it takes, which is what leave-by needs.
+  const unbookable = plan.payOnDay === true || (!!how && NEVER_BOOKED.test(how));
+  const payOnDay = specified && unbookable;
+  const pending = unbookable ? 'add how long it takes' : 'not booked yet';
   const timed = plan.transferAt?.trim()
     ? `the ${plan.transferAt.trim()}${plan.transferArr?.trim() ? `, in at ${plan.transferArr.trim()}` : ''}`
     : '';
@@ -197,7 +201,7 @@ function groundNeed(
       state === 'open'
         ? (quote ?? 'Not sorted yet')
         : state === 'planned'
-          ? `${way} — ${payOnDay ? 'you pay on the day' : 'not booked yet'}`
+          ? `${way} — ${payOnDay ? 'you pay on the day' : pending}`
           : way || STATE_WORD[state],
     state,
     done,
@@ -208,7 +212,7 @@ function groundNeed(
         : covered
           ? `${way ? `${way} · ` : ''}on the same return ticket`
           : way
-            ? `${way} — ${payOnDay ? 'pay on the day' : 'not booked yet'}`
+            ? `${way} — ${payOnDay ? 'pay on the day' : pending}`
             : undefined,
     book,
   };

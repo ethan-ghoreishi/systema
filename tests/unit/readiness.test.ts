@@ -240,6 +240,44 @@ describe('transfer arrival dates', () => {
     expect(d.journeyMin).toBe(95);
   });
 
+  // A 07:00 coach for a 06:30 flight has no same-day reading that leaves in
+  // time, so it is read as the day before — which must never pass for a plan.
+  it('warns at every stage when the ride reaches the hub the day before', () => {
+    const d = timed('2027-02-12T06:30', '07:00', '07:45');
+    expect(d.serviceAt).toBe(Z('2027-02-11T07:00'));
+    expect(d.hubDayBefore).toBe(true);
+    for (const now of [d.prepareAt - MIN, d.prepareAt, d.leaveBy + MIN, d.at - MIN]) {
+      const { detail } = readiness(d, now);
+      expect(detail).toContain('day before the flight');
+      expect(detail).not.toContain('on track');
+      expect(detail).not.toContain('still reach');
+    }
+  });
+
+  // A 00:30 flight is reached the evening before. That is the plan, not a slip.
+  it('stays quiet when a late-night flight is reached the evening before', () => {
+    const d = timed('2027-02-12T00:30', '22:00', '23:00');
+    expect(d.serviceAt).toBe(Z('2027-02-11T22:00'));
+    expect(d.hubDayBefore).toBeUndefined();
+    expect(d.slackMin).toBe(90);
+    expect(readiness(d, d.prepareAt).detail).not.toContain('day before');
+  });
+
+  it('stays quiet for the overnight coach that lands on the flight day', () => {
+    const d = timed('2027-02-12T06:30', '23:10', '00:45');
+    expect(d.hubDayBefore).toBeUndefined();
+    expect(readiness(d, d.prepareAt).detail).not.toContain('day before');
+  });
+
+  // Equal times are not a timetable, so the ride is not instant: the slack has
+  // to come off an assumed journey, not off the moment it leaves.
+  it('does not credit a zero-length ride with the time it takes', () => {
+    const d = timed('2027-02-12T06:30', '05:10', '05:10');
+    expect(d.serviceArr).toBeUndefined();
+    expect(d.journeyMin).toBe(45);
+    expect(d.slackMin).toBe(35);
+  });
+
   it('uses calendar days across the spring clock change', () => {
     const d = timed('2026-03-29T06:30', '23:10', '03:00');
     expect(d.serviceAt).toBe(Z('2026-03-28T23:10'));

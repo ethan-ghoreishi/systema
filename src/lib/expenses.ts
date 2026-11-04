@@ -1,5 +1,6 @@
 import { db, type Expense, type Trip } from './db';
 import { presetFor } from './presets';
+import { isShared } from './expense-defaults';
 import { newId } from './ids';
 import { getRateForDate } from './fx';
 import { deletePhotosWhere } from './photos';
@@ -47,10 +48,15 @@ export async function updateExpense(id: string, patch: Partial<Expense>): Promis
   await db.transaction('rw', db.expenses, async () => {
     const current = await db.expenses.get(id);
     if (!current) throw new Error('This expense no longer exists.');
-    // A reclassified payment no longer pays for its old booking.
-    const moved = (['category', 'subcategory', 'cityId', 'shared'] as const).some(
-      (key) => key in patch && (patch[key] ?? false) !== (current[key] ?? false),
-    );
+    // A reclassified payment no longer pays for its old booking. What counts is
+    // the scope the app reads, not the flag: an older row's trip-wide scope is
+    // inferred from its 'CityA/CityB' destination, and the editor writes that
+    // same reading back as `shared: true`. Comparing the raw flag would call
+    // that a reclassification and cut a paid flight loose from its booking.
+    const moved =
+      (['category', 'subcategory', 'cityId'] as const).some(
+        (key) => key in patch && (patch[key] ?? null) !== (current[key] ?? null),
+      ) || isShared({ ...current, ...patch }) !== isShared(current);
     // An empty key means deliberately detached; an absent key permits legacy matching.
     await db.expenses.update(id, { ...patch, ...(moved ? { need: '' } : {}) });
   });

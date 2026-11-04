@@ -248,6 +248,28 @@ test('unsupported-currency Expenses require a visible GBP amount and retain the 
   await expect(page.locator('.expense-row')).toContainText('£13.50');
 });
 
+test('an unsupported currency cannot be settled with a zero pound conversion', async ({ page }) => {
+  const id = await page.evaluate(async () => {
+    const { createTrip, addCity } = await import('/src/lib/trips.ts');
+    const id = await createTrip('custom');
+    await addCity(id, 'Amman', 'JOD');
+    return id;
+  });
+  await page.goto(`/#/trip/${id}/expenses`);
+  await page.getByRole('button', { name: 'Add', exact: true }).click();
+  await page.getByRole('button', { name: '1', exact: true }).click();
+  await page.getByRole('button', { name: '2', exact: true }).click();
+  await page.getByRole('button', { name: 'Museum', exact: true }).click();
+  const gbp = page.getByLabel('Amount (GBP)', { exact: true });
+  await gbp.fill('0');
+  await expect(page.getByRole('alert')).toContainText('out of every total');
+  await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
+  await gbp.fill('13.5');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(page.locator('dialog[open]')).toHaveCount(0);
+  await expect(page.locator('.expense-row')).toContainText('£13.50');
+});
+
 for (const width of [375, 390]) {
   test(`Leaving home fields align and late arrival warns at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: width === 375 ? 667 : 844 });
@@ -452,6 +474,66 @@ test('a failed payment update preserves the original quote and all booking detai
     };
   });
   expect(result).toEqual({ failed: true, unchanged: true, outbound: null });
+});
+
+// A row from before `shared` existed reads as trip-wide from its 'A/B'
+// destination, and the editor writes that reading back as the flag. Normalising
+// it is not reclassifying it: the payment must stay on its booking.
+test('an older trip-wide payment survives an ordinary edit still attached', async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const { db } = await import('/src/lib/db.ts');
+    const { createTrip, addCity } = await import('/src/lib/trips.ts');
+    const { tripNeeds } = await import('/src/lib/needs.ts');
+    const { addExpense, updateExpense } = await import('/src/lib/expenses.ts');
+    const { isShared } = await import('/src/lib/expense-defaults.ts');
+    const id = await createTrip('weekend');
+    await addCity(id, 'Bologna', 'EUR');
+    await addCity(id, 'Barcelona', 'EUR');
+    // As an older release wrote it: no flag, no need stamp, the sheet's words.
+    const expenseId = await addExpense(id, {
+      cityId: null,
+      destination: 'Bologna/Barcelona',
+      date: '2026-11-01',
+      category: 'Transportation',
+      subcategory: 'Flight',
+      description: 'Outbound flight',
+      paymentMethod: 'Online Payment',
+      amountGBP: 58,
+      amountLocal: 0,
+      currency: 'GBP',
+      fxRate: null,
+      notes: '',
+    });
+    const row = (await db.expenses.get(expenseId))!;
+    const needs = async () =>
+      tripNeeds(
+        (await db.trips.get(id))!,
+        await db.cities.where('tripId').equals(id).sortBy('order'),
+        await db.expenses.where('tripId').equals(id).toArray(),
+        [],
+      );
+    const before = (await needs()).find((n) => n.key === 'flight:outbound')!.state;
+    // Exactly what the editor saves when only the notes are touched.
+    await updateExpense(expenseId, {
+      ...row,
+      shared: isShared(row),
+      notes: 'Checked in',
+      skeleton: false,
+    });
+    const kept = await db.expenses.get(expenseId);
+    const after = (await needs()).find((n) => n.key === 'flight:outbound')!.state;
+    // Moving it out of Transportation is a reclassification and must detach.
+    await updateExpense(expenseId, { category: 'Food', subcategory: 'Lunch' });
+    const moved = (await needs()).find((n) => n.key === 'flight:outbound')!.state;
+    return { before, after, moved, need: kept!.need ?? null, shared: kept!.shared };
+  });
+  expect(result).toEqual({
+    before: 'paid',
+    after: 'paid',
+    moved: 'open',
+    need: null,
+    shared: true,
+  });
 });
 
 test('a reclassified flight payment cannot reattach itself through its old description', async ({

@@ -198,7 +198,7 @@
       Number.isFinite(localNum) &&
       localNum > 0 &&
       !(noRateEver && priced.fxPending) &&
-      (overrideNum == null || (Number.isFinite(overrideNum) && overrideNum >= 0)) &&
+      (overrideNum == null || overrideNum > 0) &&
       category !== '' &&
       subcategory !== '' &&
       paymentMethod !== '' &&
@@ -220,13 +220,21 @@
     duplicateOf = null;
   }
 
+  function setCurrency(c: string) {
+    if (c === currency) return;
+    currency = c;
+    // The £ belonged to the old currency, and after the switch this field may
+    // be inside the collapsed "More details" — a hidden figure deciding the row.
+    overrideGBP = '';
+  }
+
   function pickCity(id: string) {
     shared = false;
     cityId = id;
     const c = cities.find((x) => x.id === id);
     if (c) {
       if (!destinationTouched) destination = c.name;
-      if (c.currency) currency = c.currency.trim().toUpperCase();
+      if (c.currency) setCurrency(c.currency.trim().toUpperCase());
     }
   }
 
@@ -391,7 +399,7 @@
 
       <div class="chips ccy-chips">
         {#each currencyOptions as c (c)}
-          <button class="chip" class:chip--on={currency === c} onclick={() => (currency = c)}
+          <button class="chip" class:chip--on={currency === c} onclick={() => setCurrency(c)}
             >{c}</button
           >
         {/each}
@@ -409,7 +417,13 @@
             inputmode="decimal"
             bind:value={overrideGBP}
           />
-          {#if manualGBP}<p class="hint">
+          {#if overrideGBP.trim() && !(overrideNum != null && overrideNum > 0)}<p
+              class="hint hint--warn"
+              role="alert"
+            >
+              Enter the GBP total from your statement — £0 would leave this payment out of every
+              total.
+            </p>{:else if manualGBP}<p class="hint">
               The £ was entered by hand and is kept; change it here if needed.
             </p>{/if}
         </div>
@@ -541,7 +555,11 @@
               bind:value={overrideGBP}
             />
           </div>
-          {#if manualGBP}
+          {#if overrideGBP.trim() && !(overrideNum != null && overrideNum > 0)}
+            <p class="hint hint--warn" role="alert">
+              Type a £ amount above zero, or leave it blank for the rate.
+            </p>
+          {:else if manualGBP}
             <p class="hint">The £ was entered by hand and is kept; change it here if needed.</p>
           {:else if rate != null && overrideNum == null && !keepRecorded}
             <p class="hint">

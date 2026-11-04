@@ -456,6 +456,21 @@ describe('payment and journey evidence', () => {
     expect(need.done).toBe(false);
   });
 
+  // Nobody books a walk, so asking for a booking is asking for the impossible:
+  // what is missing is the duration leave-by counts back from.
+  it('asks an unbookable ride for its duration, not for a booking', () => {
+    const need = tripNeeds(
+      trip({ outbound: { ...trip().outbound, transport: 'Walk' } }),
+      [leg()],
+      [],
+      [],
+      NOW,
+    ).find((n) => n.key === 'transfer-uk:out')!;
+    expect(need.done).toBe(false);
+    expect(need.detail).toBe('Walk — add how long it takes');
+    expect(need.evidence).toBe('Walk — add how long it takes');
+  });
+
   it('counts a pending foreign-currency payment as paid without inventing GBP', () => {
     const need = tripNeeds(
       trip(),

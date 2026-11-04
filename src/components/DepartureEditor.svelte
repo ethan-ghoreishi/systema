@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
   import type { DepartPlan } from '../lib/db';
-  import { MODE_DEFAULTS, PREPARE_MIN, planTiming } from '../lib/readiness';
+  import { MODE_DEFAULTS, PREPARE_MIN, duration, planTiming } from '../lib/readiness';
   import { timeIn, tzLongName, wallToInstant } from '../lib/tz';
 
   /**
@@ -251,14 +251,20 @@
         </div>
       </div>
       {#if only !== 'transfer' && timing?.slackMin != null}
-        <p
-          class="hint"
-          class:hint--warn={timing.slackMin < timing.bufferMin}
-          role={timing.slackMin < timing.bufferMin ? 'alert' : undefined}
-        >
-          {timing.slackMin <= 0
-            ? 'That arrives at or after the departure. Look for an earlier service.'
-            : `Arrives ${timing.slackMin} min before departure${timing.slackMin < timing.bufferMin ? ', less than your arrival margin' : ''}.`}
+        {@const warn = timing.hubDayBefore || timing.slackMin < timing.bufferMin}
+        <p class="hint" class:hint--warn={warn} role={warn ? 'alert' : undefined}>
+          {#if timing.hubDayBefore}
+            These times read as the day before the departure, arriving {duration(
+              timing.slackMin * 60_000,
+            )} early. Check them.
+          {:else if timing.slackMin <= 0}
+            That arrives at or after the departure. Look for an earlier service.
+          {:else}
+            Arrives {duration(timing.slackMin * 60_000)} before departure{timing.slackMin <
+            timing.bufferMin
+              ? ', less than your arrival margin'
+              : ''}.
+          {/if}
         </p>
       {/if}
       <p class="hint">Use the transfer ticket's times. Leave-by counts back from its departure.</p>
