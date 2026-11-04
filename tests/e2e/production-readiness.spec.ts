@@ -399,6 +399,47 @@ test('editing an option that names its hotel night keeps the night and the cost'
   expect(saved).toEqual({ overnight: 'Hotel ×1', nights: 1, undecided: false });
 });
 
+test('an option with no cost is never labelled the best one', async ({ page }) => {
+  const oppId = await page.evaluate(async () => {
+    const { createOpportunity, putOption } = await import('/src/lib/opportunities.ts');
+    const id = await createOpportunity('Faro', 'Portugal');
+    const base = {
+      outRoute: ['LTN', 'FAO'],
+      backRoute: ['FAO', 'LTN'],
+      outDep: '07:00',
+      outArr: '09:50',
+      backDep: '18:00',
+      backArr: '20:50',
+      outFarePP: 20,
+      backFarePP: 30,
+    };
+    await putOption(id, {
+      ...base,
+      id: 'priced',
+      outDate: '2027-02-12',
+      backDate: '2027-02-13',
+      paidNights: 1,
+      overnight: 'Hotel ×1',
+      finderPP: 100,
+    });
+    await putOption(id, {
+      ...base,
+      id: 'undecided',
+      source: 'manual',
+      outDate: '2027-03-12',
+      backDate: '2027-03-13',
+    });
+    return id;
+  });
+  await page.goto(`/#/opp/${oppId}`);
+  const cards = page.locator('.opt');
+  await expect(cards).toHaveCount(2);
+  const undecided = cards.filter({ hasText: 'Overnight accommodation has not been decided' });
+  await expect(undecided).toHaveCount(1);
+  await expect(undecided).not.toContainText('using these estimates');
+  await expect(undecided.getByRole('button', { name: 'Choose this' })).toBeDisabled();
+});
+
 test('choosing a trip rolls back all new rows when a leg cannot be written', async ({ page }) => {
   const result = await page.evaluate(async () => {
     const { db } = await import('/src/lib/db.ts');
@@ -572,6 +613,82 @@ test('an older trip-wide payment survives an ordinary edit still attached', asyn
     need: null,
     shared: true,
   });
+});
+
+// Paying the seeded "Outbound flight" row is filling the list, not moving a
+// payment off its booking.
+test('filling a seeded row keeps the booking it was seeded for', async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const { db } = await import('/src/lib/db.ts');
+    const { createTrip, addCity } = await import('/src/lib/trips.ts');
+    const { tripNeeds } = await import('/src/lib/needs.ts');
+    const { updateExpense } = await import('/src/lib/expenses.ts');
+    const id = await createTrip('weekend');
+    await addCity(id, 'Bologna', 'EUR');
+    const seeded = (await db.expenses.where('tripId').equals(id).toArray()).find(
+      (e) => e.need === 'flight:outbound',
+    )!;
+    // What the editor saves when the row is paid and marked trip-wide.
+    await updateExpense(seeded.id, {
+      shared: true,
+      cityId: null,
+      destination: 'Bologna',
+      amountGBP: 58,
+      paymentMethod: 'Online Payment',
+      date: '2026-11-01',
+      skeleton: false,
+    });
+    const rows = await db.expenses.where('tripId').equals(id).toArray();
+    return {
+      need: rows.find((e) => e.id === seeded.id)!.need,
+      state: tripNeeds(
+        (await db.trips.get(id))!,
+        await db.cities.where('tripId').equals(id).toArray(),
+        rows,
+        [],
+      ).find((n) => n.key === 'flight:outbound')!.state,
+      rows: rows.length,
+    };
+  });
+  expect(result).toMatchObject({ need: 'flight:outbound', state: 'paid' });
+});
+
+// The same seeded row, filled in as something else entirely: a seeded row
+// carries a category, so this is a reclassification and must detach.
+test('paying for a hotel on a seeded flight row never reports the flight paid', async ({
+  page,
+}) => {
+  const result = await page.evaluate(async () => {
+    const { db } = await import('/src/lib/db.ts');
+    const { createTrip, addCity } = await import('/src/lib/trips.ts');
+    const { tripNeeds } = await import('/src/lib/needs.ts');
+    const { updateExpense } = await import('/src/lib/expenses.ts');
+    const id = await createTrip('weekend');
+    await addCity(id, 'Bologna', 'EUR');
+    const seeded = (await db.expenses.where('tripId').equals(id).toArray()).find(
+      (e) => e.need === 'flight:outbound',
+    )!;
+    await updateExpense(seeded.id, {
+      category: 'Accommodation',
+      subcategory: 'Hotel',
+      description: 'Hotel night',
+      amountGBP: 90,
+      paymentMethod: 'Online Payment',
+      date: '2026-11-01',
+      skeleton: false,
+    });
+    const rows = await db.expenses.where('tripId').equals(id).toArray();
+    return {
+      need: rows.find((e) => e.id === seeded.id)!.need,
+      state: tripNeeds(
+        (await db.trips.get(id))!,
+        await db.cities.where('tripId').equals(id).toArray(),
+        rows,
+        [],
+      ).find((n) => n.key === 'flight:outbound')!.state,
+    };
+  });
+  expect(result).toEqual({ need: '', state: 'open' });
 });
 
 test('a reclassified flight payment cannot reattach itself through its old description', async ({

@@ -221,8 +221,11 @@
             ($citiesQ ?? []).filter((c) => c.tripId === taken.id),
           )}</a
         >
-      {:else if live && view.best && o.id !== view.best.option.id && !row.unknown.length}
-        <p class="opt-diff">{describeDifference(row, view.best)}</p>
+      {:else if live && view.best && o.id !== view.best.option.id}
+        <!-- The warning above already says this one has no cost to compare. -->
+        {#if !row.unknown.length}
+          <p class="opt-diff">{describeDifference(row, view.best)}</p>
+        {/if}
       {:else if live && view.best}
         <p class="opt-diff opt-diff--best">{SORT_LABEL[sort]} here, using these estimates.</p>
       {/if}
