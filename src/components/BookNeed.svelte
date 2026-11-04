@@ -2,7 +2,14 @@
   import { onMount, untrack } from 'svelte';
   import { liveQuery } from 'dexie';
   import { db, type Trip } from '../lib/db';
-  import { bookNeed, settles, STATE_WORD, type Need, type NeedState } from '../lib/needs';
+  import {
+    bookNeed,
+    groundJourneySpecified,
+    settles,
+    STATE_WORD,
+    type Need,
+    type NeedState,
+  } from '../lib/needs';
   import { priceEntry } from '../lib/expenses';
   import { ecbPublishes, getRate } from '../lib/fx';
   import { FARE_CURRENCIES } from '../lib/currencies';
@@ -58,6 +65,15 @@
   let error = $state('');
   let saving = $state(false);
   let prefilled = $state(false);
+  let quotedAmount = $state(false);
+  function changeCurrency(e: Event) {
+    currency = (e.currentTarget as HTMLSelectElement).value;
+    // A quoted pound is not an amount in the newly selected currency.
+    if (quotedAmount) amount = '';
+    quotedAmount = false;
+    gbp = '';
+    prefilled = true;
+  }
 
   // Offer the quoted figure once, when it arrives: typed over freely, and never
   // re-imposed on something already entered.
@@ -65,18 +81,21 @@
     if (prefilled || quote == null || untrack(() => amount.trim())) return;
     prefilled = true;
     amount = String(quote);
+    quotedAmount = true;
   });
 
   let rate = $state<number | null>(1);
   $effect(() => {
     const c = currency;
+    const paidOn = date;
     if (c === 'GBP') {
       rate = 1;
       return;
     }
     rate = null;
     let cancelled = false;
-    if (ecbPublishes(c)) void getRate(c).then((r) => !cancelled && (rate = r?.rate ?? null));
+    if (ecbPublishes(c))
+      void getRate(c, paidOn).then((r) => !cancelled && (rate = r?.rate ?? null));
     return () => {
       cancelled = true;
     };
@@ -113,8 +132,7 @@
         !!transport.trim() ||
         !!place.trim() ||
         !!journeyMin.trim() ||
-        !!transferAt.trim() ||
-        payOnDay),
+        !!transferAt.trim()),
   );
 
   // What this will actually leave behind — so the list never reports a thing as
@@ -125,7 +143,7 @@
       ? 'paid'
       : ref.trim() || need.kind === 'book'
         ? 'booked'
-        : transport.trim() || journeyMin.trim() || transferAt.trim() || place.trim() || payOnDay
+        : transport.trim() || journeyMin.trim() || transferAt.trim() || place.trim()
           ? 'planned'
           : 'open',
   );
@@ -160,8 +178,20 @@
       const word = STATE_WORD[willBe];
       onDone(
         expenseId
-          ? `${need.label}: ${word}, and ${formatGBP(priced.amountGBP)} is in Expenses — no need to enter it again.`
-          : settles(need.kind, willBe, payOnDay)
+          ? priced.fxPending
+            ? `${need.label}: paid, saved in Expenses with GBP still awaiting a rate.`
+            : `${need.label}: ${word}, and ${formatGBP(priced.amountGBP)} is in Expenses — no need to enter it again.`
+          : settles(
+                need.kind,
+                willBe,
+                payOnDay &&
+                  groundJourneySpecified({
+                    transport,
+                    journeyMin: num(journeyMin),
+                    transferAt,
+                    transferArr,
+                  }),
+              )
             ? `${need.label}: ${word}.`
             : `${need.label}: ${word} — still on the list until it is.`,
       );
@@ -176,6 +206,7 @@
 
 <dialog
   class="modal"
+  aria-labelledby="booking-title"
   bind:this={dialogEl}
   onclose={onClose}
   oncancel={(e) => {
@@ -187,7 +218,7 @@
       <button class="btn btn--ghost btn--sm" onclick={() => dialogEl.close()} disabled={saving}
         >Cancel</button
       >
-      <h2 class="modal-title">{need.label}</h2>
+      <h2 class="modal-title" id="booking-title">{need.label}</h2>
       <button class="btn btn--primary btn--sm" onclick={save} disabled={saving || !valid}
         >Save</button
       >
@@ -204,11 +235,12 @@
             type="text"
             inputmode="decimal"
             bind:value={amount}
+            oninput={() => (quotedAmount = false)}
           />
         </div>
         <div>
           <label class="label" for="book-ccy">Paid in</label>
-          <select id="book-ccy" class="field" bind:value={currency}>
+          <select id="book-ccy" class="field" value={currency} onchange={changeCurrency}>
             {#each FARE_CURRENCIES as c (c)}
               <option value={c}>{c}</option>
             {/each}
@@ -216,23 +248,22 @@
         </div>
       </div>
       {#if needsPounds}
-        <label class="label" for="book-gbp">…which is, in £</label>
+        <label class="label" for="book-gbp">Amount (GBP)</label>
         <input id="book-gbp" class="field" type="text" inputmode="decimal" bind:value={gbp} />
         <p class="hint" class:hint--warn={mustTypePounds}>
           {ecbPublishes(currency)
             ? `No ${currency} rate to hand — it prices itself when you are next online, or put the £ in now.`
-            : `No ${currency} rate is published and none is coming, so the £ from your statement is needed before this can be saved.`}
+            : `No ${currency} rate is available. Enter the GBP total from your statement.`}
         </p>
       {:else if !isGBP && money > 0}
         <p class="hint">
-          About {formatGBP(priced.amountGBP)} at today's rate — kept as the £ figure.
+          About {formatGBP(priced.amountGBP)} at the rate for the payment date.
         </p>
       {/if}
       <p class="hint">
-        {#if quote != null}Quoted {formatGBP(quote)} when this trip was chosen — correct it to what you
-          actually paid.{/if}
-        Goes into Expenses as {spec?.subcategory}{spec?.shared ? ', trip-wide' : ''} — leave it blank
-        if you have not paid yet.
+        {#if quote != null}Quote: {formatGBP(quote)}. Enter what you paid.{/if}
+        Saved in Expenses as {spec?.subcategory}{spec?.shared ? ', trip-wide' : ''}. Leave blank if
+        unpaid.
       </p>
 
       {#if spec?.asksPlace}
@@ -278,16 +309,12 @@
         <label class="switch">
           <input type="checkbox" bind:checked={bothWays} />
           <span class="hint">
-            The same ticket covers the way back. Both journeys keep their own line — they happen at
-            different hours — but this one purchase settles both.
+            The same ticket covers the way back. Each journey keeps its own times.
           </span>
         </label>
         <label class="switch">
           <input type="checkbox" bind:checked={payOnDay} />
-          <span class="hint">
-            Bought on the day, at the machine or on board. Without this, knowing how you are
-            travelling still leaves the ride unsorted.
-          </span>
+          <span class="hint"> Pay on the day. Name the ride and add its times or duration. </span>
         </label>
       {/if}
 

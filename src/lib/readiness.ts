@@ -67,17 +67,16 @@ function rideInstant(
   departAt: number,
   wall: string,
   tz: string | undefined,
+  after = false,
 ): number | undefined {
-  if (!/^\d{1,2}:\d{2}$/.test(hhmm?.trim() ?? '')) return undefined;
+  if (!/^(?:[01]?\d|2[0-3]):[0-5]\d$/.test(hhmm?.trim() ?? '')) return undefined;
   const time = hhmm!.trim().padStart(5, '0');
   const sameDay = wallToInstant(`${wall.slice(0, 10)}T${time}`, tz);
   if (sameDay == null) return undefined;
-  if (sameDay <= departAt) return sameDay;
-  // The previous calendar day, counted on the calendar: the night the clocks
-  // go forward is 23 hours long, so taking a day off the instant lands two
-  // days back and the coach reads as leaving a day early.
+  if (after ? sameDay >= departAt : sameDay <= departAt) return sameDay;
+  // Move on the calendar: DST days can contain 23 or 25 hours.
   const d = new Date(`${wall.slice(0, 10)}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() - 1);
+  d.setUTCDate(d.getUTCDate() + (after ? 1 : -1));
   return wallToInstant(`${d.toISOString().slice(0, 10)}T${time}`, tz) ?? sameDay;
 }
 
@@ -96,7 +95,9 @@ export function planTiming(
   const d = MODE_DEFAULTS[mode] ?? MODE_DEFAULTS.flight;
   const serviceAt = rideInstant(plan.transferAt, departAt, wall, tz);
   const serviceArr =
-    serviceAt == null ? undefined : rideInstant(plan.transferArr, departAt, wall, tz);
+    serviceAt == null
+      ? undefined
+      : rideInstant(plan.transferArr, serviceAt, instantToWall(serviceAt, tz), tz, true);
   const timed = serviceAt != null && serviceArr != null && serviceArr > serviceAt;
   const journeyMin = timed
     ? Math.round((serviceArr! - serviceAt!) / MIN)
@@ -302,20 +303,21 @@ export function readiness(d: Departure, now: number, deviceTz?: string): Readine
       ? ` That gets you to ${d.hub} ${d.slackMin <= 0 ? 'after the departure' : `only ${d.slackMin} min before`} — check there is nothing earlier.`
       : '';
   const ref = d.plan.ref?.trim() ? ` Booking ${d.plan.ref.trim()}.` : '';
+  const onTrack = tight ? 'Check this journey.' : 'You are on track.';
   switch (stage) {
     case 'later': {
       const until = d.leaveBy - now;
       return {
         stage,
         title: `Leave for ${d.hub} by ${leave}.`,
-        detail: `You are on track.${until < 24 * 60 * MIN ? ` That's in ${duration(until)}.` : ''}${ride}${assumed}${tight}`,
+        detail: `${onTrack}${until < 24 * 60 * MIN ? ` That's in ${duration(until)}.` : ''}${ride}${assumed}${tight}`,
       };
     }
     case 'prepare':
       return {
         stage,
         title: `Start getting ready — leave for ${d.hub} by ${leave}.`,
-        detail: `You are on track. ${d.journeyMin} min${via} to ${d.hub}.${ride}${assumed}${tight}`,
+        detail: `${onTrack} ${d.journeyMin} min${via} to ${d.hub}.${ride}${assumed}${tight}`,
       };
     case 'leave-by':
       return {
@@ -328,7 +330,7 @@ export function readiness(d: Departure, now: number, deviceTz?: string): Readine
         stage,
         title: `Time to go — leave for ${d.hub} now.`,
         detail: d.serviceAt
-          ? `The ${clockLabel(d.serviceAt, d.tz, now)} service leaves in ${duration(d.serviceAt - now)}.${ref}`
+          ? `The ${clockLabel(d.serviceAt, d.tz, now)} service leaves in ${duration(d.serviceAt - now)}.${tight}${ref}`
           : `Your ${d.contingencyMin}-minute cushion is in use; you're still fine.${ref}`,
       };
     default: {

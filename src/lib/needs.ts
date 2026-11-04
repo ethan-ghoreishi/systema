@@ -78,6 +78,15 @@ export function settles(kind: NeedKind, state: NeedState, payOnDay = false): boo
  */
 const NEVER_BOOKED = /\b(walk|walking|metro|underground|tube|taxi|uber|cab|on foot)\b/i;
 
+export function groundJourneySpecified(plan: DepartPlan): boolean {
+  const clock = (s?: string) => /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(s ?? '');
+  return (
+    !!plan.transport?.trim() &&
+    ((Number.isFinite(plan.journeyMin) && Number(plan.journeyMin) > 0) ||
+      (clock(plan.transferAt) && clock(plan.transferArr) && plan.transferAt !== plan.transferArr))
+  );
+}
+
 /** What the booking sheet should write into the ledger for this need. */
 export interface BookSpec {
   category: string;
@@ -130,15 +139,17 @@ const paid = (
   expenses.find(
     (e) =>
       !e.skeleton &&
-      e.amountGBP > 0 &&
+      (e.amountGBP > 0 || (e.fxPending && e.amountLocal > 0)) &&
       (e.need === key ||
         (!!also && e.need === also) ||
-        (!e.need &&
+        (e.need == null &&
           !!description &&
           e.description.trim().toLowerCase() === description.trim().toLowerCase())),
   );
 
 const gbp = (n: number) => `£${Number.isInteger(n) ? n : n.toFixed(2)}`;
+const paymentWords = (row: Expense) =>
+  row.fxPending ? 'Paid — GBP amount pending' : gbp(row.amountGBP);
 
 /** 'quoted £74' — what the chosen option said this would cost, before anything was paid. */
 const quoted = (row: Expense | undefined): string | undefined =>
@@ -163,11 +174,13 @@ function groundNeed(
   book: BookSpec,
   kind: NeedKind = 'transfer',
   quote?: string,
+  coverageHeld = false,
 ): Need {
   const ref = plan.transferRef?.trim();
   const how = plan.transport?.trim();
-  const covered = plan.coveredBy?.trim();
-  const payOnDay = plan.payOnDay === true || (!!how && NEVER_BOOKED.test(how));
+  const covered = coverageHeld;
+  const specified = groundJourneySpecified(plan);
+  const payOnDay = specified && (plan.payOnDay === true || NEVER_BOOKED.test(how!));
   const timed = plan.transferAt?.trim()
     ? `the ${plan.transferAt.trim()}${plan.transferArr?.trim() ? `, in at ${plan.transferArr.trim()}` : ''}`
     : '';
@@ -189,13 +202,13 @@ function groundNeed(
     state,
     done,
     evidence: row
-      ? gbp(row.amountGBP)
+      ? paymentWords(row)
       : ref
         ? `${way ? `${way} · ` : ''}booking ${ref}`
         : covered
           ? `${way ? `${way} · ` : ''}on the same return ticket`
           : way
-            ? `${way} — pay on the day`
+            ? `${way} — ${payOnDay ? 'pay on the day' : 'not booked yet'}`
             : undefined,
     book,
   };
@@ -243,6 +256,9 @@ export function tripNeeds(
   const out: Need[] = [];
   const ob = trip.outbound ?? {};
   const stray = strayTransferRef(last, expenses);
+  // Coverage follows the purchase or reservation, never a stale marker alone.
+  const coverageHeld = (plan: DepartPlan | undefined, other: DepartPlan | undefined, key: string) =>
+    plan?.coveredBy === key && !!(other?.transferRef?.trim() || paid(expenses, key));
 
   // --- The two tickets ---
   for (const t of [
@@ -276,7 +292,7 @@ export function tripNeeds(
       detail: [t.detail, state === 'paid' ? '' : quote].filter(Boolean).join(' · '),
       state,
       done: settles('flight', state),
-      evidence: t.ref ? `Booking ${t.ref}` : t.row ? gbp(t.row.amountGBP) : undefined,
+      evidence: t.ref ? `Booking ${t.ref}` : t.row ? paymentWords(t.row) : undefined,
       book: {
         category: 'Transportation',
         subcategory: 'Flight',
@@ -299,6 +315,7 @@ export function tripNeeds(
       { ...UK_TRANSFER, description: 'Airport transfer (UK) — outbound' },
       'transfer-uk',
       quoted(rowFor(expenses, 'transfer-uk:out')),
+      coverageHeld(ob, trip.homeward, 'transfer-uk:back'),
     ),
     groundNeed(
       'transfer-uk:back',
@@ -308,6 +325,7 @@ export function tripNeeds(
       { ...UK_TRANSFER, description: 'Airport transfer (UK) — return' },
       'transfer-uk',
       quoted(rowFor(expenses, 'transfer-uk:back')),
+      coverageHeld(trip.homeward, ob, 'transfer-uk:out'),
     ),
   );
 
@@ -338,6 +356,9 @@ export function tripNeeds(
             cityId: leg.id,
             asksTransport: true,
           },
+          'transfer',
+          undefined,
+          coverageHeld(leg.entry, leg.exit, `transfer-out:${leg.id}`),
         ),
       );
 
@@ -361,6 +382,9 @@ export function tripNeeds(
           cityId: leg.id,
           asksTransport: true,
         },
+        'transfer',
+        undefined,
+        coverageHeld(leg.exit, leg.entry, `transfer-in:${leg.id}`),
       ),
     );
 
@@ -378,7 +402,7 @@ export function tripNeeds(
       detail: state === 'planned' ? `${base} — chosen, not booked` : base || 'No hotel yet',
       state,
       done: settles('hotel', state),
-      evidence: hotelRow ? gbp(hotelRow.amountGBP) : hotelRef ? `Booking ${hotelRef}` : base,
+      evidence: hotelRow ? paymentWords(hotelRow) : hotelRef ? `Booking ${hotelRef}` : base,
       book: {
         category: 'Accommodation',
         subcategory: 'Hotel',
@@ -436,7 +460,7 @@ export function tripNeeds(
       state,
       done: settles('book', state),
       evidence: row
-        ? gbp(row.amountGBP)
+        ? paymentWords(row)
         : ref
           ? `Booking ${ref}`
           : s.booked
@@ -563,147 +587,169 @@ export async function bookNeed(
   need: Need,
   input: BookInput,
 ): Promise<{ expenseId: string | null }> {
-  const legs = await db.cities.where('tripId').equals(trip.id).sortBy('order');
-  const last = legs[legs.length - 1];
-  const ref = input.ref?.trim();
-  const place = input.place?.trim();
-  // How you are getting there, for whichever journey this need is.
-  const journey = {
-    ...(input.transport?.trim() ? { transport: input.transport.trim() } : {}),
-    ...(input.journeyMin != null ? { journeyMin: input.journeyMin } : {}),
-    ...(input.transferAt?.trim() ? { transferAt: input.transferAt.trim() } : {}),
-    ...(input.transferArr?.trim() ? { transferArr: input.transferArr.trim() } : {}),
-    ...(input.payOnDay ? { payOnDay: true } : {}),
-    ...(ref ? { transferRef: ref } : {}),
-  };
-  const something = Object.keys(journey).length > 0;
-  // One ticket for both ways with nothing else typed still has to leave the
-  // other journey reading as sorted: it is a return ticket, so say so — under
-  // anything already recorded there.
-  const cover = !!input.bothWays && !something ? { transport: 'Return ticket' } : null;
-  // The direction that does not hold the money is still held: a £9 return bus
-  // ticket is a ticket for the way back too. Only once there is actually a
-  // purchase or a reference, though — ticking the box over an empty form is
-  // still just a plan.
-  const held =
-    input.bothWays && (ref || input.amountGBP > 0 || (input.amountLocal ?? 0) > 0)
-      ? { coveredBy: need.key }
-      : null;
-  const merge = (plan?: DepartPlan, other = false) => ({
-    ...cover,
-    ...plan,
-    ...journey,
-    ...(other && held ? held : {}),
-  });
-  const legOf = (prefix: string) => legs.find((c) => c.id === need.key.slice(prefix.length));
+  return db.transaction('rw', db.trips, db.cities, db.stops, db.expenses, async () => {
+    const current = await db.trips.get(trip.id);
+    if (!current) throw new Error('This trip no longer exists.');
+    trip = current;
+    const legs = await db.cities.where('tripId').equals(trip.id).sortBy('order');
+    const expenses = await db.expenses.where('tripId').equals(trip.id).toArray();
+    const stops = await db.stops.where('tripId').equals(trip.id).toArray();
+    const currentNeed = tripNeeds(trip, legs, expenses, stops).find((n) => n.key === need.key);
+    if (!currentNeed?.book) throw new Error('This booking is no longer part of the trip.');
+    need = currentNeed;
+    const last = legs[legs.length - 1];
+    const ref = input.ref?.trim();
+    const place = input.place?.trim();
+    // How you are getting there, for whichever journey this need is.
+    const journey = {
+      ...(input.transport?.trim() ? { transport: input.transport.trim() } : {}),
+      ...(input.journeyMin != null ? { journeyMin: input.journeyMin } : {}),
+      ...(input.transferAt?.trim() ? { transferAt: input.transferAt.trim() } : {}),
+      ...(input.transferArr?.trim() ? { transferArr: input.transferArr.trim() } : {}),
+      ...(input.payOnDay ? { payOnDay: true } : {}),
+      ...(ref ? { transferRef: ref } : {}),
+    };
+    const something =
+      Object.keys(journey).length > 0 || input.amountGBP > 0 || (input.amountLocal ?? 0) > 0;
+    // The direction that does not hold the money is still held: a £9 return bus
+    // ticket is a ticket for the way back too. Only once there is actually a
+    // purchase or a reference, though — ticking the box over an empty form is
+    // still just a plan.
+    const held =
+      input.bothWays && (ref || input.amountGBP > 0 || (input.amountLocal ?? 0) > 0)
+        ? { coveredBy: need.key }
+        : null;
+    const merge = (plan?: DepartPlan, other = false) => {
+      const next = { ...plan, ...(!other ? journey : {}), ...(other && held ? held : {}) };
+      if (
+        (!other && (ref || input.amountGBP > 0 || (input.amountLocal ?? 0) > 0)) ||
+        (other && plan?.coveredBy === need.key && !held)
+      )
+        delete next.coveredBy;
+      return next;
+    };
+    const legOf = (prefix: string) => legs.find((c) => c.id === need.key.slice(prefix.length));
 
-  // --- The structured half: the reference goes on the thing it books ---
-  if (need.key === 'flight:outbound' && ref)
-    await db.trips.update(trip.id, { outbound: { ...trip.outbound, ref }, updatedAt: Date.now() });
-  if (need.key === 'flight:inbound' && ref && last)
-    await db.cities.update(last.id, { exit: { ...last.exit, ref } });
-  const both = !!input.bothWays;
-  if (need.kind === 'transfer-uk' && (something || cover)) {
-    const isOut = need.key === 'transfer-uk:out';
-    await db.trips.update(trip.id, {
-      ...(both || isOut ? { outbound: merge(trip.outbound, !isOut) } : {}),
-      ...(both || !isOut ? { homeward: merge(trip.homeward, isOut) } : {}),
-      updatedAt: Date.now(),
+    // --- The structured half: the reference goes on the thing it books ---
+    if (need.key === 'flight:outbound' && ref)
+      await db.trips.update(trip.id, {
+        outbound: { ...trip.outbound, ref },
+        updatedAt: Date.now(),
+      });
+    if (need.key === 'flight:inbound' && ref && last)
+      await db.cities.update(last.id, { exit: { ...last.exit, ref } });
+    const both = !!input.bothWays;
+    if (need.kind === 'transfer-uk' && (something || held)) {
+      const isOut = need.key === 'transfer-uk:out';
+      await db.trips.update(trip.id, {
+        ...(both || isOut || trip.outbound?.coveredBy === need.key
+          ? { outbound: merge(trip.outbound, !isOut) }
+          : {}),
+        ...(both || !isOut || trip.homeward?.coveredBy === need.key
+          ? { homeward: merge(trip.homeward, isOut) }
+          : {}),
+        updatedAt: Date.now(),
+      });
+    }
+    if (need.kind === 'transfer' && (something || held)) {
+      const inbound = need.key.startsWith('transfer-in:');
+      const leg = legOf(inbound ? 'transfer-in:' : 'transfer-out:');
+      if (leg)
+        await db.cities.update(leg.id, {
+          ...(both || inbound || leg.entry?.coveredBy === need.key
+            ? { entry: merge(leg.entry, !inbound) }
+            : {}),
+          ...(both || !inbound || leg.exit?.coveredBy === need.key
+            ? { exit: merge(leg.exit, inbound) }
+            : {}),
+        });
+    }
+    if (need.kind === 'hotel') {
+      const leg = legOf('hotel:');
+      if (leg && (place || ref))
+        await db.cities.update(leg.id, {
+          base: {
+            ...leg.base,
+            ...(place ? { name: place } : {}),
+            ...(ref ? { bookingRef: ref } : {}),
+          },
+        });
+    }
+    if (need.kind === 'book') {
+      const stopId = need.key.slice('book:'.length);
+      await db.stops.update(stopId, { booked: true, ...(ref ? { bookingRef: ref } : {}) });
+    }
+    if (need.kind === 'flight' || need.kind === 'transfer') await recomputeTripDerived(trip.id);
+
+    // --- The ledger half ---
+    // Nothing paid, nothing to record. A charge in a currency with no rate yet
+    // still counts: it has an amount, just not a £ one.
+    if (!need.book || !(input.amountGBP > 0 || (input.amountLocal ?? 0) > 0))
+      return { expenseId: null };
+    const spec = need.book;
+    const all = await db.expenses.where('tripId').equals(trip.id).toArray();
+    // A return ticket says so in its description, the way the spending sheet has
+    // always said it — so the insight that reads what one journey costs can halve
+    // it, instead of counting a £24 return as £24 each way.
+    const description =
+      both && need.kind === 'transfer-uk' ? 'Airport transfer (UK) (Return)' : spec.description;
+    const fields = {
+      cityId: spec.cityId ?? null,
+      date: input.date || todayIso(),
+      destination: spec.shared
+        ? sharedDestination(legs)
+        : (legs.find((c) => c.id === spec.cityId)?.name ?? ''),
+      category: spec.category,
+      subcategory: spec.subcategory,
+      description,
+      paymentMethod: input.paymentMethod || lastPaymentMethod(all, trip.id) || 'Online Payment',
+      amountGBP: input.amountGBP,
+      amountLocal: input.amountLocal ?? 0,
+      // The rate actually used goes in Notes, the way a row captured on the
+      // ground records it — the exported sheet has no column for it.
+      notes: withFxNote(
+        ref ? `Booking ${ref}` : '',
+        input.currency ?? 'GBP',
+        input.gbpManual ? null : (input.fxRate ?? null),
+      ),
+      currency: input.currency?.trim().toUpperCase() || 'GBP',
+      fxRate: input.fxRate ?? null,
+      gbpManual: input.gbpManual ?? true,
+      fxPending: input.fxPending ?? false,
+      ...(spec.shared ? { shared: true } : {}),
+      need: need.key,
+      skeleton: false,
+    };
+
+    // Fill the placeholder that was already waiting for this, rather than
+    // leaving it behind as a second row. A trip-wide need matches its own words
+    // exactly, so booking the way home can never fill the way out; a leg's need
+    // names a city the preset never knew, so it takes the first unfilled row of
+    // the right kind instead.
+    const perLeg = need.kind === 'hotel' || need.kind === 'transfer';
+    const existing =
+      all.find((e) => e.need === need.key) ??
+      all.find(
+        (e) =>
+          e.skeleton &&
+          !e.need &&
+          e.subcategory === spec.subcategory &&
+          (perLeg || e.description.trim().toLowerCase() === spec.description.trim().toLowerCase()),
+      );
+    if (existing) {
+      await db.expenses.update(existing.id, fields);
+      return { expenseId: existing.id };
+    }
+    const id = newId();
+    await db.expenses.add({
+      id,
+      tripId: trip.id,
+      ...fields,
+      order: all.length,
+      createdAt: Date.now(),
     });
-  }
-  if (need.kind === 'transfer' && (something || cover)) {
-    const inbound = need.key.startsWith('transfer-in:');
-    const leg = legOf(inbound ? 'transfer-in:' : 'transfer-out:');
-    if (leg)
-      await db.cities.update(leg.id, {
-        ...(both || inbound ? { entry: merge(leg.entry, !inbound) } : {}),
-        ...(both || !inbound ? { exit: merge(leg.exit, inbound) } : {}),
-      });
-  }
-  if (need.kind === 'hotel') {
-    const leg = legOf('hotel:');
-    if (leg && (place || ref))
-      await db.cities.update(leg.id, {
-        base: {
-          ...leg.base,
-          ...(place ? { name: place } : {}),
-          ...(ref ? { bookingRef: ref } : {}),
-        },
-      });
-  }
-  if (need.kind === 'book') {
-    const stopId = need.key.slice('book:'.length);
-    await db.stops.update(stopId, { booked: true, ...(ref ? { bookingRef: ref } : {}) });
-  }
-  if (need.kind === 'flight' || need.kind === 'transfer') await recomputeTripDerived(trip.id);
-
-  // --- The ledger half ---
-  // Nothing paid, nothing to record. A charge in a currency with no rate yet
-  // still counts: it has an amount, just not a £ one.
-  if (!need.book || !(input.amountGBP > 0 || (input.amountLocal ?? 0) > 0))
-    return { expenseId: null };
-  const spec = need.book;
-  const all = await db.expenses.where('tripId').equals(trip.id).toArray();
-  // A return ticket says so in its description, the way the spending sheet has
-  // always said it — so the insight that reads what one journey costs can halve
-  // it, instead of counting a £24 return as £24 each way.
-  const description =
-    both && need.kind === 'transfer-uk' ? 'Airport transfer (UK) (Return)' : spec.description;
-  const fields = {
-    cityId: spec.cityId ?? null,
-    date: input.date || todayIso(),
-    destination: spec.shared
-      ? sharedDestination(legs)
-      : (legs.find((c) => c.id === spec.cityId)?.name ?? ''),
-    category: spec.category,
-    subcategory: spec.subcategory,
-    description,
-    paymentMethod: input.paymentMethod || lastPaymentMethod(all, trip.id) || 'Online Payment',
-    amountGBP: input.amountGBP,
-    amountLocal: input.amountLocal ?? 0,
-    // The rate actually used goes in Notes, the way a row captured on the
-    // ground records it — the exported sheet has no column for it.
-    notes: withFxNote(
-      ref ? `Booking ${ref}` : '',
-      input.currency ?? 'GBP',
-      input.gbpManual ? null : (input.fxRate ?? null),
-    ),
-    currency: input.currency?.trim().toUpperCase() || 'GBP',
-    fxRate: input.fxRate ?? null,
-    gbpManual: input.gbpManual ?? true,
-    ...(input.fxPending ? { fxPending: true } : {}),
-    ...(spec.shared ? { shared: true } : {}),
-    need: need.key,
-    skeleton: false,
-  };
-
-  // Fill the placeholder that was already waiting for this, rather than
-  // leaving it behind as a second row. A trip-wide need matches its own words
-  // exactly, so booking the way home can never fill the way out; a leg's need
-  // names a city the preset never knew, so it takes the first unfilled row of
-  // the right kind instead.
-  const perLeg = need.kind === 'hotel' || need.kind === 'transfer';
-  const existing =
-    all.find((e) => e.need === need.key) ??
-    all.find(
-      (e) =>
-        e.skeleton &&
-        e.subcategory === spec.subcategory &&
-        (perLeg || e.description.trim().toLowerCase() === spec.description.trim().toLowerCase()),
-    );
-  if (existing) {
-    await db.expenses.update(existing.id, fields);
-    return { expenseId: existing.id };
-  }
-  const id = newId();
-  await db.expenses.add({
-    id,
-    tripId: trip.id,
-    ...fields,
-    order: all.length,
-    createdAt: Date.now(),
+    return { expenseId: id };
   });
-  return { expenseId: id };
 }
 
 /** Tick (or untick) checking in for one departure. */

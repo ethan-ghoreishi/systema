@@ -353,3 +353,13 @@ describe('mixed-version sync', () => {
     expect(() => validateBackup(s)).toThrow(/moment m1/);
   });
 });
+
+it('an explicit payment detachment stays readable and mergeable by the previous version', () => {
+  const s = snapshot();
+  s.expenses[0].need = '';
+  expect(() => oldValidate(s)).not.toThrow();
+  expect(() => validateBackup(s)).not.toThrow();
+  const records = { ...s, kv: [], photosMeta: s.photosMeta! } as unknown as SyncRecords;
+  const merged = oldMerge(records as any, records as any, records as any, true).merged;
+  expect(merged.expenses[0].need).toBe('');
+});

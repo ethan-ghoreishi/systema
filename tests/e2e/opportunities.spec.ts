@@ -657,7 +657,7 @@ test('a detail cleared on the London end stays cleared', async ({ page }) => {
   await page.getByRole('button', { name: /Flight out/ }).click();
   const editor = page.locator('dialog.modal[open]');
   await editor.getByLabel('Flight booking ref').fill('');
-  await editor.getByLabel(/bought on the day/i).uncheck();
+  await editor.getByLabel(/pay on the day/i).uncheck();
   await editor.getByRole('button', { name: 'Save' }).click();
   await expect(editor).toHaveCount(0);
   await page.reload();
@@ -780,10 +780,10 @@ test('a booking in a currency with no rate asks for the £ before it saves', asy
 
   await page.getByLabel('What it cost, for everyone').fill('12');
   await page.getByLabel('Paid in').selectOption('JOD');
-  await expect(page.getByText(/No JOD rate is published and none is coming/)).toBeVisible();
+  await expect(page.getByText(/No JOD rate is available/)).toBeVisible();
   await expect(page.getByRole('button', { name: 'Save' })).toBeDisabled();
 
-  await page.getByLabel('…which is, in £').fill('13.40');
+  await page.getByLabel('Amount (GBP)').fill('13.40');
   await page.getByLabel('How you get there').fill('Airport bus 1');
   await page.getByRole('button', { name: 'Save' }).click();
   await expect(page.getByText(/£13.40 is in Expenses/)).toBeVisible();

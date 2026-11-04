@@ -844,8 +844,18 @@ input.city-ccy {
 
 .dep-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: var(--s3);
+}
+
+.dep-grid > div {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.dep-grid .label {
+  flex: 1;
 }
 
 .toc {
@@ -1215,6 +1225,10 @@ input.city-ccy {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.modal-head .btn {
+  min-height: 44px;
 }
 
 .modal-cancel,

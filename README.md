@@ -90,7 +90,12 @@ subscription.**
   money: the daylight hours on the ground, the clock time you would leave home
   (not a flat "early departure" penalty) and when you would be back, a sentence
   saying how each option differs from the leading one, and a warning when a fare
-  is a fortnight old. **Choose this** lays out an ordinary trip — legs, times,
+  is a fortnight old. Changing airports, dates, times, fares or hotel nights
+  invalidates the affected search estimates. A hand-written overnight option
+  with accommodation still undecided has no cost ranking and must name its
+  sleeping arrangement before it can be chosen. Party sizes and allowances are
+  visible; different party sizes receive no best-cost claim.
+  **Choose this** lays out an ordinary trip — legs, times,
   airports, flight numbers, connections, the landing time back home, the hotel
   night, the destination's currency, and for a two-city row the stopover
   scenario — and says plainly what the row could not tell it. Nothing is priced:
@@ -124,7 +129,13 @@ subscription.**
   the mode, the ride's own departure and arrival times and its reference go onto
   the journey, so leave-by stops being a guess and £22 is never typed twice.
   Knowing how you are travelling is not the same as holding a ticket: a ride
-  counts as sorted once it is booked, or once you say it is bought on the day.
+  counts as sorted once it is booked, or once you say it is bought on the day
+  and name the ride with its times or duration. A return purchase shares ticket
+  coverage, never the other direction's timetable. Coverage follows the payment
+  or reservation; deleting a payment keeps genuine booking references. Booking
+  details and their payment are saved together or rolled back together. Choosing
+  a trip likewise creates all its rows together. Unsupported currencies require
+  a GBP amount before saving; supported currencies may await their day's rate.
   Anything sorted but not yet paid for keeps a **Price it** button, so a coach
   bought last week never has to be hunted down in Expenses. A
   return ticket is one purchase — tick "the same ticket covers the way back" and

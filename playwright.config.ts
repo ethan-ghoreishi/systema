@@ -14,6 +14,7 @@ export default defineConfig({
   },
   projects: [
     { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+    { name: 'mobile-chromium', use: { ...devices['Pixel 7'] } },
     {
       name: 'mobile-safari',
       use: { ...devices['iPhone 14'] },
@@ -22,7 +23,8 @@ export default defineConfig({
   webServer: {
     command: 'npm run dev',
     url: 'http://localhost:5173',
-    reuseExistingServer: !process.env.CI,
+    // A live-edited server can expose duplicate data modules to test imports.
+    reuseExistingServer: false,
     timeout: 60_000,
   },
 });

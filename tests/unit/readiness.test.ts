@@ -205,3 +205,45 @@ describe('a ride to the airport with its own clock', () => {
     expect(stageAt(d, Z('2026-10-16T02:55'))).toBe('plan-b');
   });
 });
+
+// Arrival follows the ride's departure, even when the ride misses the flight.
+describe('transfer arrival dates', () => {
+  const timed = (at: string, leaves: string, arrives: string) =>
+    tripDepartures(
+      trip({
+        outbound: {
+          at,
+          tz: 'Europe/London',
+          transport: 'Coach',
+          transferAt: leaves,
+          transferArr: arrives,
+        },
+      }),
+      [],
+    )[0];
+
+  it('keeps an arrival after the flight on the same day and warns in every early stage', () => {
+    const d = timed('2027-02-12T06:30', '05:10', '06:45');
+    expect(d.serviceArr).toBe(Z('2027-02-12T06:45'));
+    expect(d.slackMin).toBe(-15);
+    expect(d.journeyMin).toBe(95);
+    for (const now of [d.prepareAt - MIN, d.prepareAt, d.leaveBy - MIN, d.leaveBy + MIN]) {
+      expect(readiness(d, now).detail).toContain('after the departure');
+      expect(readiness(d, now).detail).not.toContain('on track');
+    }
+  });
+
+  it('rolls an overnight arrival forward from the previous evening', () => {
+    const d = timed('2027-02-12T06:30', '23:10', '00:45');
+    expect(d.serviceAt).toBe(Z('2027-02-11T23:10'));
+    expect(d.serviceArr).toBe(Z('2027-02-12T00:45'));
+    expect(d.journeyMin).toBe(95);
+  });
+
+  it('uses calendar days across the spring clock change', () => {
+    const d = timed('2026-03-29T06:30', '23:10', '03:00');
+    expect(d.serviceAt).toBe(Z('2026-03-28T23:10'));
+    expect(d.serviceArr).toBe(Z('2026-03-29T02:00'));
+    expect(d.journeyMin).toBe(170);
+  });
+});

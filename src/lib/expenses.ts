@@ -44,7 +44,16 @@ export async function addExpense(tripId: string, input: ExpenseInput): Promise<s
 }
 
 export async function updateExpense(id: string, patch: Partial<Expense>): Promise<void> {
-  await db.expenses.update(id, patch);
+  await db.transaction('rw', db.expenses, async () => {
+    const current = await db.expenses.get(id);
+    if (!current) throw new Error('This expense no longer exists.');
+    // A reclassified payment no longer pays for its old booking.
+    const moved = (['category', 'subcategory', 'cityId', 'shared'] as const).some(
+      (key) => key in patch && (patch[key] ?? false) !== (current[key] ?? false),
+    );
+    // An empty key means deliberately detached; an absent key permits legacy matching.
+    await db.expenses.update(id, { ...patch, ...(moved ? { need: '' } : {}) });
+  });
 }
 
 export async function deleteExpense(id: string): Promise<void> {

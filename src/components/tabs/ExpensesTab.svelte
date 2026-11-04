@@ -10,6 +10,7 @@
   } from '../../lib/expenses';
   import { presetFor } from '../../lib/presets';
   import { formatGBP, formatAmount } from '../../lib/money';
+  import { ecbPublishes } from '../../lib/fx';
   import ExpenseCapture from '../ExpenseCapture.svelte';
   import Icon from '../Icon.svelte';
 
@@ -57,8 +58,9 @@
         <span class="section-title">Trip total</span>
         <span class="total-value">{formatGBP(total)}</span>
         {#if unpricedCount > 0}
-          <span class="hint" title="Priced automatically from the day's ECB rate when online">
-            +{unpricedCount} awaiting a rate
+          <span class="hint hint--warn">
+            {unpricedCount} unpriced {unpricedCount === 1 ? 'expense' : 'expenses'} excluded. Open to
+            add GBP or wait for a published rate.
           </span>
         {/if}
       </div>
@@ -101,8 +103,12 @@
             {/if}
           </span>
           {#if e.fxPending}
-            <span class="pill pill--fx" title="Awaiting exchange rate — prices itself when online"
-              >rate</span
+            <span
+              class="pill pill--fx"
+              title={ecbPublishes(e.currency)
+                ? 'Awaiting exchange rate'
+                : 'Open this expense to add the GBP amount'}
+              >{ecbPublishes(e.currency) ? 'rate' : 'add £'}</span
             >
           {/if}
           {#if looksAnomalous(e)}<span class="flag" title="Local/GBP look mismatched">!</span>{/if}
