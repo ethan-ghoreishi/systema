@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   buildTripPack,
   buildJournalingPrompt,
+  buildMemoryPrompt,
   photoManifest,
   blankFieldPatch,
   descendsFrom,
@@ -109,7 +110,7 @@ describe('buildTripPack', () => {
     expect(md).not.toContain('## Unplanned');
   });
 
-  it('weaves off-plan moments into the visit order, with their own photos', () => {
+  it('keeps Moments separate from place visits, with their own photos', () => {
     const cities: City[] = [
       {
         id: 'c',
@@ -147,10 +148,10 @@ describe('buildTripPack', () => {
         },
       ],
     });
-    expect(md).toContain('## Visit order');
+    expect(md).toContain('## Places visited');
     expect(md).toContain('1. Sat 27 Jun, 12:00, Carlsberg (Copenhagen)');
-    expect(md).toContain('2. Sat 27 Jun, 14:00, off-plan: Harbour swim (Copenhagen)');
-    expect(md).toContain('## Unplanned / serendipitous moments (in visit order)');
+    expect(md.split('## Places visited')[1].split('## Moments')[0]).not.toContain('Harbour swim');
+    expect(md).toContain('## Moments (recorded time order)');
     expect(md).toContain(
       `- Sat 27 Jun, 14:00, Copenhagen: **Harbour swim**. strangers sharing the ladder [photos: ${photoRef('m1cccc00-0000')}]`,
     );
@@ -158,7 +159,7 @@ describe('buildTripPack', () => {
     expect(md).toContain(`[photo: ${photoRef('m1cccc00-0000')}] Copenhagen, Harbour swim,`);
   });
 
-  it('names the stop a linked moment belongs to, in the visit order', () => {
+  it('preserves linked Moment context without adding a second visit', () => {
     // The leg carries its own zone, so the stamp doesn't follow the machine's.
     const cities: City[] = [
       {
@@ -185,10 +186,65 @@ describe('buildTripPack', () => {
       },
     ];
     const md = pack({ cities, stops: [visited], moments, photos: [] });
-    expect(md).toContain(
-      `2. Sat 27 Jun, 14:00, at ${visited.name}: The guide stopped mid-sentence`,
-    );
+    expect(md).toContain(`**The guide stopped mid-sentence** (at ${visited.name})`);
     expect(md).not.toContain('off-plan: The guide stopped');
+  });
+
+  it('exports untimed places by leg without numbering them or borrowing a linked Moment time', () => {
+    const cities: City[] = [
+      { id: 'bcn', tripId: 't', name: 'Barcelona', currency: 'EUR', order: 0 },
+      { id: 'blq', tripId: 't', name: 'Bologna', currency: 'EUR', order: 1 },
+    ];
+    const stops = [
+      stop({ id: 'blq-stop', name: 'Square', cityId: 'blq', order: 0 }),
+      stop({ id: 'bcn-stop', name: 'Cathedral', cityId: 'bcn', order: 1 }),
+    ];
+    const md = pack({
+      cities,
+      stops,
+      photos: [],
+      moments: [
+        {
+          id: 'm',
+          tripId: 't',
+          cityId: 'blq',
+          title: 'Concert',
+          note: 'Keep this observation',
+          at: 100,
+          stopId: 'blq-stop',
+          createdAt: 100,
+        },
+      ],
+    });
+    const visits = md.split('## Places visited')[1].split('## Moments')[0];
+    expect(visits).toContain('Actual visit order is unknown');
+    expect(visits).toContain('#### Barcelona\n\n- Cathedral');
+    expect(visits.indexOf('Cathedral')).toBeLessThan(visits.indexOf('Square'));
+    expect(visits).not.toMatch(/\d+\. /);
+    expect(visits).not.toContain('Concert');
+    expect(md).toContain('Keep this observation');
+    const memory = buildMemoryPrompt(
+      trip(),
+      cities,
+      stops,
+      [],
+      [
+        {
+          id: 'm',
+          tripId: 't',
+          cityId: 'blq',
+          title: 'Concert',
+          note: 'Keep this observation',
+          at: 100,
+          stopId: 'blq-stop',
+          createdAt: 100,
+        },
+      ],
+    );
+    expect(memory).toContain(visits.trim());
+    expect(memory).toContain('Do not infer chronology');
+    expect(memory).toContain('Concert. Keep this observation (at Square)');
+    expect(JOURNAL_PROMPT).toContain('Never infer a visit time from a linked Moment');
   });
 
   it('does not use em-dashes', () => {

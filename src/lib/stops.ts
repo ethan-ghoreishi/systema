@@ -28,15 +28,33 @@ export async function addStop(
   return id;
 }
 
-export async function updateStop(id: string, patch: Partial<Stop>): Promise<void> {
+/** Compare only edited fields, inside the write, so sync cannot be overwritten by an old editor. */
+function checkDraft(stop: Stop, expected: Partial<Stop>): void {
+  if (Object.keys(expected).some((key) => stop[key as keyof Stop] !== expected[key as keyof Stop]))
+    throw new Error(
+      'This field changed elsewhere. Copy your draft, then reload saved details to review it',
+    );
+}
+
+export async function updateStop(
+  id: string,
+  patch: Partial<Stop>,
+  expected: Partial<Stop> = {},
+): Promise<void> {
   if (!('cityId' in patch)) {
-    await db.stops.update(id, patch);
+    await db.stops.update(id, (s) => {
+      checkDraft(s, expected);
+      Object.assign(s, patch);
+    });
     return;
   }
   // The moments that are part of this stop move legs with it, so a moment is
   // never left saying it belongs to one leg while its stop belongs to another.
   await db.transaction('rw', db.stops, db.moments, async () => {
-    await db.stops.update(id, patch);
+    await db.stops.update(id, (s) => {
+      checkDraft(s, expected);
+      Object.assign(s, patch);
+    });
     const stop = await db.stops.get(id);
     if (stop)
       await db.moments
@@ -54,8 +72,10 @@ export async function updateStop(id: string, patch: Partial<Stop>): Promise<void
 export async function placeStop(
   id: string,
   pos: { lat: number; lng: number } | null,
+  expected: Pick<Stop, 'lat' | 'lng'> = {},
 ): Promise<void> {
   await db.stops.update(id, (s) => {
+    checkDraft(s, expected);
     if (pos) Object.assign(s, pos);
     else {
       delete s.lat;
@@ -86,21 +106,22 @@ export async function deleteStop(id: string): Promise<void> {
 }
 
 /** Tick a stop visited (recording when, for the visit order) or un-tick it. */
-export async function toggleVisited(stop: Stop): Promise<void> {
+export async function toggleVisited(stop: Stop, at: number | null = Date.now()): Promise<void> {
   await db.stops.update(stop.id, (s) => {
     s.visited = !s.visited;
-    if (s.visited) s.visitedAt = Date.now();
+    if (s.visited && at != null) s.visitedAt = at;
     else delete s.visitedAt;
   });
 }
 
 /** Correct a late marking without changing the planned route. */
-export async function setVisitTime(id: string, at: number): Promise<void> {
-  if (!Number.isFinite(at)) throw new Error('Enter a valid visit time.');
+export async function setVisitTime(id: string, at: number | null): Promise<void> {
+  if (at != null && !Number.isFinite(at)) throw new Error('Enter a valid visit time.');
   await db.stops.update(id, (s) => {
     if (!s.visited)
       throw new Error('This stop is no longer marked visited. Mark it visited first.');
-    s.visitedAt = at;
+    if (at == null) delete s.visitedAt;
+    else s.visitedAt = at;
   });
 }
 

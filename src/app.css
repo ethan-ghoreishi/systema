@@ -173,6 +173,7 @@ a {
 
 .screen-frame {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   /* minmax(0, …): the middle row may shrink below its content, so the pane scrolls. */
   grid-template-rows: auto minmax(0, 1fr);
   height: 100%;
@@ -1352,7 +1353,7 @@ input.city-ccy {
 }
 
 .stop-city-head {
-  margin-top: var(--s2);
+  margin: var(--s2) 0 0;
   color: var(--accent);
 }
 .stop-city-head:first-child {
@@ -1387,13 +1388,19 @@ input.city-ccy {
   min-width: 44px;
   min-height: 44px;
 }
-.visit-history > .stop-row {
+.visit-history > .stop-row,
+.moment-history > .stop-row {
   flex-direction: column;
   align-items: flex-start;
   width: 100%;
   padding: 12px;
   text-align: left;
   cursor: pointer;
+}
+.visit-history .stop-meta,
+.moment-history .stop-meta {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 .visit-time,
 .stops-list-heading {

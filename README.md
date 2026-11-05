@@ -196,9 +196,14 @@ subscription.**
      **Find** searches by name and city when there is no pin. The map numbers
      show planned order, joined by straight sequence lines, with a separate
      Transfers overview. Drag pins or edit their coordinates in a stop. Map
-     tiles need a connection unless already cached. Visited follows recorded
-     visit times; open a stop to correct a late marking in its city's time zone.
-     Older visits without a time stay explicitly unknown, after timed visits.
+     tiles need a connection unless already cached. Visited keeps **places visited** separate from **Moments**. Recorded
+     visit times have their own order; untimed places are grouped by leg and
+     listed in planned order for reference, with actual order explicitly unknown.
+     Open a place to correct a late marking in its city's time zone, or clear an
+     incorrect time. New markings on past or completed trips stay untimed.
+     Linked Moments remain accessible at their place, without supplying its visit
+     time. If notes or a pin change elsewhere while the editor is open, a stale
+     save is refused and the draft stays available to copy before reloading.
      Unvisited places stay with the trip, ready for another visit. One tap
      **extracts stops — with notes, anchors, checklist items and map pins —
      from the plan**.
@@ -211,8 +216,8 @@ subscription.**
   - **What happened?** (the spark in a trip's header) keeps something off the
     plan in seconds — a place found by accident, a changed plan, a missed bus,
     an encounter — with photos from the camera or the library.
-  4. **Export** — journaling prompt prefilled with the trip pack (visit order,
-     unplanned moments, a numbered photo list with stable references to attach
+  4. **Export** — journaling prompt prefilled with the trip pack (recorded place visits,
+     Moments in their own time order, a numbered photo list with stable references to attach
      in order; photo
      placeholders included), a **reconstruction prompt** for pre-app trips
      (expense trail as memory scaffold), journal paste-back and per-trip CSV.
@@ -245,7 +250,7 @@ npm run lint         # ESLint
 
 `npm run test` (Vitest) covers the pure logic: zone maths across clock
 changes, leave-by and stages, .ics output, chronology, the two-city scenarios,
-per-city prompts, plan blocks, anchors, `Book ahead:` lines, the visit timeline,
+per-city prompts, plan blocks, anchors, `Book ahead:` lines, place visit history and planned Moment placement,
 journal photo references, quick-capture defaults and duplicates, CSV round trip,
 insights, what the London airports and a hotel night have really cost, reading
 and re-pricing a finder search (and refusing its price map), the four states of
@@ -365,7 +370,7 @@ src/
     headings.ts            Pure heading parsing (contents list + split helper)
     tz.ts                  Pure: zoned wall clock ↔ instant (Intl), zone suggestions
     readiness.ts           Pure: leave-by, stages, next departure, .ics reminders
-    moments.ts             Off-plan moments + the visit timeline
+    moments.ts             Moments + place history + planned-list grouping
     exif.ts                Pure: a JPEG's capture time
     expense-defaults.ts    Pure: quick picks, defaults, trip-wide, duplicates
     nas-diagnostics.ts     Pure: failure classes, explanations, backoff, redaction

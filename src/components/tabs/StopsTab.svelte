@@ -20,7 +20,7 @@
   } from '../../lib/stops';
   import { addPhotos, deletePhoto, downloadPhoto, photoTime } from '../../lib/photos';
   import { instantToWall, wallToInstant, wallLabel } from '../../lib/tz';
-  import { GONE, stopGroups, visitTimeline, zoneOf } from '../../lib/moments';
+  import { GONE, stopGroups, visitedPlaces, zoneOf } from '../../lib/moments';
   import { hasPin, mapsLink } from '../../lib/maps';
   import { nasBackup } from '../../lib/nas.svelte';
   import PhotoPicker from '../PhotoPicker.svelte';
@@ -75,14 +75,8 @@
   const stops = $derived($stopsQ ?? []);
   const cities = $derived($citiesQ ?? []);
   const allPhotos = $derived($photosQ ?? []);
-  const history = $derived(visitTimeline(stops, moments, cities));
-  const visitNumber = $derived(
-    new Map(
-      history
-        .filter((it) => it.kind === 'stop' && it.at != null)
-        .map((it, i) => [it.kind === 'stop' ? it.stop.id : '', i + 1]),
-    ),
-  );
+  const history = $derived(visitedPlaces(stops, cities));
+  const visitNumber = $derived(new Map(history.timed.map((s, i) => [s.id, i + 1])));
   const stamp = (s: Stop) =>
     s.visitedAt == null
       ? 'Visit time unknown'
@@ -166,6 +160,7 @@
   let savedAt = $state<number | null>(null);
   let savedTimer: ReturnType<typeof setTimeout> | null = null;
   function flashSaved() {
+    if (draftBlocked) return;
     savedAt = Date.now();
     if (savedTimer) clearTimeout(savedTimer);
     savedTimer = setTimeout(() => (savedAt = null), 2000);
@@ -200,6 +195,10 @@
   // Persist input immediately, bound to the currently selected stop.
   let nameDraft = $state('');
   let notesDraft = $state('');
+  let nameBase = '';
+  let notesBase = '';
+  let pinBase: Pick<Stop, 'lat' | 'lng'> = {};
+  let draftBlocked = $state(false);
   let draftsFor = $state<string | null>(null);
   // This tab stays mounted while the detail opens and closes, so the guard has
   // to clear when there is no stop in the route. Otherwise reopening the same
@@ -216,6 +215,10 @@
       editingGuide = false;
       nameDraft = selected.name;
       notesDraft = selected.notes;
+      nameBase = selected.name;
+      notesBase = selected.notes;
+      draftBlocked = false;
+      saveError = '';
       draftsFor = selected.id;
     }
   });
@@ -238,6 +241,7 @@
       locationFor = selected.id;
       latDraft = selected.lat?.toString() ?? '';
       lngDraft = selected.lng?.toString() ?? '';
+      pinBase = { lat: selected.lat, lng: selected.lng };
       editingVisit = false;
     }
   });
@@ -263,7 +267,7 @@
     }
   }
   async function saveLocation() {
-    if (!selected) return;
+    if (!selected || draftBlocked) return;
     const pos = { lat: Number(latDraft), lng: Number(lngDraft) };
     if (!latDraft.trim() || !lngDraft.trim() || !hasPin(pos)) {
       saveError = 'Enter latitude from −90 to 90 and longitude from −180 to 180.';
@@ -271,7 +275,8 @@
     }
     saveError = '';
     try {
-      await placeStop(selected.id, pos);
+      await placeStop(selected.id, pos, pinBase);
+      pinBase = pos;
       flashSaved();
     } catch (err) {
       failed(err);
@@ -280,21 +285,28 @@
   async function markVisited(s: Stop) {
     saveError = '';
     try {
-      await toggleVisited(s);
+      // A historical marking says we went, not that we went today.
+      const today = instantToWall(Date.now(), zoneOf(s, cities)).slice(0, 10);
+      await toggleVisited(
+        s,
+        trip.status === 'done' || (trip.endDate && trip.endDate < today) ? null : Date.now(),
+      );
     } catch (err) {
       failed(err);
     }
   }
   function failed(err: unknown) {
+    draftBlocked = true;
     savedAt = null;
     saveError = `Not saved: ${err instanceof Error ? err.message : String(err)}. Copy your text before leaving.`;
   }
   function saveName() {
-    if (!selected) return;
+    if (!selected || draftBlocked) return;
     saveError = '';
-    void updateStop(selected.id, { name: nameDraft.trim() || 'Untitled stop' })
-      .then(flashSaved)
-      .catch(failed);
+    const name = nameDraft.trim() || 'Untitled stop';
+    const saving = updateStop(selected.id, { name }, { name: nameBase });
+    nameBase = name;
+    void saving.then(flashSaved).catch(failed);
   }
 
   function saveCity(cityId: string | null) {
@@ -304,9 +316,33 @@
   }
 
   function saveNotes() {
-    if (!selected) return;
+    if (!selected || draftBlocked) return;
     saveError = '';
-    void updateStop(selected.id, { notes: notesDraft }).then(flashSaved).catch(failed);
+    const saving = updateStop(selected.id, { notes: notesDraft }, { notes: notesBase });
+    notesBase = notesDraft;
+    void saving.then(flashSaved).catch(failed);
+  }
+
+  function reloadDetails() {
+    if (!selected) return;
+    nameDraft = nameBase = selected.name;
+    notesDraft = notesBase = selected.notes;
+    pinBase = { lat: selected.lat, lng: selected.lng };
+    latDraft = selected.lat?.toString() ?? '';
+    lngDraft = selected.lng?.toString() ?? '';
+    draftBlocked = false;
+    saveError = '';
+  }
+
+  async function clearVisitTime() {
+    if (!selected) return;
+    try {
+      await setVisitTime(selected.id, null);
+      editingVisit = false;
+      flashSaved();
+    } catch (err) {
+      failed(err);
+    }
   }
 
   // ---- detail: visit anchor ----
@@ -365,17 +401,31 @@
   }
 </script>
 
+{#snippet visitedRow(s: Stop)}
+  <button class="stop-row" onclick={() => openStop(s)} use:focusReturn={returnFocus === s.id}>
+    <span class="stop-name"
+      >{visitNumber.has(s.id) ? `${visitNumber.get(s.id)}. ` : ''}{s.name}</span
+    >
+    <span class="stop-meta"
+      >{stamp(s)} · {groupLabel(s.cityId || (s.legName ? GONE + s.legName : null))}</span
+    >
+  </button>
+{/snippet}
+
 {#if selected}
   {@const destination = mapsLink(selected, cities)}
   <!-- Detail -->
   <div class="stop-detail">
     <div class="detail-bar">
       <span class="autosave" class:autosave--on={savedAt}>
-        {savedAt ? 'Saved ✓' : 'Saves automatically'}
+        {draftBlocked ? 'Autosave paused' : savedAt ? 'Saved ✓' : 'Saves automatically'}
       </span>
     </div>
 
     {#if saveError}<p role="alert" class="hint hint--warn">{saveError}</p>{/if}
+    {#if draftBlocked}<button class="btn btn--ghost" onclick={reloadDetails}
+        >Reload saved details (discards draft)</button
+      >{/if}
     <input
       class="field stop-name-input"
       aria-label="Stop name"
@@ -437,8 +487,22 @@
             marked it later. This changes visit history, leaving the plan in its own order.
           </p>
           <button class="btn btn--ghost" type="submit">Save visit time</button>
+          {#if selected.visitedAt != null}<button
+              class="link-btn"
+              type="button"
+              onclick={clearVisitTime}>Visit time unknown</button
+            >{/if}
         </form>
       {/if}
+    {/if}
+
+    {#if moments.some((m) => m.stopId === selected.id)}
+      <section aria-label="Moments at this place">
+        <h2 class="section-title">Moments at this place</h2>
+        {#each moments.filter((m) => m.stopId === selected.id) as m (m.id)}
+          <button class="link-btn" onclick={() => (editingMoment = m)}>{m.title}</button>
+        {/each}
+      </section>
     {/if}
 
     <details class="stop-location">
@@ -462,9 +526,10 @@
             class="link-btn"
             type="button"
             onclick={() => {
-              if (selected)
-                void placeStop(selected.id, null)
+              if (selected && !draftBlocked)
+                void placeStop(selected.id, null, pinBase)
                   .then(() => {
+                    pinBase = { lat: undefined, lng: undefined };
                     latDraft = '';
                     lngDraft = '';
                     flashSaved();
@@ -685,51 +750,61 @@
           memoryKey={`stops:${trip.id}:map-city`}
         />
       {:else if stopView === 'visited' && (stops.length > 0 || moments.length > 0)}
+        <h2 class="section-title">Places visited</h2>
         <p class="hint">
-          Actual visit order. Markings use the time you tapped Visited; open a stop to correct a
-          late marking. Moments stay with the visit they belong to.
+          Places you marked visited. Moments are kept separately below. Open a place to correct or
+          clear its visit time.
         </p>
         <div class="stop-list visit-history">
-          {#each history as it (it.kind === 'stop' ? it.stop.id : `m-${it.moment.id}`)}
-            {#if it.kind === 'stop'}
-              <button
-                class="stop-row"
-                onclick={() => openStop(it.stop)}
-                use:focusReturn={returnFocus === it.stop.id}
-              >
-                <span class="stop-name"
-                  >{visitNumber.has(it.stop.id) ? `${visitNumber.get(it.stop.id)}. ` : ''}{it.stop
-                    .name}</span
-                >
-                <span class="stop-meta"
-                  >{stamp(it.stop)}{cityNameById.get(it.stop.cityId ?? '')
-                    ? ` · ${cityNameById.get(it.stop.cityId!)}`
-                    : ''}</span
-                >
-              </button>
-            {:else}
-              <button class="stop-row moment-row" onclick={() => (editingMoment = it.moment)}>
-                <span class="stop-name">{it.moment.title}</span>
-                <span class="stop-meta"
-                  >{it.moment.stopId && stopNameById.has(it.moment.stopId)
-                    ? `at ${stopNameById.get(it.moment.stopId)}`
-                    : 'off-plan'} · {wallLabel(
-                    instantToWall(it.at, zoneOf(it.moment, cities)),
-                  )}</span
-                >
-              </button>
-            {/if}
-          {:else}
+          {#if history.timed.length}
+            <h3 class="section-title">Recorded visit times</h3>
             <p class="hint">
-              No visits recorded yet. Mark a stop Visited, or use What happened? for a discovery off
-              the plan.
+              In recorded time order. Numbering covers these places only; untimed visits may fall
+              anywhere. A tap records the marking time unless corrected.
             </p>
-          {/each}
+            {#each history.timed as s (s.id)}
+              {@render visitedRow(s)}
+            {/each}
+          {/if}
+          {#if history.untimed.length}
+            <h3 class="section-title">Visit time unknown</h3>
+            <p class="hint">
+              Grouped by leg, listed in planned order for reference. Actual visit order is unknown.
+            </p>
+            {#each history.untimed as group (group.key)}
+              <h4 class="stop-city-head section-title">{groupLabel(group.key)}</h4>
+              {#each group.stops as s (s.id)}
+                {@render visitedRow(s)}
+              {/each}
+            {/each}
+          {/if}
+          {#if !history.timed.length && !history.untimed.length}
+            <p class="hint">
+              No places marked visited yet. Mark a place in List; a Moment does not mark its linked
+              place visited.
+            </p>
+          {/if}
         </div>
-        {#if stops.some((s) => s.visited && s.visitedAt == null)}<p class="hint">
-            Older visits without a time appear at the end in planned order. Open one to add its
-            visit time.
-          </p>{/if}
+        {#if moments.length}
+          <h2 class="section-title">Moments</h2>
+          <p class="hint">
+            Observations, experiences and discoveries, in their own recorded time order.
+          </p>
+          <div class="stop-list moment-history">
+            {#each moments as m (m.id)}
+              <button class="stop-row moment-row" onclick={() => (editingMoment = m)}>
+                <span class="stop-name">{m.title}</span>
+                <span class="stop-meta"
+                  >{wallLabel(instantToWall(m.at, zoneOf(m, cities)))} · {groupLabel(
+                    m.cityId || (m.legName ? GONE + m.legName : null),
+                  )}{m.stopId && stopNameById.has(m.stopId)
+                    ? ` · at ${stopNameById.get(m.stopId)}`
+                    : ' · standalone'}</span
+                >
+              </button>
+            {/each}
+          </div>
+        {/if}
       {:else}
         {#if stops.length}<div class="stops-list-heading">
             <span class="hint">Planned order · unvisited places stay here for another visit.</span
