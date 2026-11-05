@@ -201,7 +201,17 @@
   let nameDraft = $state('');
   let notesDraft = $state('');
   let draftsFor = $state<string | null>(null);
+  // This tab stays mounted while the detail opens and closes, so the guard has
+  // to clear when there is no stop in the route. Otherwise reopening the same
+  // stop keeps the drafts from last time — and a stop edited in between (a
+  // synced note, a restored backup) would have that edit typed back over.
+  // Keyed on the route, not on the record: a stop momentarily absent while the
+  // live query reloads must not wipe what is being typed.
   $effect(() => {
+    if (!selectedId) {
+      draftsFor = null;
+      return;
+    }
     if (selected && draftsFor !== selected.id) {
       editingGuide = false;
       nameDraft = selected.name;
@@ -216,7 +226,14 @@
   let latDraft = $state('');
   let lngDraft = $state('');
   let locationFor = $state<string | null>(null);
+  // Same guard, same reason: a pin dragged on the map after this stop was last
+  // open must be what the fields show, or Save map location puts the old
+  // coordinates back over the move.
   $effect(() => {
+    if (!selectedId) {
+      locationFor = null;
+      return;
+    }
     if (selected && locationFor !== selected.id) {
       locationFor = selected.id;
       latDraft = selected.lat?.toString() ?? '';
@@ -227,8 +244,11 @@
   async function changeVisitTime() {
     if (!selected) return;
     const tz = zoneOf(selected, cities);
-    const at = wallToInstant(visitDraft, tz);
-    if (at == null || instantToWall(at, tz) !== visitDraft) {
+    // Visits are kept to the minute. Trimming any seconds the picker supplies
+    // keeps the round-trip check comparing like with like.
+    const wall = visitDraft.slice(0, 16);
+    const at = wallToInstant(wall, tz);
+    if (at == null || instantToWall(at, tz) !== wall) {
       saveError =
         'Enter a valid local visit date and time. This time may not exist because the clocks changed.';
       return;
@@ -799,7 +819,8 @@
                     href={link.href}
                     target="_blank"
                     rel="noopener noreferrer"
-                    aria-label={`${link.label}: ${s.name}`}>{hasPin(s) ? 'Go' : 'Find'}</a
+                    aria-label={`${hasPin(s) ? 'Go to' : 'Find'} ${s.name} in Google Maps`}
+                    >{hasPin(s) ? 'Go' : 'Find'}</a
                   >
                   {#if editingOrder}<div class="stop-reorder">
                       <button

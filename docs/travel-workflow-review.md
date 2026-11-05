@@ -93,3 +93,44 @@ The independent reviewer should scrutinise payment comparison before the first
 write, the distinction between plan and history, unknown-time treatment, and
 quote provenance. Noninteractive booking calls retain their existing behaviour;
 the sole interactive booking form always supplies its opening payment snapshot.
+
+## Independent review outcome
+
+Reviewed on the branch at `bee3d30`, against the priorities above.
+
+**Confirmed and corrected.** The reported coordinate-draft fault is real and was
+reachable without a sync: `StopsTab` stays mounted across the detail, so its
+initialisation guards still named the stop last opened. Reopening that stop
+after its pin moved showed the old latitude and longitude, and Save map
+location wrote them back over the move. The same shape sat on the name and
+notes drafts, where a note arriving by sync or restore while the detail was
+closed would be typed back over on the next keystroke. Both guards now clear
+with the route, not with the record — a stop briefly absent while the live
+query reloads must not wipe what is being typed. Covered by a browser test
+that fails without the fix.
+
+Two smaller corrections: the Go/Find link's accessible name now begins with the
+word on screen (WCAG 2.5.3), and the visit-time round trip ignores seconds a
+picker may add, so a valid time is never refused as a clock change.
+
+**Examined and rejected.** The payment comparison is sound: it runs inside the
+write transaction before either half of the booking is touched, and a rejection
+rolls the whole thing back. It cannot be tripped by an ordinary sync, because
+`applyMerge` decides what to write with the same `canonical` equality the
+snapshot comparison uses — an idle sync writes nothing, so nothing changes under
+an open sheet. That invariant now has a test. Reference-only saves never reach
+the comparison and only rewrite the booking note, so a newly arrived payment
+keeps its money. Visit chronology, unknown-time placement, linked Moments and
+quote provenance behave as described; the quote note format has been
+`× N, as quoted` since quotes were introduced, so no stored quote loses its
+basis.
+
+**Accepted limitations.** Pricing a pending foreign charge while a booking sheet
+is open (the device's own FX backfill, on reconnect) reads as a change and asks
+for a reopen. It fails safe and the reopened sheet shows the priced amount.
+Removing taxi, Uber and cab from the never-booked rides is deliberate: a trip
+whose taxi read as settled will show it unresolved until a reference, a payment
+or Pay on the day says so. The trip pack numbers Moments alongside visits, so
+its numbering differs from the "Visit N" on screen; that predates this work.
+The Google Maps app handoff from an installed iPhone PWA, and whether this
+retires Favourites on a real trip, remain owner checks.

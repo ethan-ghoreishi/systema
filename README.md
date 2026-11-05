@@ -199,8 +199,9 @@ subscription.**
      tiles need a connection unless already cached. Visited follows recorded
      visit times; open a stop to correct a late marking in its city's time zone.
      Older visits without a time stay explicitly unknown, after timed visits.
-     Unvisited places stay with the trip, ready for another visit. One tap **extracts stops —
-     with notes, anchors, checklist items and map pins — from the plan**.
+     Unvisited places stay with the trip, ready for another visit. One tap
+     **extracts stops — with notes, anchors, checklist items and map pins —
+     from the plan**.
   3. **Expenses** — capture is an amount and one tap: quick picks (recent and
      templates) set the category; city, currency, date, destination and
      payment default from the leg you're in; the rest is under More details.

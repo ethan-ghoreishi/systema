@@ -161,7 +161,6 @@ describe('what is left before a trip', () => {
     expect(city.done).toBe(true);
   });
 
-  // A booked coach has a timetable on the ticket, and the leave-by time should
   it.each(['Taxi', 'Uber', 'Cab'])(
     '%s needs an explicit booking or pay-on-day decision',
     (transport) => {
@@ -194,6 +193,7 @@ describe('what is left before a trip', () => {
     expect(need.state).toBe('open');
   });
 
+  // A booked coach has a timetable on the ticket, and the leave-by time should
   // count back from it rather than from a journey length nobody measured.
   it('reads the booked ride’s own clock times', () => {
     const uk = tripNeeds(

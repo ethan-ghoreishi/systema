@@ -755,6 +755,11 @@ test('a booking opened with a payment refuses a newer payment synced from anothe
   await need(phone, 'Ticket out').getByRole('button').click();
   await expect(phone.getByLabel('What it cost, for everyone')).toHaveValue('80');
   await phone.getByLabel('What it cost, for everyone').fill('82');
+  // An idle sync writes nothing, so it must not read as someone else's edit:
+  // the snapshot comparison and the merge judge a change the same way.
+  expect((await sync(phone)).ok).toBe(true);
+  await expect(phone.getByText('payment changed elsewhere')).toHaveCount(0);
+  await expect(phone.getByRole('button', { name: 'Save', exact: true })).toBeEnabled();
   await mac.evaluate(async (id) => {
     const { db } = await import('/src/lib/db.ts');
     await db.expenses

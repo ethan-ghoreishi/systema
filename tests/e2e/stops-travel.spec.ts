@@ -26,7 +26,7 @@ test('a stop launches Google Maps from list, detail and map without marking a vi
 }) => {
   const { id, stops } = await seed(page);
   await page.goto(`/#/trip/${id}/stops`);
-  const go = page.getByRole('link', { name: 'Directions in Google Maps: Piazza Maggiore' });
+  const go = page.getByRole('link', { name: 'Go to Piazza Maggiore in Google Maps' });
   await expect(go).toHaveAttribute(
     'href',
     'https://www.google.com/maps/dir/?api=1&destination=44.4938%2C11.3426',
@@ -135,7 +135,7 @@ test('missing pins use a city-qualified search and can be corrected without a mo
 }) => {
   const { id } = await seed(page);
   await page.goto(`/#/trip/${id}/stops`);
-  await expect(page.getByRole('link', { name: 'Find in Google Maps: Due Torri' })).toHaveAttribute(
+  await expect(page.getByRole('link', { name: 'Find Due Torri in Google Maps' })).toHaveAttribute(
     'href',
     'https://www.google.com/maps/search/?api=1&query=Due+Torri%2C+Bologna',
   );
@@ -279,4 +279,45 @@ test('a corrected visit syncs with an independent note edit and survives ZIP res
     await page.getByRole('tab', { name: 'Visited', exact: true }).click();
     await expect(page.locator('.visit-history .stop-name')).toHaveText(['1. Piazza Maggiore']);
   }
+});
+
+test('reopening a stop shows the pin and note as they are now, not as they were', async ({
+  page,
+}) => {
+  const { id, stops } = await seed(page);
+  const stopId = stops[0].id;
+  await page.goto(`/#/trip/${id}/stops`);
+  await page.getByRole('button', { name: 'Piazza Maggiore notes' }).click();
+  await page.getByText('Map location', { exact: true }).click();
+  await expect(page.getByLabel('Latitude', { exact: true })).toHaveValue('44.4938');
+  await page.getByRole('button', { name: 'Back to Stops' }).click();
+  // The pin moves and the note changes while the detail is closed: a drag on
+  // the map, another device's sync, a restored backup.
+  await page.evaluate(async (stopId) => {
+    const { placeStop, updateStop } = await import('/src/lib/stops.ts');
+    await placeStop(stopId, { lat: 44.5, lng: 11.35 });
+    await updateStop(stopId, { notes: 'Enter from the north arcade.' });
+  }, stopId);
+  await page.getByRole('button', { name: 'Piazza Maggiore notes' }).click();
+  await expect(page.getByLabel('Notes', { exact: true })).toHaveValue(
+    'Enter from the north arcade.',
+  );
+  await page.getByText('Map location', { exact: true }).click();
+  await expect(page.getByLabel('Latitude', { exact: true })).toHaveValue('44.5');
+  await expect(page.getByLabel('Longitude', { exact: true })).toHaveValue('11.35');
+  // Saving what is on screen must keep the moved pin, not put the old one back.
+  await page.getByRole('button', { name: 'Save map location' }).click();
+  await expect(
+    page.getByRole('link', { name: 'Directions in Google Maps', exact: true }),
+  ).toHaveAttribute('href', /destination=44.5%2C11.35/);
+  await page.getByRole('button', { name: 'Back to Stops' }).click();
+  await expect(
+    page.getByRole('link', { name: 'Go to Piazza Maggiore in Google Maps' }),
+  ).toHaveAttribute('href', 'https://www.google.com/maps/dir/?api=1&destination=44.5%2C11.35');
+  expect(
+    await page.evaluate(async (stopId) => {
+      const { db } = await import('/src/lib/db.ts');
+      return db.stops.get(stopId);
+    }, stopId),
+  ).toMatchObject({ lat: 44.5, lng: 11.35, notes: 'Enter from the north arcade.' });
 });
