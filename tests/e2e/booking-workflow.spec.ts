@@ -363,7 +363,9 @@ test('money-only edits preserve a reserved return, and legacy payments are updat
         need: undefined,
         skeleton: false,
         amountGBP: 50,
-        notes: 'Personal note',
+        // A reference this trip no longer carries anywhere structured: an
+        // older backup, or one changed in the departure editor since.
+        notes: 'Personal note · Booking OLD-FLIGHT',
         currency: 'GBP',
         date: '2026-10-02',
       });
@@ -371,6 +373,7 @@ test('money-only edits preserve a reserved return, and legacy payments are updat
       return {
         city,
         row,
+        legacyNotes: (await db.expenses.get(old!.id))!.notes,
         covered: (await needs()).find((n) => n.key === `transfer-out:${cityId}`)!.done,
         reused: updated.expenseId === old!.id,
         flightRows: await db.expenses
@@ -404,6 +407,8 @@ test('money-only edits preserve a reserved return, and legacy payments are updat
   expect(result.covered).toBe(true);
   expect(result.reused).toBe(true);
   expect(result.flightRows).toBe(2);
+  // One booking line, and the author's own note still there.
+  expect(result.legacyNotes).toBe('Personal note · Booking LEGACY-FLIGHT');
 });
 
 test('Opportunity mutations advance sync timestamps and country determines an ambiguous city currency', async ({
@@ -572,8 +577,10 @@ test('a reference-only quote sheet never overwrites a payment arriving from sync
         quote: { amountGBP: 81 },
       });
   }, id);
-  // The changed quote proves the live query has observed the synced row.
-  await expect(page.getByText(/Quote: £81.00/)).toBeVisible();
+  // Saying the payment arrived proves the live query has observed the synced
+  // row, and the sheet stops offering a quote that has been overtaken.
+  await expect(page.getByRole('status')).toContainText('A payment of £91.00 was recorded');
+  await expect(page.getByText(/Quote: £81.00/)).toBeHidden();
   await expect(page.getByLabel('Record this amount as paid')).not.toBeChecked();
   await expect(page.getByLabel('What it cost, for everyone')).toHaveValue('80');
   await save(page);
@@ -589,4 +596,83 @@ test('a reference-only quote sheet never overwrites a payment arriving from sync
   }, id);
   expect(rows).toHaveLength(1);
   expect(rows[0]).toMatchObject({ amountGBP: 91, date: '2026-10-01', notes: 'Booking AFTER-SYNC' });
+});
+
+test('a hand-typed GBP conversion stays on screen and editable once a rate exists', async ({
+  page,
+}) => {
+  // The rate for the payment date is available: £85 was still typed by hand.
+  await page.route('https://api.frankfurter.dev/**', (r) =>
+    r.fulfill({ json: { date: '2026-10-01', rates: { GBP: 0.9 } } }),
+  );
+  const { id } = await seed(page);
+  await page.evaluate(async (id) => {
+    const { db } = await import('/src/lib/db.ts');
+    await db.expenses
+      .where('tripId')
+      .equals(id)
+      .filter((e) => e.need === 'flight:outbound')
+      .modify({
+        skeleton: false,
+        currency: 'EUR',
+        amountLocal: 100,
+        amountGBP: 85,
+        fxRate: null,
+        gbpManual: true,
+        date: '2026-10-01',
+      });
+  }, id);
+  await page.goto(`/#/trip/${id}/plan`);
+  await sorted(page);
+  await need(page, 'Ticket out').getByRole('button', { name: 'Ticket out: Edit' }).click();
+  await expect(page.getByLabel('What it cost, for everyone')).toHaveValue('100');
+  // The label says "override" only once a rate is in hand, so finding it this
+  // way proves the figure is deciding the row against an available rate.
+  const override = page.getByLabel('Amount (GBP) override', { exact: true });
+  await expect(override).toHaveValue('85');
+  await page.getByLabel('What it cost, for everyone').fill('200');
+  await expect(override).toHaveValue('85');
+  await expect(page.getByText(/at the rate for the payment date/)).toBeHidden();
+  await capture(page, '11-manual-gbp-visible');
+  await override.fill('');
+  await expect(page.getByText('About £180.00 at the rate for the payment date.')).toBeVisible();
+  await save(page);
+  const row = await page.evaluate(async (id) => {
+    const { db } = await import('/src/lib/db.ts');
+    return (
+      await db.expenses
+        .where('tripId')
+        .equals(id)
+        .filter((e) => e.need === 'flight:outbound')
+        .toArray()
+    )[0];
+  }, id);
+  expect(row).toMatchObject({
+    amountGBP: 180,
+    amountLocal: 200,
+    currency: 'EUR',
+    fxRate: 0.9,
+    gbpManual: false,
+  });
+});
+
+test('a confirmed quote never replaces a payment that arrived while the sheet was open', async ({
+  page,
+}) => {
+  const { id } = await seed(page, true);
+  await page.goto(`/#/trip/${id}/expenses`);
+  await page.locator('.expense-row', { hasText: 'Outbound flight' }).click();
+  await page.getByLabel('Record this amount as paid').check();
+  await page.evaluate(async (id) => {
+    const { db } = await import('/src/lib/db.ts');
+    await db.expenses
+      .where('tripId')
+      .equals(id)
+      .filter((e) => e.need === 'flight:outbound')
+      .modify({ skeleton: false, amountGBP: 91, currency: 'GBP', date: '2026-10-01' });
+  }, id);
+  await expect(page.getByRole('alert')).toContainText('£91.00');
+  await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: 'Cancel' }).click();
+  await expect(page.locator('.total-value')).toHaveText('£91.00');
 });

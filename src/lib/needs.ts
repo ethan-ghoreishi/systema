@@ -679,12 +679,18 @@ export async function bookNeed(
     const place = input.place === undefined ? details.place?.trim() : input.place.trim();
     const both = input.bothWays ?? details.bothWays;
     const existing = expenseForNeed(expenses, need);
+    // Exactly one booking line, the way withFxNote keeps exactly one FX line:
+    // a reference changed anywhere else (a departure editor, a restored older
+    // backup) must not leave the one it replaced sitting in the sheet beside
+    // it. Only a bare `Booking <ref>` segment goes — an authored note stays.
+    const wasBooking = details.ref?.trim() ? `Booking ${details.ref.trim()}` : '';
     const notes = [
-      ...(existing?.notes.split(' · ').filter((s) => s !== `Booking ${details.ref}`) ?? []),
+      ...(existing?.notes
+        .split(' · ')
+        .map((s) => s.trim())
+        .filter((s) => s && s !== wasBooking && !/^Booking \S+$/.test(s)) ?? []),
       ...(ref ? [`Booking ${ref}`] : []),
-    ]
-      .filter(Boolean)
-      .join(' · ');
+    ].join(' · ');
     const result = async (expenseId: string | null) => ({
       expenseId,
       need: tripNeeds(

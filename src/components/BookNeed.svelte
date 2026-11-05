@@ -77,6 +77,12 @@
   let quotedAmount = $state(false);
   let recordPayment = $state(false);
   let quotedUnpaid = $state(false);
+  // A pound figure of your own is in play, so its field stays on screen: an
+  // override that decides the row from behind a condition is this app's
+  // recurring bug (see expenses.ts priceEntry).
+  let gbpTouched = $state(false);
+  // The row this sheet was filled from held no payment.
+  let wasUnpaid = $state(false);
   const recordingPayment = $derived(!quotedUnpaid || recordPayment);
   function changeCurrency(e: Event) {
     currency = (e.currentTarget as HTMLSelectElement).value;
@@ -85,6 +91,7 @@
     quotedAmount = false;
     recordPayment = false;
     gbp = '';
+    gbpTouched = false;
     prefilled = true;
   }
 
@@ -94,6 +101,7 @@
     prefilled = true;
     const { plan, row } = context;
     quotedUnpaid = !!row?.skeleton && quote != null;
+    wasUnpaid = !row || !!row.skeleton;
     ref = context.ref ?? '';
     place = context.place ?? '';
     transport = plan.transport ?? '';
@@ -105,7 +113,10 @@
     if (row && !row.skeleton) {
       currency = row.currency || 'GBP';
       amount = String(currency === 'GBP' ? row.amountGBP : row.amountLocal);
-      if (currency !== 'GBP' && isManualGBP(row)) gbp = String(row.amountGBP);
+      if (currency !== 'GBP' && isManualGBP(row)) {
+        gbp = String(row.amountGBP);
+        gbpTouched = true;
+      }
       date = row.date || todayIso();
     } else if (quote != null) {
       amount = String(quote);
@@ -137,6 +148,15 @@
   const money = $derived(recordingPayment ? num(amount) : 0);
   const isGBP = $derived(currency === 'GBP');
   const needsPounds = $derived(!isGBP && money > 0 && rate == null);
+  // Never hidden while it decides the figure: a hand-typed £ survives a rate
+  // arriving, so the sheet keeps it where it can be seen and changed.
+  const showPounds = $derived(!isGBP && money > 0 && (rate == null || gbpTouched));
+  // A payment for this arrived after the sheet was filled (another device, or
+  // another tab). What is on screen was typed against a row that had none.
+  const paidElsewhere = $derived(wasUnpaid && !!row && !row.skeleton);
+  const arrived = $derived(
+    row && !row.fxPending ? `A payment of ${formatGBP(row.amountGBP)}` : 'A payment',
+  );
   // A dinar never prices itself, however long you wait online, so a booking in
   // one with no £ would sit in the ledger reading as nothing paid while the
   // sheet says it was. Ask for the £ instead of saving a figure of zero.
@@ -162,12 +182,15 @@
         : {}),
     }),
   );
+  const atRate = $derived(`About ${formatGBP(priced.amountGBP)} at the rate for the payment date.`);
   const spec = $derived(need.book);
 
   // A free reservation has nothing to type: saving it *is* the record.
+  const wouldReplace = $derived(paidElsewhere && money > 0);
   const valid = $derived(
     prefilled &&
       !mustTypePounds &&
+      !wouldReplace &&
       (need.kind === 'book' ||
         money > 0 ||
         !!ref.trim() ||
@@ -274,18 +297,29 @@
             </select>
           </div>
         </div>
-        {#if needsPounds}
-          <label class="label" for="book-gbp">Amount (GBP)</label>
-          <input id="book-gbp" class="field" type="text" inputmode="decimal" bind:value={gbp} />
+        {#if showPounds}
+          <label class="label" for="book-gbp">Amount (GBP){rate != null ? ' override' : ''}</label>
+          <input
+            id="book-gbp"
+            class="field"
+            type="text"
+            inputmode="decimal"
+            bind:value={gbp}
+            oninput={() => (gbpTouched = true)}
+          />
           <p class="hint" class:hint--warn={mustTypePounds}>
-            {ecbPublishes(currency)
-              ? `No ${currency} rate to hand — it prices itself when you are next online, or put the £ in now.`
-              : `No ${currency} rate is available. Enter the GBP total from your statement.`}
+            {#if needsPounds}
+              {ecbPublishes(currency)
+                ? `No ${currency} rate to hand — it prices itself when you are next online, or put the £ in now.`
+                : `No ${currency} rate is available. Enter the GBP total from your statement.`}
+            {:else if num(gbp) > 0}
+              The £ was entered by hand and is kept; change it here if needed.
+            {:else}
+              {atRate}
+            {/if}
           </p>
         {:else if !isGBP && money > 0}
-          <p class="hint">
-            About {formatGBP(priced.amountGBP)} at the rate for the payment date.
-          </p>
+          <p class="hint">{atRate}</p>
         {/if}
         {#if quotedUnpaid}
           <label class="switch">
@@ -293,14 +327,25 @@
             <span>Record this amount as paid</span>
           </label>
         {/if}
-        <p class="hint">
-          {#if quotedUnpaid}
-            Quote: {formatGBP(quote!)}. Confirm it as paid, or enter the actual amount. Saving
-            booking details alone keeps the quote unpaid.
-          {:else}
-            Enter what you paid. Leave the amount blank to save booking details only.
-          {/if}
-        </p>
+        {#if wouldReplace}
+          <p class="hint hint--warn" role="alert">
+            {arrived} was recorded for this elsewhere while this was open. Close and reopen to edit it
+            — saving this amount would replace it.
+          </p>
+        {:else if paidElsewhere}
+          <p class="hint" role="status">
+            {arrived} was recorded for this elsewhere. Saving booking details alone leaves it as it is.
+          </p>
+        {:else}
+          <p class="hint">
+            {#if quotedUnpaid}
+              Quote: {formatGBP(quote!)}. Confirm it as paid, or enter the actual amount. Saving
+              booking details alone keeps the quote unpaid.
+            {:else}
+              Enter what you paid. Leave the amount blank to save booking details only.
+            {/if}
+          </p>
+        {/if}
 
         {#if spec?.asksPlace}
           <label class="label" for="book-place">Where you are staying</label>

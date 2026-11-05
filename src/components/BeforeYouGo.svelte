@@ -39,8 +39,16 @@
 
   let booking = $state<Need | null>(null);
   let status = $state('');
+  // A journey held on the other direction's ticket is edited through the
+  // purchase that covers it, so that sheet is also what the button offers to
+  // do: pressing "Price it" on a ride already paid for was the wrong promise.
+  const owner = (need: Need) => needs.find((n) => n.key === need.coveredBy) ?? need;
+  const action = (need: Need) => {
+    const o = owner(need);
+    return o.state === 'paid' ? 'Edit' : o.done ? 'Price it' : 'Book it';
+  };
   function openBooking(need: Need) {
-    booking = needs.find((n) => n.key === need.coveredBy) ?? need;
+    booking = owner(need);
   }
 </script>
 
@@ -71,8 +79,8 @@
         {:else if need.book}
           <button
             class="btn btn--ghost btn--sm"
-            aria-label={`${need.label}: ${need.state === 'paid' ? 'Edit' : need.done ? 'Price it' : 'Book it'}`}
-            onclick={() => openBooking(need)}>Book it</button
+            aria-label={`${need.label}: ${action(need)}`}
+            onclick={() => openBooking(need)}>{action(need)}</button
           >
         {/if}
       </div>
@@ -102,9 +110,8 @@
                    this card exists to remove. -->
               <button
                 class="btn btn--ghost btn--sm"
-                aria-label={`${need.label}: ${need.state === 'paid' ? 'Edit' : need.done ? 'Price it' : 'Book it'}`}
-                onclick={() => openBooking(need)}
-                >{need.state === 'paid' ? 'Edit' : 'Price it'}</button
+                aria-label={`${need.label}: ${action(need)}`}
+                onclick={() => openBooking(need)}>{action(need)}</button
               >
             {/if}
           </div>
