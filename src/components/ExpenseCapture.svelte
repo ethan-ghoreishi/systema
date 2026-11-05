@@ -76,8 +76,15 @@
       currencyOptions: codes,
       init: {
         amountStr:
-          ex && !ex.skeleton ? String(ex.currency === 'GBP' ? ex.amountGBP : ex.amountLocal) : '',
-        currency: ex?.currency || here?.currency?.trim().toUpperCase() || 'GBP',
+          ex && !ex.skeleton
+            ? String(ex.currency === 'GBP' ? ex.amountGBP : ex.amountLocal)
+            : ex?.quote
+              ? String(ex.quote.amountGBP)
+              : '',
+        currency:
+          ex?.skeleton && ex.quote
+            ? 'GBP'
+            : ex?.currency || here?.currency?.trim().toUpperCase() || 'GBP',
         category: ex?.category ?? '',
         subcategory: ex?.subcategory ?? '',
         paymentMethod: ex?.paymentMethod ?? '',

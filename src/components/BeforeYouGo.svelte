@@ -39,6 +39,9 @@
 
   let booking = $state<Need | null>(null);
   let status = $state('');
+  function openBooking(need: Need) {
+    booking = needs.find((n) => n.key === need.coveredBy) ?? need;
+  }
 </script>
 
 {#if trip.status !== 'done' && !over}
@@ -66,7 +69,11 @@
         {:else if need.href}
           <a class="btn btn--ghost btn--sm" href={need.href}>Research</a>
         {:else if need.book}
-          <button class="btn btn--ghost btn--sm" onclick={() => (booking = need)}>Book it</button>
+          <button
+            class="btn btn--ghost btn--sm"
+            aria-label={`${need.label}: ${need.state === 'paid' ? 'Edit' : need.done ? 'Price it' : 'Book it'}`}
+            onclick={() => openBooking(need)}>Book it</button
+          >
         {/if}
       </div>
     {/each}
@@ -89,12 +96,15 @@
                 class="btn btn--ghost btn--sm"
                 onclick={() => void setCheckedIn(trip, need.departureKey!, false)}>Undo</button
               >
-            {:else if need.book && need.state !== 'paid'}
+            {:else if need.book}
               <!-- Sorted is not paid. The coach you bought last week belongs in
                    the ledger, and hunting for it in Expenses is the friction
                    this card exists to remove. -->
-              <button class="btn btn--ghost btn--sm" onclick={() => (booking = need)}
-                >Price it</button
+              <button
+                class="btn btn--ghost btn--sm"
+                aria-label={`${need.label}: ${need.state === 'paid' ? 'Edit' : need.done ? 'Price it' : 'Book it'}`}
+                onclick={() => openBooking(need)}
+                >{need.state === 'paid' ? 'Edit' : 'Price it'}</button
               >
             {/if}
           </div>

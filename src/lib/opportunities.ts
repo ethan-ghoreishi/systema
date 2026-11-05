@@ -60,7 +60,7 @@ export async function putOption(oppId: string, option: TripOption): Promise<void
     const i = options.findIndex((o) => o.id === option.id);
     if (i < 0) options.push(option);
     else options[i] = invalidateOptionEstimates(option, options[i]);
-    await db.opportunities.put({ ...opp, options });
+    await db.opportunities.update(opp.id, { options });
   });
 }
 
@@ -73,8 +73,7 @@ export async function removeOption(oppId: string, optionId: string): Promise<voi
   await db.transaction('rw', db.opportunities, async () => {
     const opp = await db.opportunities.get(oppId);
     if (!opp) return;
-    await db.opportunities.put({
-      ...opp,
+    await db.opportunities.update(opp.id, {
       options: opp.options.filter((o) => o.id !== optionId),
     });
   });
@@ -160,7 +159,7 @@ export async function addFinderRows(rows: ParsedRow[]): Promise<AddResult> {
           result.refreshed += 1;
         }
       }
-      await db.opportunities.put({ ...opp, options });
+      await db.opportunities.put({ ...opp, options, updatedAt: Date.now() });
     }
   });
   return result;
@@ -220,10 +219,15 @@ export function presetForOption(o: TripOption): string {
  * which is how a dinar gets typed into a £ box.
  */
 function currencySeen(city: string, cities: City[], country?: string): string {
+  if (country?.trim()) return currencyForCountry(country);
   const key = city.trim().toLowerCase();
-  return (
-    cities.find((c) => c.name.trim().toLowerCase() === key)?.currency || currencyForCountry(country)
+  const codes = new Set(
+    cities
+      .filter((c) => c.name.trim().toLowerCase() === key)
+      .map((c) => c.currency.trim().toUpperCase())
+      .filter(Boolean),
   );
+  return codes.size === 1 ? [...codes][0] : '';
 }
 
 export interface ChosenTrip {

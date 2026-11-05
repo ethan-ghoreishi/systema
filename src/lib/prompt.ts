@@ -568,7 +568,7 @@ export function buildOpportunityPrompt(
     '- Food must be coeliac-safe gluten-free, preferably vegetarian; grocery meals over restaurants.',
     visited
       ? `- I have been to ${city} before, so say what a second visit adds rather than repeating the obvious.`
-      : `- I have not been to ${city}.`,
+      : `- There is no confirmed previous visit to ${city} in these records. Do not assume this is my first visit.`,
     '',
     'Check current sources for anything changeable. Do not invent fares, opening hours or booking rules; where you are unsure, say so plainly rather than guessing.',
     '',
