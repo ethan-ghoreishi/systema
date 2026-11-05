@@ -144,6 +144,9 @@
             <span class="expense-main">
               <span class="expense-desc">{e.description || e.subcategory}</span>
               <span class="expense-sub">{e.category} · {e.subcategory}</span>
+              {#if e.quote}<span class="expense-sub"
+                  >{e.quote.note || 'Historical quote · original party size not recorded'}</span
+                >{/if}
             </span>
             <!-- A quoted fare is not spending, so it is not in the total — but
                  it is what this row is expected to come to. -->

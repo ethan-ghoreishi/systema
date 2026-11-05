@@ -94,6 +94,16 @@ export async function toggleVisited(stop: Stop): Promise<void> {
   });
 }
 
+/** Correct a late marking without changing the planned route. */
+export async function setVisitTime(id: string, at: number): Promise<void> {
+  if (!Number.isFinite(at)) throw new Error('Enter a valid visit time.');
+  await db.stops.update(id, (s) => {
+    if (!s.visited)
+      throw new Error('This stop is no longer marked visited. Mark it visited first.');
+    s.visitedAt = at;
+  });
+}
+
 /** Persist `order` to match the given array order. */
 export async function reorderStops(ordered: Stop[]): Promise<void> {
   await db.transaction('rw', db.stops, async () => {

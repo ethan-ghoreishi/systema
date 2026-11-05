@@ -7,6 +7,8 @@
     updateStop,
     deleteStop,
     toggleVisited,
+    setVisitTime,
+    placeStop,
     moveStop,
     addChecklistItem,
     toggleChecklistItem,
@@ -17,8 +19,9 @@
     cityIds,
   } from '../../lib/stops';
   import { addPhotos, deletePhoto, downloadPhoto, photoTime } from '../../lib/photos';
-  import { instantToWall } from '../../lib/tz';
-  import { GONE, stopGroups, zoneOf } from '../../lib/moments';
+  import { instantToWall, wallToInstant, wallLabel } from '../../lib/tz';
+  import { GONE, stopGroups, visitTimeline, zoneOf } from '../../lib/moments';
+  import { hasPin, mapsLink } from '../../lib/maps';
   import { nasBackup } from '../../lib/nas.svelte';
   import PhotoPicker from '../PhotoPicker.svelte';
   import MomentCapture from '../MomentCapture.svelte';
@@ -29,10 +32,31 @@
 
   let { trip }: { trip: Trip } = $props();
 
-  // 'list' | 'map', kept per trip — the map redraws live as stops change.
+  // Views are kept per trip; the planned list and map never follow visit order.
   const viewKey = untrack(() => `stops:${trip.id}:view`);
-  let stopView = $state<'list' | 'map'>(recall(viewKey, 'list'));
+  let stopView = $state<'list' | 'map' | 'visited'>(recall(viewKey, 'list'));
+  let editingOrder = $state(false);
   $effect(() => remember(viewKey, stopView));
+  function viewKeydown(e: KeyboardEvent) {
+    const views = ['list', 'map', 'visited'] as const;
+    const i = views.indexOf(stopView);
+    const next =
+      e.key === 'ArrowRight'
+        ? (i + 1) % 3
+        : e.key === 'ArrowLeft'
+          ? (i + 2) % 3
+          : e.key === 'Home'
+            ? 0
+            : e.key === 'End'
+              ? 2
+              : -1;
+    if (next < 0) return;
+    e.preventDefault();
+    stopView = views[next];
+    (e.currentTarget as HTMLElement)
+      .querySelector<HTMLButtonElement>(`#stops-view-${stopView}`)
+      ?.focus();
+  }
 
   // The stop just opened gets focus back when the list returns.
   let returnFocus = $state<string | null>(null);
@@ -51,6 +75,18 @@
   const stops = $derived($stopsQ ?? []);
   const cities = $derived($citiesQ ?? []);
   const allPhotos = $derived($photosQ ?? []);
+  const history = $derived(visitTimeline(stops, moments, cities));
+  const visitNumber = $derived(
+    new Map(
+      history
+        .filter((it) => it.kind === 'stop' && it.at != null)
+        .map((it, i) => [it.kind === 'stop' ? it.stop.id : '', i + 1]),
+    ),
+  );
+  const stamp = (s: Stop) =>
+    s.visitedAt == null
+      ? 'Visit time unknown'
+      : wallLabel(instantToWall(s.visitedAt, zoneOf(s, cities)));
 
   const cityNameById = $derived(new Map(cities.map((c) => [c.id, c.name])));
   // Headers for two legs or more, as before — and for a trip holding anything
@@ -165,7 +201,17 @@
   let nameDraft = $state('');
   let notesDraft = $state('');
   let draftsFor = $state<string | null>(null);
+  // This tab stays mounted while the detail opens and closes, so the guard has
+  // to clear when there is no stop in the route. Otherwise reopening the same
+  // stop keeps the drafts from last time — and a stop edited in between (a
+  // synced note, a restored backup) would have that edit typed back over.
+  // Keyed on the route, not on the record: a stop momentarily absent while the
+  // live query reloads must not wipe what is being typed.
   $effect(() => {
+    if (!selectedId) {
+      draftsFor = null;
+      return;
+    }
     if (selected && draftsFor !== selected.id) {
       editingGuide = false;
       nameDraft = selected.name;
@@ -175,6 +221,70 @@
   });
 
   let saveError = $state('');
+  let editingVisit = $state(false);
+  let visitDraft = $state('');
+  let latDraft = $state('');
+  let lngDraft = $state('');
+  let locationFor = $state<string | null>(null);
+  // Same guard, same reason: a pin dragged on the map after this stop was last
+  // open must be what the fields show, or Save map location puts the old
+  // coordinates back over the move.
+  $effect(() => {
+    if (!selectedId) {
+      locationFor = null;
+      return;
+    }
+    if (selected && locationFor !== selected.id) {
+      locationFor = selected.id;
+      latDraft = selected.lat?.toString() ?? '';
+      lngDraft = selected.lng?.toString() ?? '';
+      editingVisit = false;
+    }
+  });
+  async function changeVisitTime() {
+    if (!selected) return;
+    const tz = zoneOf(selected, cities);
+    // Visits are kept to the minute. Trimming any seconds the picker supplies
+    // keeps the round-trip check comparing like with like.
+    const wall = visitDraft.slice(0, 16);
+    const at = wallToInstant(wall, tz);
+    if (at == null || instantToWall(at, tz) !== wall) {
+      saveError =
+        'Enter a valid local visit date and time. This time may not exist because the clocks changed.';
+      return;
+    }
+    saveError = '';
+    try {
+      await setVisitTime(selected.id, at);
+      editingVisit = false;
+      flashSaved();
+    } catch (err) {
+      failed(err);
+    }
+  }
+  async function saveLocation() {
+    if (!selected) return;
+    const pos = { lat: Number(latDraft), lng: Number(lngDraft) };
+    if (!latDraft.trim() || !lngDraft.trim() || !hasPin(pos)) {
+      saveError = 'Enter latitude from −90 to 90 and longitude from −180 to 180.';
+      return;
+    }
+    saveError = '';
+    try {
+      await placeStop(selected.id, pos);
+      flashSaved();
+    } catch (err) {
+      failed(err);
+    }
+  }
+  async function markVisited(s: Stop) {
+    saveError = '';
+    try {
+      await toggleVisited(s);
+    } catch (err) {
+      failed(err);
+    }
+  }
   function failed(err: unknown) {
     savedAt = null;
     saveError = `Not saved: ${err instanceof Error ? err.message : String(err)}. Copy your text before leaving.`;
@@ -256,6 +366,7 @@
 </script>
 
 {#if selected}
+  {@const destination = mapsLink(selected, cities)}
   <!-- Detail -->
   <div class="stop-detail">
     <div class="detail-bar">
@@ -272,10 +383,97 @@
       oninput={saveName}
     />
 
+    <a class="btn btn--primary" href={destination.href} target="_blank" rel="noopener noreferrer"
+      >{destination.label}</a
+    >
+    <p class="hint">
+      {hasPin(selected)
+        ? 'Directions use the saved pin. Check the entrance in Google Maps.'
+        : 'Searches by name and city. Check the place in Google Maps before setting off.'}
+      {#if hasPin(selected)}<a
+          href={mapsLink(selected, cities, true).href}
+          target="_blank"
+          rel="noopener noreferrer">Find by name instead</a
+        >{/if}
+    </p>
+
     <label class="switch">
-      <input type="checkbox" checked={selected.visited} onchange={() => toggleVisited(selected)} />
+      <input type="checkbox" checked={selected.visited} onchange={() => markVisited(selected)} />
       <span>Visited</span>
     </label>
+
+    {#if selected.visited}
+      <div class="visit-time">
+        <span class="hint">{stamp(selected)}</span>
+        <button
+          class="link-btn"
+          onclick={() => {
+            visitDraft =
+              selected.visitedAt == null
+                ? ''
+                : instantToWall(selected.visitedAt, zoneOf(selected, cities));
+            editingVisit = !editingVisit;
+          }}>Change visit time</button
+        >
+      </div>
+      {#if editingVisit}
+        <form
+          class="visit-editor"
+          onsubmit={(e) => {
+            e.preventDefault();
+            void changeVisitTime();
+          }}
+        >
+          <label class="label" for="visit-time">Actual visit time</label>
+          <input
+            id="visit-time"
+            class="field"
+            type="datetime-local"
+            required
+            bind:value={visitDraft}
+          />
+          <p class="hint">
+            {zoneOf(selected, cities) || 'Device local time'}. Use when you were there, even if you
+            marked it later. This changes visit history, leaving the plan in its own order.
+          </p>
+          <button class="btn btn--ghost" type="submit">Save visit time</button>
+        </form>
+      {/if}
+    {/if}
+
+    <details class="stop-location">
+      <summary>Map location</summary>
+      <p class="hint">
+        The saved pin is used for directions. Correct it here or drag it on the map.
+      </p>
+      <form
+        class="visit-editor"
+        onsubmit={(e) => {
+          e.preventDefault();
+          void saveLocation();
+        }}
+      >
+        <label class="label" for="stop-lat">Latitude</label>
+        <input id="stop-lat" class="field" type="text" inputmode="decimal" bind:value={latDraft} />
+        <label class="label" for="stop-lng">Longitude</label>
+        <input id="stop-lng" class="field" type="text" inputmode="decimal" bind:value={lngDraft} />
+        <button class="btn btn--ghost" type="submit">Save map location</button>
+        {#if hasPin(selected)}<button
+            class="link-btn"
+            type="button"
+            onclick={() => {
+              if (selected)
+                void placeStop(selected.id, null)
+                  .then(() => {
+                    latDraft = '';
+                    lngDraft = '';
+                    flashSaved();
+                  })
+                  .catch(failed);
+            }}>Remove map location</button
+          >{/if}
+      </form>
+    </details>
 
     {#if cities.length > 0}
       <div>
@@ -431,12 +629,22 @@
 {:else}
   <!-- List / Map -->
   <div class="stops">
+    {#if saveError}<p role="alert" class="hint hint--warn">{saveError}</p>{/if}
     {#if stops.length > 0 || moments.length > 0}
-      <div class="segmented stops-toggle" role="tablist" aria-label="List or map">
+      <div
+        class="segmented stops-toggle"
+        role="tablist"
+        tabindex="-1"
+        aria-label="Stops view"
+        onkeydown={viewKeydown}
+      >
         <button
           class="segment"
           class:segment--on={stopView === 'list'}
           role="tab"
+          id="stops-view-list"
+          aria-controls="stops-panel"
+          tabindex={stopView === 'list' ? 0 : -1}
           aria-selected={stopView === 'list'}
           onclick={() => (stopView = 'list')}>List</button
         >
@@ -444,118 +652,205 @@
           class="segment"
           class:segment--on={stopView === 'map'}
           role="tab"
+          id="stops-view-map"
+          aria-controls="stops-panel"
+          tabindex={stopView === 'map' ? 0 : -1}
           aria-selected={stopView === 'map'}
           onclick={() => (stopView = 'map')}>Map</button
+        >
+        <button
+          class="segment"
+          class:segment--on={stopView === 'visited'}
+          role="tab"
+          id="stops-view-visited"
+          aria-controls="stops-panel"
+          tabindex={stopView === 'visited' ? 0 : -1}
+          aria-selected={stopView === 'visited'}
+          onclick={() => (stopView = 'visited')}>Visited</button
         >
       </div>
     {/if}
 
-    {#if stopView === 'map' && (stops.length > 0 || moments.length > 0)}
-      <StopsMap
-        {stops}
-        {moments}
-        {cities}
-        onOpen={openStop}
-        memoryKey={`stops:${trip.id}:map-city`}
-      />
-    {:else}
-      {#if extractable.length > 0}
-        <button class="btn btn--ghost" onclick={extractNow}>
-          {stops.length === 0
-            ? `Extract ${extractable.length} stops from the plan`
-            : `Add ${extractable.length} new stop${extractable.length > 1 ? 's' : ''} found in the plan`}
-        </button>
-      {/if}
-
-      <form
-        class="add-row"
-        onsubmit={(e) => {
-          e.preventDefault();
-          addStopNow();
-        }}
-      >
-        <input class="field" placeholder="Add a stop" bind:value={newStopName} />
-        <button class="icon-btn" type="submit" aria-label="Add stop"><Icon name="plus" /></button>
-      </form>
-
-      {#if stopRows.length}
-        <div class="stop-list">
-          {#each stopRows as row, ri (row.kind === 'stop' ? row.stop.id : row.kind === 'moment' ? `m-${row.moment.id}` : `h-${ri}-${row.label}`)}
-            {#if row.kind === 'header'}
-              <span class="stop-city-head section-title">{row.label}</span>
-            {:else if row.kind === 'moment'}
-              {@const m = row.moment}
-              {@const n = allPhotos.filter((p) => p.momentId === m.id).length}
-              <div class="stop-row moment-row">
-                <span class="check-box check-box--none" aria-hidden="true"></span>
-                <button class="stop-open" onclick={() => (editingMoment = m)}>
-                  <span class="stop-name">{m.title}</span>
-                  <span class="stop-meta"
-                    >{m.stopId && stopNameById.get(m.stopId)
-                      ? `at ${stopNameById.get(m.stopId)}`
-                      : 'off-plan'} · {momentTime(m)}{n
-                      ? ` · ${n} photo${n > 1 ? 's' : ''}`
-                      : ''}</span
-                  >
-                </button>
-              </div>
+    <div
+      id="stops-panel"
+      role="tabpanel"
+      aria-labelledby={stops.length || moments.length ? `stops-view-${stopView}` : undefined}
+    >
+      {#if stopView === 'map' && (stops.length > 0 || moments.length > 0)}
+        <StopsMap
+          {stops}
+          {moments}
+          {cities}
+          onOpen={openStop}
+          memoryKey={`stops:${trip.id}:map-city`}
+        />
+      {:else if stopView === 'visited' && (stops.length > 0 || moments.length > 0)}
+        <p class="hint">
+          Actual visit order. Markings use the time you tapped Visited; open a stop to correct a
+          late marking. Moments stay with the visit they belong to.
+        </p>
+        <div class="stop-list visit-history">
+          {#each history as it (it.kind === 'stop' ? it.stop.id : `m-${it.moment.id}`)}
+            {#if it.kind === 'stop'}
+              <button
+                class="stop-row"
+                onclick={() => openStop(it.stop)}
+                use:focusReturn={returnFocus === it.stop.id}
+              >
+                <span class="stop-name"
+                  >{visitNumber.has(it.stop.id) ? `${visitNumber.get(it.stop.id)}. ` : ''}{it.stop
+                    .name}</span
+                >
+                <span class="stop-meta"
+                  >{stamp(it.stop)}{cityNameById.get(it.stop.cityId ?? '')
+                    ? ` · ${cityNameById.get(it.stop.cityId!)}`
+                    : ''}</span
+                >
+              </button>
             {:else}
-              {@const s = row.stop}
-              {@const i = row.index}
-              {@const p = checklistProgress(s)}
-              <div class="stop-row" class:stop-row--visited={s.visited}>
-                <button
-                  class="check-box"
-                  aria-label={s.visited ? 'Mark not visited' : 'Mark visited'}
-                  onclick={() => toggleVisited(s)}
+              <button class="stop-row moment-row" onclick={() => (editingMoment = it.moment)}>
+                <span class="stop-name">{it.moment.title}</span>
+                <span class="stop-meta"
+                  >{it.moment.stopId && stopNameById.has(it.moment.stopId)
+                    ? `at ${stopNameById.get(it.moment.stopId)}`
+                    : 'off-plan'} · {wallLabel(
+                    instantToWall(it.at, zoneOf(it.moment, cities)),
+                  )}</span
                 >
-                  {#if s.visited}<Icon name="check" size={16} />{/if}
-                </button>
-                <button
-                  class="stop-open"
-                  onclick={() => openStop(s)}
-                  use:focusReturn={returnFocus === s.id}
-                >
-                  <span class="stop-name">{s.name}</span>
-                  <span class="stop-meta">
-                    {#if hasGuide(s.guide)}<span class="stop-anchor">anchor</span>
-                      {#if s.notes.trim() || checklistProgress(s).total || photoCounts[s.id]}·
-                      {/if}{/if}
-                    {#if s.notes.trim()}notes{/if}
-                    {#if p.total}{s.notes.trim() ? ' · ' : ''}{p.done}/{p.total} ticked{/if}
-                    {#if photoCounts[s.id]}{s.notes.trim() || p.total ? ' · ' : ''}{photoCounts[
-                        s.id
-                      ]} photo{photoCounts[s.id] > 1 ? 's' : ''}{/if}
-                  </span>
-                </button>
-                <div class="stop-reorder">
-                  <button
-                    class="icon-btn icon-btn--sm"
-                    aria-label="Move up"
-                    disabled={i === 0}
-                    onclick={() => moveStop(stops, i, -1)}><Icon name="up" size={18} /></button
-                  >
-                  <button
-                    class="icon-btn icon-btn--sm"
-                    aria-label="Move down"
-                    disabled={i === stops.length - 1}
-                    onclick={() => moveStop(stops, i, 1)}><Icon name="down" size={18} /></button
-                  >
-                </div>
-              </div>
+              </button>
             {/if}
+          {:else}
+            <p class="hint">
+              No visits recorded yet. Mark a stop Visited, or use What happened? for a discovery off
+              the plan.
+            </p>
           {/each}
         </div>
+        {#if stops.some((s) => s.visited && s.visitedAt == null)}<p class="hint">
+            Older visits without a time appear at the end in planned order. Open one to add its
+            visit time.
+          </p>{/if}
       {:else}
-        <div class="card empty-state">
-          <p class="empty-title">No stops yet</p>
-          <p class="hint">
-            Paste a plan in the Plan tab and its stops (with notes, discovery checklists and map
-            pins) are extracted automatically with one tap — or add stops by name here.
-          </p>
-        </div>
+        {#if stops.length}<div class="stops-list-heading">
+            <span class="hint">Planned order · unvisited places stay here for another visit.</span
+            ><button
+              class="link-btn"
+              aria-pressed={editingOrder}
+              onclick={() => (editingOrder = !editingOrder)}
+              >{editingOrder ? 'Done reordering' : 'Reorder plan'}</button
+            >
+          </div>{/if}
+        {#if extractable.length > 0}
+          <button class="btn btn--ghost" onclick={extractNow}>
+            {stops.length === 0
+              ? `Extract ${extractable.length} stops from the plan`
+              : `Add ${extractable.length} new stop${extractable.length > 1 ? 's' : ''} found in the plan`}
+          </button>
+        {/if}
+
+        <form
+          class="add-row"
+          onsubmit={(e) => {
+            e.preventDefault();
+            addStopNow();
+          }}
+        >
+          <input class="field" placeholder="Add a stop" bind:value={newStopName} />
+          <button class="icon-btn" type="submit" aria-label="Add stop"><Icon name="plus" /></button>
+        </form>
+
+        {#if stopRows.length}
+          <div class="stop-list">
+            {#each stopRows as row, ri (row.kind === 'stop' ? row.stop.id : row.kind === 'moment' ? `m-${row.moment.id}` : `h-${ri}-${row.label}`)}
+              {#if row.kind === 'header'}
+                <span class="stop-city-head section-title">{row.label}</span>
+              {:else if row.kind === 'moment'}
+                {@const m = row.moment}
+                {@const n = allPhotos.filter((p) => p.momentId === m.id).length}
+                <div class="stop-row moment-row">
+                  <span class="check-box check-box--none" aria-hidden="true"></span>
+                  <button class="stop-open" onclick={() => (editingMoment = m)}>
+                    <span class="stop-name">{m.title}</span>
+                    <span class="stop-meta"
+                      >{m.stopId && stopNameById.get(m.stopId)
+                        ? `at ${stopNameById.get(m.stopId)}`
+                        : 'off-plan'} · {momentTime(m)}{n
+                        ? ` · ${n} photo${n > 1 ? 's' : ''}`
+                        : ''}</span
+                    >
+                  </button>
+                </div>
+              {:else}
+                {@const s = row.stop}
+                {@const link = mapsLink(s, cities)}
+                {@const i = row.index}
+                {@const p = checklistProgress(s)}
+                <div class="stop-row" class:stop-row--visited={s.visited}>
+                  <button
+                    class="check-box"
+                    aria-label={s.visited ? 'Mark not visited' : 'Mark visited'}
+                    onclick={() => markVisited(s)}
+                  >
+                    {#if s.visited}<Icon name="check" size={16} />{/if}
+                  </button>
+                  <button
+                    class="stop-open"
+                    onclick={() => openStop(s)}
+                    use:focusReturn={returnFocus === s.id}
+                  >
+                    <span class="stop-name">{s.name}</span>
+                    <span class="stop-meta">
+                      {#if s.visited}{visitNumber.has(s.id)
+                          ? `Visit ${visitNumber.get(s.id)} · `
+                          : ''}{stamp(s)} ·
+                      {/if}
+                      {#if hasGuide(s.guide)}<span class="stop-anchor">anchor</span>
+                        {#if s.notes.trim() || checklistProgress(s).total || photoCounts[s.id]}·
+                        {/if}{/if}
+                      {#if s.notes.trim()}notes{/if}
+                      {#if p.total}{s.notes.trim() ? ' · ' : ''}{p.done}/{p.total} ticked{/if}
+                      {#if photoCounts[s.id]}{s.notes.trim() || p.total ? ' · ' : ''}{photoCounts[
+                          s.id
+                        ]} photo{photoCounts[s.id] > 1 ? 's' : ''}{/if}
+                    </span>
+                  </button>
+                  <a
+                    class="btn btn--ghost btn--sm stop-go"
+                    href={link.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label={`${hasPin(s) ? 'Go to' : 'Find'} ${s.name} in Google Maps`}
+                    >{hasPin(s) ? 'Go' : 'Find'}</a
+                  >
+                  {#if editingOrder}<div class="stop-reorder">
+                      <button
+                        class="icon-btn icon-btn--sm"
+                        aria-label="Move up"
+                        disabled={i === 0}
+                        onclick={() => moveStop(stops, i, -1)}><Icon name="up" size={18} /></button
+                      >
+                      <button
+                        class="icon-btn icon-btn--sm"
+                        aria-label="Move down"
+                        disabled={i === stops.length - 1}
+                        onclick={() => moveStop(stops, i, 1)}><Icon name="down" size={18} /></button
+                      >
+                    </div>{/if}
+                </div>
+              {/if}
+            {/each}
+          </div>
+        {:else}
+          <div class="card empty-state">
+            <p class="empty-title">No stops yet</p>
+            <p class="hint">
+              Paste a plan in the Plan tab and its stops (with notes, discovery checklists and map
+              pins) are extracted automatically with one tap — or add stops by name here.
+            </p>
+          </div>
+        {/if}
       {/if}
-    {/if}
+    </div>
   </div>
 {/if}
 

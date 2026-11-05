@@ -145,11 +145,19 @@ export function buildTripPack({
   const stopName = new Map(stops.map((s) => [s.id, s.name]));
   const timeline = visitTimeline(stops, moments, cities);
   if (timeline.length) {
-    lines.push('## Visit order', '');
+    lines.push(
+      '## Visit order',
+      '',
+      'Timed visits are in actual order. Moments linked to a stop stay with that visit. Visits without a recorded time follow separately in planned order.',
+      '',
+    );
     timeline.forEach((it, i) => {
       if (it.kind === 'stop') {
         const c = cityById.get(it.stop.cityId ?? '');
-        const when = it.at != null ? `${localStamp(it.at, zoneOf(it.stop, cities))}, ` : '';
+        const when =
+          it.at != null
+            ? `${localStamp(it.at, zoneOf(it.stop, cities))}, `
+            : 'Visit time unknown, ';
         lines.push(`${i + 1}. ${when}${it.stop.name}${c ? ` (${c.name})` : ''}`);
       } else {
         const c = cityById.get(it.moment.cityId ?? '');

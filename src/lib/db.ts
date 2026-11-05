@@ -263,7 +263,7 @@ export interface Stop {
    */
   booked?: boolean;
   bookingRef?: string;
-  /** When it was ticked visited (ms); absent on stops ticked by older versions. */
+  /** Actual visit time (ms), defaulting to when ticked; correctable. Older visits may have none. */
   visitedAt?: number;
   /**
    * The zone its times are read in, kept here only when the leg that held it

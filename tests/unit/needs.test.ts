@@ -161,6 +161,38 @@ describe('what is left before a trip', () => {
     expect(city.done).toBe(true);
   });
 
+  it.each(['Taxi', 'Uber', 'Cab'])(
+    '%s needs an explicit booking or pay-on-day decision',
+    (transport) => {
+      const needs = (extra = {}) =>
+        tripNeeds(
+          trip(),
+          [leg({ exit: { transport, journeyMin: 30, ...extra } })],
+          [],
+          [],
+          NOW,
+        ).find((n) => n.key === 'transfer-out:c1')!;
+      expect(needs()).toMatchObject({ state: 'planned', done: false });
+      expect(needs({ payOnDay: false }).done).toBe(false);
+      expect(needs({ payOnDay: true }).done).toBe(true);
+      expect(needs({ transferRef: 'PREBOOKED' })).toMatchObject({ state: 'booked', done: true });
+    },
+  );
+
+  it('labels the original quote basis even after the party changes', () => {
+    const row = expense({
+      skeleton: true,
+      amountGBP: 0,
+      need: 'flight:outbound',
+      quote: { amountGBP: 80, note: '£40 each × 2, as quoted' },
+    });
+    const need = tripNeeds(trip({ partySize: 3 }), [leg()], [row], [], NOW).find(
+      (n) => n.key === 'flight:outbound',
+    )!;
+    expect(need.detail).toContain('historical quote £80 (£40 each × 2, as quoted)');
+    expect(need.state).toBe('open');
+  });
+
   // A booked coach has a timetable on the ticket, and the leave-by time should
   // count back from it rather than from a journey length nobody measured.
   it('reads the booked ride’s own clock times', () => {

@@ -7,6 +7,7 @@
   import { placeMoment } from '../lib/moments';
   import { activeLegId } from '../lib/trip-shape';
   import { recall, remember } from '../lib/ui-memory';
+  import { mapsLink } from '../lib/maps';
 
   /**
    * The route map, one city at a time. Free OpenStreetMap tiles (no key);
@@ -144,6 +145,7 @@
     body: string[],
     onRemove: () => void,
     link?: { href: string; label: string },
+    destination?: { href: string; label: string },
   ): HTMLElement {
     const el = document.createElement('div');
     const h = document.createElement('strong');
@@ -159,6 +161,14 @@
       const a = document.createElement('a');
       a.href = link.href;
       a.textContent = link.label;
+      el.append(document.createElement('br'), a);
+    }
+    if (destination) {
+      const a = document.createElement('a');
+      a.href = destination.href;
+      a.textContent = destination.label;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
       el.append(document.createElement('br'), a);
     }
     if (!readonly) {
@@ -203,9 +213,13 @@
         m.bindPopup(
           popup(
             `${i + 1}. ${s.name}`,
-            momentsAt(s.id).map((mo) => `Moment: ${mo.title}`),
+            [
+              s.visited ? 'Visited' : 'Not visited',
+              ...momentsAt(s.id).map((mo) => `Moment: ${mo.title}`),
+            ],
             () => void placeStop(s.id, null),
             readonly ? undefined : { href: `#/trip/${s.tripId}/stops/${s.id}`, label: 'Open stop' },
+            mapsLink(s, cities),
           ),
         );
         if (!readonly) {
@@ -336,6 +350,11 @@
   {#if selected === TRANSFERS}
     <p class="hint">
       The order of travel between cities. Straight lines show the sequence, not a route.
+    </p>
+  {:else}
+    <p class="hint">
+      Numbers show planned order. Lines join stops, not walking routes. Tap a pin for Google Maps
+      directions. Map tiles need a connection unless already cached.
     </p>
   {/if}
 

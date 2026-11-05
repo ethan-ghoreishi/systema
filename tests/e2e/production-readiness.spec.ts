@@ -198,7 +198,10 @@ test('booking currency clears the pound quote and uses the chosen payment date',
       .where('tripId')
       .equals(id)
       .filter((e) => e.description === 'Outbound flight')
-      .modify({ need: 'flight:outbound', quote: { amountGBP: 80 } });
+      .modify({
+        need: 'flight:outbound',
+        quote: { amountGBP: 80, note: '£40 each × 2, as quoted' },
+      });
     return id;
   });
   await page.goto(`/#/trip/${id}/plan`);
@@ -528,7 +531,7 @@ test('a failed payment update preserves the original quote and all booking detai
     const trip = (await db.trips.get(id))!;
     const rows = await db.expenses.where('tripId').equals(id).toArray();
     const row = rows.find((e) => e.need === 'flight:outbound')!;
-    await db.expenses.update(row.id, { quote: { amountGBP: 80 } });
+    await db.expenses.update(row.id, { quote: { amountGBP: 80, note: '£40 each × 2, as quoted' } });
     const before = JSON.stringify(await db.expenses.get(row.id));
     const fail = () => {
       throw new Error('Synthetic disk full');

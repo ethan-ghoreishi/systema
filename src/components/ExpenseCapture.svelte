@@ -25,6 +25,7 @@
   import { categories, subcategories, paymentMethods } from '../lib/vocab';
   import { formatAmount, formatGBP, perPersonNote } from '../lib/money';
   import { needWords } from '../lib/needs';
+  import { quoteMatchesParty } from '../lib/quotes';
   import { todayIso } from '../lib/sheet';
   import { activeLegId } from '../lib/trip-shape';
   import { preparePhotos } from '../lib/photos';
@@ -78,7 +79,7 @@
         amountStr:
           ex && !ex.skeleton
             ? String(ex.currency === 'GBP' ? ex.amountGBP : ex.amountLocal)
-            : ex?.quote
+            : quoteMatchesParty(ex?.quote, trip.partySize) && ex?.quote
               ? String(ex.quote.amountGBP)
               : '',
         currency:

@@ -1323,7 +1323,8 @@ input.city-ccy {
 
 /* ---------- Stops ---------- */
 
-.stops {
+.stops,
+.stops > [role='tabpanel'] {
   display: flex;
   flex-direction: column;
   gap: var(--s3);
@@ -1368,9 +1369,53 @@ input.city-ccy {
   background: var(--surface);
 }
 
-.stop-row--visited .stop-name {
-  color: var(--ink-faint);
-  text-decoration: line-through;
+.stop-row--visited {
+  border-left: 3px solid var(--accent);
+}
+.stop-row .check-box {
+  width: 44px;
+  height: 44px;
+}
+.stop-row .stop-open {
+  min-height: 44px;
+  justify-content: center;
+}
+.stop-row .stop-name {
+  white-space: normal;
+}
+.stop-go {
+  min-width: 44px;
+  min-height: 44px;
+}
+.visit-history > .stop-row {
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  padding: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.visit-time,
+.stops-list-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.stops-list-heading .link-btn {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.visit-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.stop-location summary {
+  cursor: pointer;
+  min-height: 44px;
+  display: list-item;
+  align-content: center;
 }
 
 .check-box {
