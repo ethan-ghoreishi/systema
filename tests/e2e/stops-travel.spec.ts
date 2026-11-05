@@ -321,3 +321,33 @@ test('reopening a stop shows the pin and note as they are now, not as they were'
     }, stopId),
   ).toMatchObject({ lat: 44.5, lng: 11.35, notes: 'Enter from the north arcade.' });
 });
+
+test('deleting the last place from Visited leaves Stops usable, not stuck on an empty view', async ({
+  page,
+}) => {
+  const { id, stops } = await seed(page);
+  await page.evaluate(
+    async (ids) => {
+      const { deleteStop } = await import('/src/lib/stops.ts');
+      for (const stopId of ids) await deleteStop(stopId);
+    },
+    [stops[1].id, stops[2].id],
+  );
+  await page.goto(`/#/trip/${id}/stops`);
+  await page.getByRole('button', { name: 'Mark visited' }).click();
+  await page.getByRole('tab', { name: 'Visited', exact: true }).click();
+  await page.locator('.visit-history button', { hasText: 'Piazza Maggiore' }).click();
+  page.once('dialog', (d) => void d.accept());
+  await page.getByRole('button', { name: 'Delete stop' }).click();
+  // Nothing left to show, so Stops must offer the way back in — the remembered
+  // view cannot be a dead end, on this visit or after a reload.
+  for (const reloaded of [false, true]) {
+    if (reloaded) await page.reload();
+    await expect(page.getByPlaceholder('Add a stop')).toBeVisible();
+    await expect(page.getByRole('button', { name: /Extract 3 stops from the plan/ })).toBeVisible();
+  }
+  await page.getByRole('button', { name: /Extract 3 stops from the plan/ }).click();
+  // With places again, the remembered view and its selector come back.
+  await page.getByRole('tab', { name: 'List', exact: true }).click();
+  await expect(page.locator('.stop-list > .stop-row')).toHaveCount(3);
+});

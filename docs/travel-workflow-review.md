@@ -109,6 +109,12 @@ with the route, not with the record — a stop briefly absent while the live
 query reloads must not wipe what is being typed. Covered by a browser test
 that fails without the fix.
 
+A second fault, found on the corrected branch: Visited had no empty-trip guard
+where Map has one, so deleting the last place from Visited left that view
+rendering with its selector gone — no Add a stop, no Extract, and the view is
+remembered, so a reload did not recover it. Visited now falls through to the
+list for an empty trip, exactly as Map does.
+
 Two smaller corrections: the Go/Find link's accessible name now begins with the
 word on screen (WCAG 2.5.3), and the visit-time round trip ignores seconds a
 picker may add, so a valid time is never refused as a clock change.

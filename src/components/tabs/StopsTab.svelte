@@ -684,7 +684,7 @@
           onOpen={openStop}
           memoryKey={`stops:${trip.id}:map-city`}
         />
-      {:else if stopView === 'visited'}
+      {:else if stopView === 'visited' && (stops.length > 0 || moments.length > 0)}
         <p class="hint">
           Actual visit order. Markings use the time you tapped Visited; open a stop to correct a
           late marking. Moments stay with the visit they belong to.
