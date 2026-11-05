@@ -598,10 +598,8 @@ test('a reference-only quote sheet never overwrites a payment arriving from sync
   expect(rows[0]).toMatchObject({ amountGBP: 91, date: '2026-10-01', notes: 'Booking AFTER-SYNC' });
 });
 
-test('a hand-typed GBP conversion stays on screen and editable once a rate exists', async ({
-  page,
-}) => {
-  // The rate for the payment date is available: £85 was still typed by hand.
+/** A €100 flight whose £85 was typed by hand, with the day's rate available. */
+async function seedManualGBP(page: Page) {
   await page.route('https://api.frankfurter.dev/**', (r) =>
     r.fulfill({ json: { date: '2026-10-01', rates: { GBP: 0.9 } } }),
   );
@@ -625,6 +623,25 @@ test('a hand-typed GBP conversion stays on screen and editable once a rate exist
   await page.goto(`/#/trip/${id}/plan`);
   await sorted(page);
   await need(page, 'Ticket out').getByRole('button', { name: 'Ticket out: Edit' }).click();
+  return id;
+}
+
+const flightRow = (page: Page, id: string) =>
+  page.evaluate(async (id) => {
+    const { db } = await import('/src/lib/db.ts');
+    return (
+      await db.expenses
+        .where('tripId')
+        .equals(id)
+        .filter((e) => e.need === 'flight:outbound')
+        .toArray()
+    )[0];
+  }, id);
+
+test('a hand-typed GBP conversion stays on screen and editable once a rate exists', async ({
+  page,
+}) => {
+  const id = await seedManualGBP(page);
   await expect(page.getByLabel('What it cost, for everyone')).toHaveValue('100');
   // The label says "override" only once a rate is in hand, so finding it this
   // way proves the figure is deciding the row against an available rate.
@@ -637,19 +654,27 @@ test('a hand-typed GBP conversion stays on screen and editable once a rate exist
   await override.fill('');
   await expect(page.getByText('About £180.00 at the rate for the payment date.')).toBeVisible();
   await save(page);
-  const row = await page.evaluate(async (id) => {
-    const { db } = await import('/src/lib/db.ts');
-    return (
-      await db.expenses
-        .where('tripId')
-        .equals(id)
-        .filter((e) => e.need === 'flight:outbound')
-        .toArray()
-    )[0];
-  }, id);
-  expect(row).toMatchObject({
+  expect(await flightRow(page, id)).toMatchObject({
     amountGBP: 180,
     amountLocal: 200,
+    currency: 'EUR',
+    fxRate: 0.9,
+    gbpManual: false,
+  });
+});
+
+test('clearing a hand-typed £ on its own hands the row back to the rate', async ({ page }) => {
+  const id = await seedManualGBP(page);
+  const override = page.getByLabel('Amount (GBP) override', { exact: true });
+  await expect(override).toHaveValue('85');
+  // An emptied field is a decision, not an absence: nothing else moves, and
+  // the £ the sheet now promises is the one it saves.
+  await override.fill('');
+  await expect(page.getByText('About £90.00 at the rate for the payment date.')).toBeVisible();
+  await save(page);
+  expect(await flightRow(page, id)).toMatchObject({
+    amountGBP: 90,
+    amountLocal: 100,
     currency: 'EUR',
     fxRate: 0.9,
     gbpManual: false,

@@ -161,6 +161,14 @@
   // one with no £ would sit in the ledger reading as nothing paid while the
   // sheet says it was. Ask for the £ instead of saving a figure of zero.
   const mustTypePounds = $derived(needsPounds && !ecbPublishes(currency) && num(gbp) === 0);
+  // A hand-typed £ emptied is a decision, not an absence. The row would
+  // otherwise keep the figure that was just cleared — "nothing that decided it
+  // moved" cannot see a field going blank — while the hint below promises the
+  // rate. Hand it back to the rate, the way clearing any other field here
+  // clears what it held.
+  const clearedManualGBP = $derived(
+    !!row && !row.skeleton && isManualGBP(row) && showPounds && num(gbp) === 0,
+  );
   const priced = $derived(
     priceEntry({
       amount: money,
@@ -169,7 +177,7 @@
       // Only while its field is on screen: see showPounds, and priceEntry.
       overrideGBP: showPounds ? num(gbp) || null : null,
       rate,
-      ...(row && !row.skeleton
+      ...(row && !row.skeleton && !clearedManualGBP
         ? {
             recorded: {
               amount: row.currency === 'GBP' ? row.amountGBP : row.amountLocal,
