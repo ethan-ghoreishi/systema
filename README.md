@@ -191,9 +191,15 @@ subscription.**
      notes, discovery checklists, photos and, for major sites, a **visit
      anchor** (where to begin, the 10–20 minute version, three things to look
      for, a stretch, what can be skipped), plus off-plan moments in their
-     city. **List | Map**: one city at a time (numbered within the city, a
-     walking line only inside it) or a labelled Transfers overview; drag to
-     adjust, tap to place; tiles cached for offline. One tap **extracts stops —
+     city. **List | Map | Visited** keeps the planned route separate from actual
+     visit history. **Go** opens Google Maps directions to the saved pin;
+     **Find** searches by name and city when there is no pin. The map numbers
+     show planned order, joined by straight sequence lines, with a separate
+     Transfers overview. Drag pins or edit their coordinates in a stop. Map
+     tiles need a connection unless already cached. Visited follows recorded
+     visit times; open a stop to correct a late marking in its city's time zone.
+     Older visits without a time stay explicitly unknown, after timed visits.
+     Unvisited places stay with the trip, ready for another visit. One tap **extracts stops —
      with notes, anchors, checklist items and map pins — from the plan**.
   3. **Expenses** — capture is an amount and one tap: quick picks (recent and
      templates) set the category; city, currency, date, destination and

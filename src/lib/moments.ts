@@ -100,7 +100,10 @@ export type TimelineItem =
   | { kind: 'moment'; moment: Moment; at: number };
 
 /**
- * What happened, in the order it happened: stops in route order, with each
+ * What happened, in the order it happened: timed visits in actual order, with
+ * untimed historical visits kept afterwards in planned order. Linked moments
+ * stay with their stop: they describe that visit, not a second visit.
+ * The planned list (`visitedOnly: false`) keeps route order, with each
  * moment placed where it belongs — at the stop it is part of, else after the
  * last stop visited before it. Stops ticked by older versions have no visit
  * time; a moment then goes after its own city's stops. Pure.
@@ -114,6 +117,35 @@ export function visitTimeline(
   cities: City[],
   { visitedOnly = true }: { visitedOnly?: boolean } = {},
 ): TimelineItem[] {
+  if (visitedOnly) {
+    const visited = stops.filter((s) => s.visited);
+    const linked = new Set(
+      moments.filter((m) => visited.some((s) => s.id === m.stopId)).map((m) => m.id),
+    );
+    const timed: TimelineItem[] = [
+      ...visited
+        .filter((s) => s.visitedAt != null)
+        .map((stop) => ({ kind: 'stop' as const, stop, at: stop.visitedAt })),
+      ...moments
+        .filter((m) => !linked.has(m.id))
+        .map((moment) => ({ kind: 'moment' as const, moment, at: moment.at })),
+    ];
+    const idOf = (it: TimelineItem) => (it.kind === 'stop' ? it.stop.id : it.moment.id);
+    timed.sort((a, b) => a.at! - b.at! || idOf(a).localeCompare(idOf(b)));
+    const untimed: TimelineItem[] = visited
+      .filter((s) => s.visitedAt == null)
+      .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id))
+      .map((stop) => ({ kind: 'stop', stop }));
+    return [...timed, ...untimed].flatMap((it) => [
+      it,
+      ...(it.kind === 'stop'
+        ? moments
+            .filter((m) => m.stopId === it.stop.id)
+            .sort((a, b) => a.at - b.at || a.id.localeCompare(b.id))
+            .map((moment) => ({ kind: 'moment' as const, moment, at: moment.at }))
+        : []),
+    ]);
+  }
   const cityRank = new Map([...cities].sort((a, b) => a.order - b.order).map((c, i) => [c.id, i]));
   const rank = (cityId: string | null) => cityRank.get(cityId ?? '') ?? Infinity;
   const out: TimelineItem[] = [...stops]

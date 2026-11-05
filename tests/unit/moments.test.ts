@@ -58,15 +58,43 @@ describe('visitTimeline', () => {
     ]);
   });
 
-  it("falls back to the moment's city when stops have no visit times", () => {
+  it('keeps untimed historical visits after the timed events without inventing chronology', () => {
     const stops = [stop('a', 'blq', 0), stop('b', 'blq', 1), stop('c', 'bcn', 2)];
     const moments = [moment('courtyard', 'blq', 50), moment('market', 'bcn', 60)];
     expect(names(visitTimeline(stops, moments, cities))).toEqual([
+      '*courtyard',
+      '*market',
       'a',
       'b',
-      '*courtyard',
       'c',
-      '*market',
+    ]);
+  });
+
+  it('sorts actual visits across cities by time, keeping the planned list unchanged', () => {
+    const stops = [stop('a', 'blq', 0, 500), stop('b', 'bcn', 1, 100), stop('c', 'blq', 2, 300)];
+    const moments = [moment('at-a', 'blq', 50, 'a'), moment('loose', 'blq', 200)];
+    expect(names(visitTimeline(stops, moments, cities))).toEqual([
+      'b',
+      '*loose',
+      'c',
+      'a',
+      '*at-a',
+    ]);
+    expect(
+      visitTimeline(stops, [], cities, { visitedOnly: false }).map(
+        (it) => it.kind === 'stop' && it.stop.id,
+      ),
+    ).toEqual(['a', 'b', 'c']);
+    expect(stops.map((s) => s.order)).toEqual([0, 1, 2]);
+  });
+
+  it('keeps a linked moment with an untimed visit and uses stable tie breaks', () => {
+    const stops = [stop('unknown', 'blq', 0), stop('b', 'blq', 2, 100), stop('a', 'blq', 1, 100)];
+    expect(names(visitTimeline(stops, [moment('linked', 'blq', 50, 'unknown')], cities))).toEqual([
+      'a',
+      'b',
+      'unknown',
+      '*linked',
     ]);
   });
 
