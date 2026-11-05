@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
+import { FakeNas, device, sync } from './nas-fake';
 
 // Off-plan moments, library imports in capture order, and journal photos by
 // reference. Synthetic images only (a JPEG header carrying an EXIF time).
@@ -237,7 +238,7 @@ test('a moment keeps its stop, its place and its own time when the leg goes', as
   await sheet.getByRole('button', { name: 'Rome' }).click();
   await sheet.getByLabel('Place or event').fill('The guide stopped mid-sentence');
   await sheet.getByRole('button', { name: 'change' }).click();
-  await sheet.getByLabel('When').fill('2026-10-29T15:30');
+  await sheet.getByLabel('When', { exact: true }).fill('2026-10-29T15:30');
   await sheet.getByLabel('Part of a planned stop?').selectOption({ label: 'Rome Stop' });
   await sheet.getByRole('button', { name: 'Save' }).click();
   await expect(sheet).toHaveCount(0);
@@ -253,15 +254,15 @@ test('a moment keeps its stop, its place and its own time when the leg goes', as
 
   // 2. Opening it shows the same time the list does, and editing keeps it.
   await page.getByText('The guide stopped mid-sentence').click();
-  await expect(sheet.getByText('At · 15:30')).toBeVisible();
+  await expect(sheet.getByText(/, 15:30$/)).toBeVisible();
   await sheet.getByRole('button', { name: 'change' }).click();
-  await expect(sheet.getByLabel('When')).toHaveValue('2026-10-29T15:30');
-  await sheet.getByLabel('When').fill('2026-10-29T15:45');
+  await expect(sheet.getByLabel('When', { exact: true })).toHaveValue('2026-10-29T15:30');
+  await sheet.getByLabel('When', { exact: true }).fill('2026-10-29T15:45');
   await sheet.getByRole('button', { name: 'Save' }).click();
   await expect(sheet).toHaveCount(0);
   await expect(page.locator('.moment-row .stop-meta')).toContainText('15:45');
   await page.getByText('The guide stopped mid-sentence').click();
-  await expect(sheet.getByText('At · 15:45')).toBeVisible();
+  await expect(sheet.getByText(/, 15:45$/)).toBeVisible();
   await sheet.getByRole('button', { name: 'Cancel' }).click();
 
   // 3. A moment of its own goes on the map; one at a stop shows at its pin.
@@ -324,14 +325,14 @@ test('a moment keeps its stop, its place and its own time when the leg goes', as
 
   // 6. And the time it is read and edited in is still Rome's.
   await page.getByText('The guide stopped mid-sentence').click();
-  await expect(sheet.getByText('At · 15:45')).toBeVisible();
+  await expect(sheet.getByText(/, 15:45$/)).toBeVisible();
   await sheet.getByRole('button', { name: 'change' }).click();
-  await sheet.getByLabel('When').fill('2026-10-29T16:05');
+  await sheet.getByLabel('When', { exact: true }).fill('2026-10-29T16:05');
   await sheet.getByRole('button', { name: 'Save' }).click();
   await expect(sheet).toHaveCount(0);
   await expect(page.locator('.moment-row').first().locator('.stop-meta')).toContainText('16:05');
   await page.getByText('The guide stopped mid-sentence').click();
-  await expect(sheet.getByText('At · 16:05')).toBeVisible();
+  await expect(sheet.getByText(/, 16:05$/)).toBeVisible();
   await sheet.getByRole('button', { name: 'Cancel' }).click();
 
   // 7. A detached record can be put back on a leg.
@@ -568,12 +569,104 @@ test('a detached stop hands the sheet its zone, not just the saved record', asyn
 
   await page.getByText('A door left open').click();
   const sheet = page.locator('dialog.modal[open]');
-  await expect(sheet.getByText('At · 14:30')).toBeVisible(); // Rome, its own kept zone
+  await expect(sheet.getByText(/, 14:30$/)).toBeVisible(); // Rome, its own kept zone
   await sheet.getByLabel('Part of a planned stop?').selectOption({ label: 'Dubai Stop' });
-  await expect(sheet.getByText('At · 16:30')).toBeVisible(); // now read in the stop's
+  await expect(sheet.getByText(/, 16:30$/)).toBeVisible(); // now read in the stop's
   await sheet.getByRole('button', { name: 'Save' }).click();
   await expect(sheet).toHaveCount(0);
 
   // What the list shows is what the sheet showed when it was saved.
   await expect(page.locator('.moment-row .stop-meta')).toContainText('16:30');
+});
+
+test('retrospective Moments keep unknown, approximate and date-only times through sync, prompts and ZIP restore', async ({
+  makeContext,
+}) => {
+  const nas = new FakeNas();
+  const phone = await device(makeContext, nas);
+  const mac = await device(makeContext, nas);
+  await phone.clock.setFixedTime(new Date('2026-11-05T12:00Z'));
+  const id = await phone.evaluate(async () => {
+    const { createTrip, addCity } = await import('/src/lib/trips.ts');
+    const id = await createTrip('custom');
+    await addCity(id, 'Bologna', 'EUR', {
+      tz: 'Europe/Rome',
+      arrival: '2020-01-01T09:00',
+      departure: '2020-01-02T18:00',
+    });
+    return id;
+  });
+  await phone.goto(`/#/trip/${id}/stops`);
+  const sheet = phone.getByRole('dialog');
+  await phone.getByRole('button', { name: 'What happened?' }).click();
+  await expect(sheet.getByText('Event time unknown', { exact: true })).toBeVisible();
+  await sheet.getByLabel('Place or event').fill('An undated courtyard concert');
+  await sheet.getByRole('button', { name: 'Save', exact: true }).click();
+  await phone.getByRole('tab', { name: 'Visited', exact: true }).click();
+  await expect(phone.locator('.moment-history')).toContainText('Event time unknown');
+  await phone.getByRole('button', { name: /An undated courtyard concert/ }).click();
+  await sheet.getByLabel('Why it mattered').fill('I remember the music, not the date.');
+  await sheet.getByRole('button', { name: 'Save', exact: true }).click();
+  for (const precision of ['date', 'approximate']) {
+    await phone.getByRole('button', { name: 'What happened?' }).click();
+    await sheet.getByLabel('Place or event').fill(`${precision} memory`);
+    await sheet.getByRole('button', { name: 'change', exact: true }).click();
+    await sheet.getByLabel('When did it happen?', { exact: true }).selectOption(precision);
+    await expect(sheet.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
+    await expect(sheet.getByLabel('When', { exact: true })).toHaveValue('');
+    await sheet.getByLabel('When', { exact: true }).fill('2020-01-01');
+    expect(
+      (await sheet.getByLabel('Why it mattered').boundingBox())!.height,
+    ).toBeGreaterThanOrEqual(70);
+    await sheet.getByRole('button', { name: 'Save', exact: true }).click();
+  }
+  await expect(phone.locator('.moment-history .stop-meta')).toHaveCount(3);
+  const labels = await phone.locator('.moment-history .stop-meta').allTextContents();
+  expect(labels).toEqual(
+    expect.arrayContaining([
+      expect.stringContaining('time unknown'),
+      expect.stringContaining('Around Wed 1 Jan'),
+    ]),
+  );
+  await expect(phone.locator('.moment-history .stop-meta').last()).toContainText(
+    'Event time unknown',
+  );
+  await phone.getByRole('button', { name: /date memory/ }).click();
+  await expect(sheet.getByText('Wed 1 Jan · time unknown', { exact: true })).toBeVisible();
+  await sheet.getByRole('button', { name: 'change', exact: true }).click();
+  await expect(sheet.getByLabel('When did it happen?', { exact: true })).toHaveValue('date');
+  await sheet.getByRole('button', { name: 'Save', exact: true }).click();
+  expect((await sync(phone)).ok).toBe(true);
+  expect((await sync(mac)).ok).toBe(true);
+  const result = await mac.evaluate(async (id) => {
+    const { db } = await import('/src/lib/db.ts');
+    const exp = await import('/src/lib/export.ts');
+    const trip = (await db.trips.get(id))!;
+    const cities = await db.cities.where('tripId').equals(id).toArray();
+    const moments = await db.moments.where('tripId').equals(id).toArray();
+    const pack = exp.buildTripPack({ trip, cities, stops: [], expenses: [], photos: [], moments });
+    const prompt = exp.buildMemoryPrompt(trip, cities, [], [], moments);
+    const zip = new Blob([await (await exp.buildZipBackup()).arrayBuffer()]);
+    const { backup, files } = await exp.readBackupFile(zip);
+    await db.moments.clear();
+    await exp.importBackup(backup, files);
+    const restored = await db.moments.toArray();
+    return {
+      pack,
+      prompt,
+      restored: restored.map((m) => ({ title: m.title, precision: m.timePrecision })),
+    };
+  }, id);
+  expect(result.pack).toContain('Event time unknown, Bologna: **An undated courtyard concert**');
+  expect(result.pack).toContain('Around Wed 1 Jan, Bologna: **approximate memory**');
+  expect(result.pack).not.toContain('5 Nov');
+  expect(result.prompt).toContain('Event time unknown');
+  expect(result.prompt).toContain('Approximate dates are estimates');
+  expect(result.restored).toEqual(
+    expect.arrayContaining([
+      { title: 'An undated courtyard concert', precision: 'unknown' },
+      { title: 'date memory', precision: 'date' },
+      { title: 'approximate memory', precision: 'approximate' },
+    ]),
+  );
 });

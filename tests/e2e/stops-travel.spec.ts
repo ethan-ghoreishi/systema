@@ -497,3 +497,58 @@ test('removing a pin from an open editor cannot erase a pin moved elsewhere', as
     }, stops[0].id),
   ).toMatchObject({ lat: 44.8, lng: 11.8 });
 });
+
+test('deleted stop writes fail and NAS deletion keeps the open drafts recoverable', async ({
+  makeContext,
+}) => {
+  const nas = new FakeNas();
+  const phone = await device(makeContext, nas);
+  const mac = await device(makeContext, nas);
+  const { id, stops } = await seed(phone);
+  const stopId = stops[0].id;
+  expect((await sync(phone)).ok).toBe(true);
+  expect((await sync(mac)).ok).toBe(true);
+  await phone.goto(`/#/trip/${id}/stops/${stopId}`);
+  await expect(phone.getByLabel('Notes', { exact: true })).toHaveValue('The square.');
+  await phone.getByText('Map location', { exact: true }).click();
+  await phone.getByLabel('Latitude', { exact: true }).fill('44.6789');
+  await mac.evaluate(async (stopId) => {
+    const { deleteStop } = await import('/src/lib/stops.ts');
+    await deleteStop(stopId);
+  }, stopId);
+  expect((await sync(mac)).ok).toBe(true);
+  expect((await sync(phone)).ok).toBe(true);
+  await expect(phone.getByRole('alert')).toContainText('deleted elsewhere');
+  await expect(phone.getByLabel('Notes draft', { exact: true })).toHaveValue('The square.');
+  await expect(phone.getByLabel('Latitude draft', { exact: true })).toHaveValue('44.6789');
+  await expect(phone.getByText('Saved ✓', { exact: true })).toHaveCount(0);
+  const results = await phone.evaluate(async (stopId) => {
+    const { updateStop, placeStop, setVisitTime } = await import('/src/lib/stops.ts');
+    const { db } = await import('/src/lib/db.ts');
+    const writes = [
+      () => updateStop(stopId, { notes: 'Never recreate this stop' }),
+      () => updateStop(stopId, { cityId: null }),
+      () => placeStop(stopId, { lat: 44, lng: 11 }),
+      () => placeStop(stopId, null),
+      () => setVisitTime(stopId, Date.now()),
+    ];
+    const errors = [];
+    for (const write of writes) {
+      try {
+        await write();
+        errors.push('false success');
+      } catch (err) {
+        errors.push((err as Error).message);
+      }
+    }
+    return { errors, exists: !!(await db.stops.get(stopId)) };
+  }, stopId);
+  expect(results.exists).toBe(false);
+  expect(results.errors).toHaveLength(5);
+  for (const error of results.errors) expect(error).toContain('deleted elsewhere');
+  await phone
+    .locator('.stop-detail')
+    .getByRole('button', { name: 'Back to Stops', exact: true })
+    .click();
+  await expect(phone.getByRole('button', { name: /Archiginnasio/ }).first()).toBeVisible();
+});

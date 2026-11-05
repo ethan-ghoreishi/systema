@@ -1,4 +1,7 @@
 import { db, type City, type Moment, type Stop } from './db';
+import { instantToWall, wallLabel } from './tz';
+import { activeLegId, tripEndIso } from './trip-shape';
+import type { Trip } from './db';
 import { newId } from './ids';
 import { deletePhotosWhere } from './photos';
 
@@ -14,6 +17,7 @@ export interface MomentInput {
   title: string;
   note?: string;
   at?: number;
+  timePrecision?: Moment['timePrecision'];
   stopId?: string | null;
 }
 
@@ -52,6 +56,7 @@ export async function addMoment(input: MomentInput): Promise<string> {
     title: input.title.trim(),
     note: (input.note ?? '').trim(),
     at: input.at ?? now,
+    ...(input.timePrecision ? { timePrecision: input.timePrecision } : {}),
     stopId,
     createdAt: now,
   };
@@ -95,9 +100,37 @@ export function zoneOf(
   return cities.find((c) => c.id === record.cityId)?.tz ?? record.tz;
 }
 
+/** Retrospective capture never guesses an event time from the creation time. */
+export function retrospective(trip: Trip, cities: City[], now = Date.now()): boolean {
+  const end = tripEndIso(trip, cities);
+  const zone = cities.find((c) => c.id === activeLegId(cities, now))?.tz;
+  return trip.status === 'done' || !!(end && end < instantToWall(now, zone).slice(0, 10));
+}
+
+/** Untimed memories follow timed ones; creation order is only a stable display order. */
+export function compareMoments(a: Moment, b: Moment): number {
+  return (
+    Number(a.timePrecision === 'unknown') - Number(b.timePrecision === 'unknown') ||
+    (a.timePrecision === 'unknown' ? a.createdAt - b.createdAt : a.at - b.at) ||
+    a.id.localeCompare(b.id)
+  );
+}
+
+export function momentWhen(
+  m: Pick<Moment, 'at' | 'timePrecision' | 'cityId' | 'tz'>,
+  cities: City[],
+  short = false,
+): string {
+  if (m.timePrecision === 'unknown') return 'Event time unknown';
+  const wall = instantToWall(m.at, zoneOf(m, cities));
+  if (m.timePrecision === 'approximate') return `Around ${wallLabel(wall.slice(0, 10))}`;
+  if (m.timePrecision === 'date') return `${wallLabel(wall.slice(0, 10))} · time unknown`;
+  return short ? wall.slice(11, 16) : wallLabel(wall);
+}
+
 export type TimelineItem =
   | { kind: 'stop'; stop: Stop; at?: number }
-  | { kind: 'moment'; moment: Moment; at: number };
+  | { kind: 'moment'; moment: Moment; at?: number };
 
 /** Places actually visited. Unknown times are grouped by leg, never inferred from Moments. */
 export function visitedPlaces(stops: Stop[], cities: City[]) {
@@ -137,7 +170,7 @@ function plannedTimeline(stops: Stop[], moments: Moment[], cities: City[]): Time
   // decides where a later one goes.
   const atAStop = (m: Moment) =>
     !!m.stopId && out.some((it) => it.kind === 'stop' && it.stop.id === m.stopId);
-  for (const m of [...moments].sort((a, b) => a.at - b.at)) {
+  for (const m of [...moments].sort(compareMoments)) {
     // Part of a planned stop: with it, after anything already placed there.
     const linked = atAStop(m)
       ? out.findIndex((it) => it.kind === 'stop' && it.stop.id === m.stopId)
@@ -150,6 +183,10 @@ function plannedTimeline(stops: Stop[], moments: Moment[], cities: City[]): Time
       )
         at += 1;
       out.splice(at + 1, 0, { kind: 'moment', moment: m, at: m.at });
+      continue;
+    }
+    if (m.timePrecision) {
+      out.push({ kind: 'moment', moment: m });
       continue;
     }
     let idx = -1;
@@ -169,7 +206,8 @@ function plannedTimeline(stops: Stop[], moments: Moment[], cities: City[]): Time
     }
     // Moments keep their own time order.
     out.forEach((it, i) => {
-      if (it.kind === 'moment' && it.at <= m.at && !atAStop(it.moment)) idx = Math.max(idx, i);
+      if (it.kind === 'moment' && it.at != null && it.at <= m.at && !atAStop(it.moment))
+        idx = Math.max(idx, i);
     });
     // Never land between a stop and the moments that are part of it.
     while (out[idx + 1]?.kind === 'moment' && atAStop((out[idx + 1] as { moment: Moment }).moment))
@@ -234,8 +272,12 @@ export function stopGroups(
       key,
       items: loose
         .filter((m) => groupKey(m, cities) === key)
-        .sort((a, b) => a.at - b.at)
-        .map((moment) => ({ kind: 'moment' as const, moment, at: moment.at })),
+        .sort(compareMoments)
+        .map((moment) => ({
+          kind: 'moment' as const,
+          moment,
+          at: moment.timePrecision === 'unknown' ? undefined : moment.at,
+        })),
     });
   return out;
 }

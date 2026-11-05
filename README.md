@@ -275,26 +275,13 @@ receiver — plus the real PHP receiver (current, previous and original) in CI.
 
 ### On the iPhone (what emulation can't show)
 
-After a deploy, on the installed app (Add to Home Screen):
+Use the consolidated [iPhone and Mac acceptance walkthrough](docs/iphone-mac-acceptance.md)
+after deployment. It uses one disposable trip, takes about 20 minutes, and covers
+Safari and the installed app, Google Maps return, keyboard/navigation, Visited,
+Moments/camera, booking/Expenses and real NAS sync, with cleanup.
 
-1. Scroll a long Stops list hard, both ways: the top bar and tab bar stay
-   exactly put; no rubber-band of the whole page.
-2. Double-tap a chip, a keypad key and the gap between buttons: no zoom.
-   Pinch still zooms.
-3. Add an expense; type in Description and close the keyboard: Cancel/Save
-   stay at the top, and the page is back in place after the keyboard goes.
-   Then open Add an option (Considering → a destination) and tap the last
-   field: the keyboard opens _below_ it, not over it.
-4. Research prompt → Research a city: "copied" appears; paste in Claude. (If
-   it ever refuses, a sheet shows the text to copy or share.)
-5. Open a stop from far down the list, then the header's ‹ Stops: same place.
-6. Next departure → Calendar reminders: the .ics opens with "Add All" (or use
-   Share… → Calendar/Files).
-7. What happened? → Choose from library → pick several: they appear in the
-   order taken. Export → Share the photos for Claude: the share sheet lists
-   them numbered.
-8. Settings → Backup → Test connection on home wifi and away: each line says
-   what it found.
+See the [focused reliability review](docs/reliability-review.md) for confirmed
+findings, compatibility decisions and the limits of automated iPhone evidence.
 
 ## Hosting
 

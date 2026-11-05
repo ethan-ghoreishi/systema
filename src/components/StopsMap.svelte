@@ -184,6 +184,15 @@
     return el;
   }
 
+  let saveError = $state('');
+  function savePin(write: Promise<void>) {
+    saveError = '';
+    void write.catch((err) => {
+      saveError = `Not saved: ${err instanceof Error ? err.message : String(err)}`;
+      redraw();
+    });
+  }
+
   function redraw() {
     if (!map || !layer) return;
     layer.clearLayers();
@@ -217,7 +226,7 @@
               s.visited ? 'Visited' : 'Not visited',
               ...momentsAt(s.id).map((mo) => `Moment: ${mo.title}`),
             ],
-            () => void placeStop(s.id, null),
+            () => savePin(placeStop(s.id, null)),
             readonly ? undefined : { href: `#/trip/${s.tripId}/stops/${s.id}`, label: 'Open stop' },
             mapsLink(s, cities),
           ),
@@ -225,7 +234,7 @@
         if (!readonly) {
           m.on('dragend', () => {
             const p = m.getLatLng();
-            void placeStop(s.id, { lat: round6(p.lat), lng: round6(p.lng) });
+            savePin(placeStop(s.id, { lat: round6(p.lat), lng: round6(p.lng) }));
           });
         }
         layer!.addLayer(m);
@@ -268,7 +277,7 @@
     const { kind, id } = placing;
     placing = null;
     const pos = { lat: round6(e.latlng.lat), lng: round6(e.latlng.lng) };
-    void (kind === 'stop' ? placeStop(id, pos) : placeMoment(id, pos));
+    savePin(kind === 'stop' ? placeStop(id, pos) : placeMoment(id, pos));
   }
 
   function setInteractive(on: boolean) {
@@ -341,6 +350,7 @@
     </div>
   {/if}
 
+  {#if saveError}<p role="alert" class="hint hint--warn">{saveError}</p>{/if}
   <div class="map-box">
     <div class="map-canvas" bind:this={mapEl}></div>
     {#if !exploring}

@@ -20,7 +20,14 @@
   } from '../../lib/stops';
   import { addPhotos, deletePhoto, downloadPhoto, photoTime } from '../../lib/photos';
   import { instantToWall, wallToInstant, wallLabel } from '../../lib/tz';
-  import { GONE, stopGroups, visitedPlaces, zoneOf } from '../../lib/moments';
+  import {
+    GONE,
+    stopGroups,
+    visitedPlaces,
+    zoneOf,
+    compareMoments,
+    momentWhen,
+  } from '../../lib/moments';
   import { hasPin, mapsLink } from '../../lib/maps';
   import { tripEndIso } from '../../lib/trip-shape';
   import { nasBackup } from '../../lib/nas.svelte';
@@ -71,7 +78,7 @@
   const citiesQ = liveQuery(() => db.cities.where('tripId').equals(trip.id).sortBy('order'));
   const photosQ = liveQuery(() => db.photos.where('tripId').equals(trip.id).toArray());
   const momentsQ = liveQuery(() => db.moments.where('tripId').equals(trip.id).sortBy('at'));
-  const moments = $derived($momentsQ ?? []);
+  const moments = $derived([...($momentsQ ?? [])].sort(compareMoments));
   let editingMoment = $state<Moment | null>(null);
   const stops = $derived($stopsQ ?? []);
   const cities = $derived($citiesQ ?? []);
@@ -118,7 +125,7 @@
   const stopNameById = $derived(new Map(stops.map((s) => [s.id, s.name])));
 
   function momentTime(m: Moment): string {
-    return instantToWall(m.at, zoneOf(m, cities)).slice(11, 16);
+    return momentWhen(m, cities, true);
   }
 
   // Detail selection via the route: #/trip/:id/stops/:stopId
@@ -166,6 +173,13 @@
     if (savedTimer) clearTimeout(savedTimer);
     savedTimer = setTimeout(() => (savedAt = null), 2000);
   }
+
+  $effect(() => {
+    if (selectedId && draftsFor === selectedId && $stopsQ && !selected) {
+      draftBlocked = true;
+      failed(new Error('This stop was deleted elsewhere. Your unsaved drafts are below'));
+    }
+  });
 
   // ---- list ----
   let newStopName = $state('');
@@ -696,6 +710,23 @@
       </button>
     </div>
   </div>
+{:else if selectedId && draftsFor === selectedId && $stopsQ}
+  <div class="stop-detail">
+    <p role="alert" class="hint hint--warn">{saveError}</p>
+    <p class="hint">
+      Autosave paused. Copy anything you want to keep before leaving. The stop has not been
+      recreated.
+    </p>
+    <label class="label" for="deleted-name">Stop name draft</label>
+    <input id="deleted-name" class="field" value={nameDraft} readonly />
+    <label class="label" for="deleted-notes">Notes draft</label>
+    <textarea id="deleted-notes" class="field" rows="4" value={notesDraft} readonly></textarea>
+    <label class="label" for="deleted-lat">Latitude draft</label>
+    <input id="deleted-lat" class="field" value={latDraft} readonly />
+    <label class="label" for="deleted-lng">Longitude draft</label>
+    <input id="deleted-lng" class="field" value={lngDraft} readonly />
+    <button class="btn btn--primary" onclick={backToList}>Back to Stops</button>
+  </div>
 {:else}
   <!-- List / Map -->
   <div class="stops">
@@ -794,14 +825,15 @@
         {#if moments.length}
           <h2 class="section-title">Moments</h2>
           <p class="hint">
-            Observations, experiences and discoveries, in their own recorded time order.
+            Observations, experiences and discoveries. Known dates first; unknown event times last,
+            without an implied order.
           </p>
           <div class="stop-list moment-history">
             {#each moments as m (m.id)}
               <button class="stop-row moment-row" onclick={() => (editingMoment = m)}>
                 <span class="stop-name">{m.title}</span>
                 <span class="stop-meta"
-                  >{wallLabel(instantToWall(m.at, zoneOf(m, cities)))} · {groupLabel(
+                  >{momentWhen(m, cities)} · {groupLabel(
                     m.cityId || (m.legName ? GONE + m.legName : null),
                   )}{m.stopId && stopNameById.has(m.stopId)
                     ? ` · at ${stopNameById.get(m.stopId)}`

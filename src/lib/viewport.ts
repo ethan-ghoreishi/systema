@@ -37,24 +37,32 @@ export function initViewport(): void {
   const vv = window.visualViewport;
   const root = document.documentElement;
   const settle = () => {
+    if (vv && vv.scale !== 1) return;
     if (window.scrollY || root.scrollTop) window.scrollTo(0, 0);
   };
+  const update = () => {
+    if (vv && vv.scale !== 1) return;
+    const kb = vv ? Math.max(0, Math.round(window.innerHeight - vv.height)) : 0;
+    root.style.setProperty('--kb', `${kb}px`);
+    if (kb === 0 && !focusedField()) settle();
+    else {
+      const el = focusedField();
+      // Next frame: lay out the keyboard padding before scrolling the pane.
+      if (el) requestAnimationFrame(() => reveal(el));
+    }
+  };
   if (vv) {
-    const update = () => {
-      const kb = Math.max(0, Math.round(window.innerHeight - vv.height));
-      root.style.setProperty('--kb', `${kb}px`);
-      if (kb === 0 && !focusedField()) settle();
-      else {
-        const el = focusedField();
-        // Next frame: the padding that `--kb` just grew has to be laid out
-        // before the pane can scroll that far.
-        if (el) requestAnimationFrame(() => reveal(el));
-      }
-    };
     vv.addEventListener('resize', update);
     vv.addEventListener('scroll', update);
-    update();
   }
+  // Returning from Maps, the app switcher or the back/forward cache need not
+  // deliver a visualViewport event. Re-read rather than keeping a stale keyboard.
+  window.addEventListener('resize', update);
+  window.addEventListener('pageshow', update);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') update();
+  });
+  update();
   // Moving between fields while the keyboard is already open fires no resize,
   // so nothing above would run: reveal the new field on its own.
   document.addEventListener('focusin', (e) => {

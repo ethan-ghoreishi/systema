@@ -1,4 +1,27 @@
-/** Small currency-display helpers (pure). */
+/** Small currency helpers (pure). */
+
+export const MONEY_HINT =
+  'Use 12.50 or 12,50. For thousands, use 1234.56, 1,234.56 or 1.234,56. A lone separator with three digits after it is ambiguous.';
+
+/** Refuse ambiguous grouping and partial numbers rather than guessing what was paid. */
+export function parseMoney(value: string): number | null {
+  const v = value
+    .trim()
+    .replace(/^£\s*/, '')
+    .replace(/[\u00a0\u202f]/g, ' ');
+  let normal: string;
+  if (/^(?:\d+(?:[.,]\d{0,2})?|[.,]\d{1,2})$/.test(v)) normal = v.replace(',', '.');
+  else if (/^\d{1,3}(?:,\d{3})+\.\d{1,2}$/.test(v)) normal = v.replaceAll(',', '');
+  else if (/^\d{1,3}(?:\.\d{3})+,\d{1,2}$/.test(v))
+    normal = v.replaceAll('.', '').replace(',', '.');
+  else if (/^\d{1,3}(?: \d{3})+(?:[.,]\d{1,2})?$/.test(v))
+    normal = v.replaceAll(' ', '').replace(',', '.');
+  else if (/^\d{1,3}(?:,\d{3}){2,}$/.test(v)) normal = v.replaceAll(',', '');
+  else if (/^\d{1,3}(?:\.\d{3}){2,}$/.test(v)) normal = v.replaceAll('.', '');
+  else return null;
+  const n = Number(normal);
+  return Number.isFinite(n) && n <= Number.MAX_SAFE_INTEGER / 100 ? n : null;
+}
 
 const SYMBOLS: Record<string, string> = {
   GBP: '£',

@@ -23,7 +23,7 @@
     type ExpenseTemplate,
   } from '../lib/expense-defaults';
   import { categories, subcategories, paymentMethods } from '../lib/vocab';
-  import { formatAmount, formatGBP, perPersonNote } from '../lib/money';
+  import { formatAmount, formatGBP, perPersonNote, parseMoney, MONEY_HINT } from '../lib/money';
   import { needWords } from '../lib/needs';
   import { quoteMatchesParty } from '../lib/quotes';
   import { todayIso } from '../lib/sheet';
@@ -164,13 +164,10 @@
   const isGBP = $derived(currency === 'GBP');
   /** No rate for this currency is ever coming, so asking for the £ is the honest move. */
   const noRateEver = $derived(!isGBP && !ecbPublishes(currency));
-  const localNum = $derived(parseFloat(amountStr) || 0);
+  const localNum = $derived(parseMoney(amountStr) ?? 0);
   const computedGBP = $derived(isGBP ? localNum : rate != null ? round2(localNum * rate) : null);
-  const overrideNum = $derived(
-    !isGBP && overrideGBP.trim() && Number.isFinite(Number(overrideGBP))
-      ? Number(overrideGBP)
-      : null,
-  );
+  const overrideNum = $derived(!isGBP ? parseMoney(overrideGBP) : null);
+  const invalidOverride = $derived(!isGBP && !!overrideGBP.trim() && !(overrideNum! > 0));
   // One pure decision (expenses.ts) for what the row's £ becomes: the amount in
   // pounds, the rate, or a £ typed by hand — and the £ already recorded when
   // nothing that decided it has moved.
@@ -203,6 +200,7 @@
   // Only currencies with a published rate may wait for automatic pricing.
   const canSave = $derived(
     !saving &&
+      !invalidOverride &&
       Number.isFinite(localNum) &&
       localNum > 0 &&
       !(noRateEver && priced.fxPending) &&
@@ -430,7 +428,7 @@
               role="alert"
             >
               Enter the GBP total from your statement — £0 would leave this payment out of every
-              total.
+              total. {MONEY_HINT}
             </p>{:else if manualGBP}<p class="hint">
               The £ was entered by hand and is kept; change it here if needed.
             </p>{/if}
@@ -565,7 +563,7 @@
           </div>
           {#if overrideGBP.trim() && !(overrideNum != null && overrideNum > 0)}
             <p class="hint hint--warn" role="alert">
-              Type a £ amount above zero, or leave it blank for the rate.
+              Type a £ amount above zero, or leave it blank for the rate. {MONEY_HINT}
             </p>
           {:else if manualGBP}
             <p class="hint">The £ was entered by hand and is kept; change it here if needed.</p>

@@ -291,8 +291,11 @@ export interface Moment {
   cityId: string | null;
   title: string;
   note: string;
-  /** When it happened (ms). */
+  /** Event instant (ms); bookkeeping only when timePrecision is unknown. */
   at: number;
+  /** Absent means the original exact timestamp. Optional for older backups/devices. */
+  // shortcut: older builds display only at; update both devices before using time precision.
+  timePrecision?: 'date' | 'approximate' | 'unknown';
   stopId: string | null;
   /** The zone `at` is read in, kept only when its leg is deleted (see Stop.tz). */
   tz?: string;

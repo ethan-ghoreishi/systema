@@ -15,7 +15,7 @@
   import { priceEntry } from '../lib/expenses';
   import { ecbPublishes, getRate } from '../lib/fx';
   import { FARE_CURRENCIES } from '../lib/currencies';
-  import { formatGBP } from '../lib/money';
+  import { formatGBP, parseMoney, MONEY_HINT } from '../lib/money';
   import { isManualGBP } from '../lib/expense-defaults';
   import { todayIso } from '../lib/sheet';
 
@@ -158,16 +158,15 @@
     };
   });
 
-  const num = (v: string) => {
-    const n = Number(v.replace(/[£,\s]/g, ''));
-    return v.trim() && Number.isFinite(n) && n > 0 ? n : 0;
-  };
+  const num = (v: string) => parseMoney(v) ?? 0;
   const money = $derived(recordingPayment ? num(amount) : 0);
+  const invalidAmount = $derived(!!amount.trim() && parseMoney(amount) == null);
   const isGBP = $derived(currency === 'GBP');
   const needsPounds = $derived(!isGBP && money > 0 && rate == null);
   // Never hidden while it decides the figure: a hand-typed £ survives a rate
   // arriving, so the sheet keeps it where it can be seen and changed.
   const showPounds = $derived(!isGBP && money > 0 && (rate == null || gbpTouched));
+  const invalidPounds = $derived(showPounds && !!gbp.trim() && !(parseMoney(gbp)! > 0));
   // A payment for this arrived after the sheet was filled (another device, or
   // another tab). What is on screen was typed against a row that had none.
   const paidElsewhere = $derived(wasUnpaid && !!row && !row.skeleton);
@@ -230,6 +229,8 @@
   // A free reservation has nothing to type: saving it *is* the record.
   const valid = $derived(
     prefilled &&
+      !invalidAmount &&
+      !invalidPounds &&
       !mustTypePounds &&
       !wouldReplace &&
       (need.kind === 'book' ||
@@ -340,6 +341,9 @@
             </select>
           </div>
         </div>
+        {#if invalidAmount || invalidPounds}
+          <p class="hint hint--warn" role="alert">Enter a valid amount. {MONEY_HINT}</p>
+        {/if}
         {#if showPounds}
           <label class="label" for="book-gbp">Amount (GBP){rate != null ? ' override' : ''}</label>
           <input

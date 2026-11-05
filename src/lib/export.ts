@@ -1,7 +1,7 @@
 import type { Table } from 'dexie';
 import { validateBackup } from './backup-validation';
 import { photoExt, photoRef, photoRefs, photoTime } from './photos';
-import { GONE, visitedPlaces, zoneOf } from './moments';
+import { GONE, visitedPlaces, zoneOf, compareMoments, momentWhen } from './moments';
 import { instantToWall, wallLabel } from './tz';
 import { isZip, unzip, verifyZip, zip } from './zip';
 import {
@@ -190,14 +190,14 @@ export function buildTripPack({
     lines.push(
       '## Moments (recorded time order)',
       '',
-      'Moments are observations, experiences or discovered sites. A link to a place is context, not proof of its visit time.',
+      'Moments are observations, experiences or discovered sites. A link to a place is context, not proof of its visit time. Approximate dates are estimates; unknown event times are listed last and imply no chronology.',
       '',
     );
-    for (const m of [...moments].sort((a, b) => a.at - b.at || a.id.localeCompare(b.id))) {
+    for (const m of [...moments].sort(compareMoments)) {
       const c = cityById.get(m.cityId ?? '');
       const refs = refsFor((p) => p.momentId === m.id);
       const bits = [
-        `- ${localStamp(m.at, zoneOf(m, cities))}${c ? `, ${c.name}` : ''}: **${m.title}**`,
+        `- ${momentWhen(m, cities)}${c ? `, ${c.name}` : ''}: **${m.title}**`,
         m.note ? `. ${m.note}` : '',
         m.stopId && stopName.get(m.stopId) ? ` (at ${stopName.get(m.stopId)})` : '',
         refs.length ? ` [photos: ${refs.join(', ')}]` : '',
@@ -241,7 +241,7 @@ export const JOURNAL_PROMPT =
   'brief counterfactual on what I would do differently. Plain UK English, no em-dashes. ' +
   'Treat unvisited stops as plans, not experiences. Use recorded visit times where available. Untimed places are grouped by leg and listed in planned order for reference, not actual chronology. ' +
   'Never infer a visit time from a linked Moment, a ticket, an expense or the plan. Ask me if missing chronology matters. ' +
-  'Moments may be observations at a stop, standalone experiences or discovered sites. Weave them naturally into the story without treating each as a separate place visit. ' +
+  'Never infer event times for untimed Moments or treat approximate dates as exact. Moments may be observations at a stop, standalone experiences or discovered sites. Weave them naturally into the story without treating each as a separate place visit. ' +
   'I have attached my photographs in the order of the Photos section, which gives each one a reference ' +
   'such as P-3f9a1c, with where and when it was taken. Where a photograph would naturally illustrate ' +
   'the narrative, insert a placeholder on its own line exactly as listed, for example [photo: P-3f9a1c]. ' +
@@ -302,14 +302,17 @@ export function buildMemoryPrompt(
 
   if (moments.length) {
     lines.push('## Moments (recorded time order)', '');
-    for (const m of [...moments].sort((a, b) => a.at - b.at || a.id.localeCompare(b.id))) {
+    for (const m of [...moments].sort(compareMoments)) {
       const place = stops.find((s) => s.id === m.stopId)?.name;
       const leg = cities.find((c) => c.id === m.cityId)?.name ?? m.legName;
       lines.push(
-        `- ${localStamp(m.at, zoneOf(m, cities))}${leg ? `, ${leg}` : ''}: ${m.title}${m.note ? `. ${m.note}` : ''}${place ? ` (at ${place})` : ''}`,
+        `- ${momentWhen(m, cities)}${leg ? `, ${leg}` : ''}: ${m.title}${m.note ? `. ${m.note}` : ''}${place ? ` (at ${place})` : ''}`,
       );
     }
-    lines.push('Moments provide context, not a visit time for a linked place.', '');
+    lines.push(
+      'Moments provide context, not a visit time for a linked place. Approximate dates are estimates; unknown event times are listed last and imply no chronology.',
+      '',
+    );
   }
 
   if (real.length) {

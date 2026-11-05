@@ -245,7 +245,12 @@ test('unsupported-currency Expenses require a visible GBP amount and retain the 
   await page.getByRole('button', { name: '2', exact: true }).click();
   await page.getByRole('button', { name: 'Museum', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
-  await page.getByLabel('Amount (GBP)', { exact: true }).fill('13.5');
+  const amount = page.getByLabel('Amount (GBP)', { exact: true });
+  for (const invalid of ['1,234', '12oops']) {
+    await amount.fill(invalid);
+    await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
+  }
+  await amount.fill('13,50');
   await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.locator('dialog[open]')).toHaveCount(0);
   await expect(page.locator('.expense-row')).toContainText('£13.50');
