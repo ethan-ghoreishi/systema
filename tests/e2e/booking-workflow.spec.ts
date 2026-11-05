@@ -701,3 +701,27 @@ test('a confirmed quote never replaces a payment that arrived while the sheet wa
   await page.getByRole('button', { name: 'Cancel' }).click();
   await expect(page.locator('.total-value')).toHaveText('£91.00');
 });
+
+test('erasing the last booking detail saves the clear instead of disabling Save', async ({
+  page,
+}) => {
+  const { id, cityId } = await seed(page);
+  await page.evaluate(async (cityId) => {
+    const { db } = await import('/src/lib/db.ts');
+    await db.cities.update(cityId, { sleep: 'hotel', base: { name: 'The wrong hotel' } });
+  }, cityId);
+  await page.goto(`/#/trip/${id}/plan`);
+  // Chosen but not held, so it is still outstanding.
+  await need(page, 'Somewhere to stay in Faro').getByRole('button').click();
+  const name = page.getByLabel('Where you are staying');
+  await expect(name).toHaveValue('The wrong hotel');
+  await name.fill('');
+  await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeEnabled();
+  await save(page);
+  expect(
+    await page.evaluate(async (cityId) => {
+      const { db } = await import('/src/lib/db.ts');
+      return (await db.cities.get(cityId))!.base?.name ?? null;
+    }, cityId),
+  ).toBeFalsy();
+});

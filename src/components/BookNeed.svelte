@@ -195,6 +195,20 @@
   const spec = $derived(need.book);
 
   const wouldReplace = $derived(paidElsewhere && money > 0);
+  // Anything on this sheet that no longer says what the trip says. Emptying
+  // the last detail is a change worth saving: this sheet is where a wrong
+  // hotel name or a provider that was never going to be comes back off.
+  const changed = $derived(
+    !!context &&
+      (ref !== (context.ref ?? '') ||
+        place !== (context.place ?? '') ||
+        transport !== (context.plan.transport ?? '') ||
+        journeyMin !== (context.plan.journeyMin?.toString() ?? '') ||
+        transferAt !== (context.plan.transferAt ?? '') ||
+        transferArr !== (context.plan.transferArr ?? '') ||
+        payOnDay !== (context.plan.payOnDay ?? false) ||
+        bothWays !== context.bothWays),
+  );
   // A free reservation has nothing to type: saving it *is* the record.
   const valid = $derived(
     prefilled &&
@@ -202,12 +216,12 @@
       !wouldReplace &&
       (need.kind === 'book' ||
         money > 0 ||
+        changed ||
         !!ref.trim() ||
         !!transport.trim() ||
         !!place.trim() ||
         !!journeyMin.trim() ||
-        !!transferAt.trim() ||
-        ref !== (context?.ref ?? '')),
+        !!transferAt.trim()),
   );
 
   async function save() {
