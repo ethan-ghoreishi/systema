@@ -381,11 +381,12 @@ test('deleting the last place from Visited leaves Stops usable, not stuck on an 
 test('an old trip records a visit without inventing today, and a mistaken time can be cleared', async ({
   page,
 }) => {
-  const { id, stops } = await seed(page);
-  await page.evaluate(async (id) => {
-    const { updateTrip } = await import('/src/lib/trips.ts');
-    await updateTrip(id, { endDate: '2020-01-02' });
-  }, id);
+  const { id, cityId, stops } = await seed(page);
+  // A legs-based trip: the dates live on the leg, not in the trip's fallback.
+  await page.evaluate(async (cityId) => {
+    const { updateCity } = await import('/src/lib/trips.ts');
+    await updateCity(cityId, { arrival: '2020-01-01T10:00', departure: '2020-01-02T18:00' });
+  }, cityId);
   await page.goto(`/#/trip/${id}/stops`);
   await page
     .locator('.stop-row', { hasText: 'Piazza Maggiore' })
@@ -398,7 +399,7 @@ test('an old trip records a visit without inventing today, and a mistaken time c
   await page.getByLabel('Actual visit time').fill('2020-01-02T10:00');
   await page.getByRole('button', { name: 'Save visit time' }).click();
   await page.getByRole('button', { name: 'Change visit time' }).click();
-  await page.getByRole('button', { name: 'Visit time unknown', exact: true }).click();
+  await page.getByRole('button', { name: 'Clear visit time', exact: true }).click();
   const saved = await page.evaluate(async (stopId) => {
     const { buildDataBackup } = await import('/src/lib/export.ts');
     return (await buildDataBackup()).stops.find((s) => s.id === stopId);

@@ -242,7 +242,7 @@ describe('buildTripPack', () => {
       ],
     );
     expect(memory).toContain(visits.trim());
-    expect(memory).toContain('Do not infer chronology');
+    expect(memory).toContain('never as recorded visit times');
     expect(memory).toContain('Concert. Keep this observation (at Square)');
     expect(JOURNAL_PROMPT).toContain('Never infer a visit time from a linked Moment');
   });

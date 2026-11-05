@@ -107,7 +107,11 @@ function visitedPlaceLines(stops: Stop[], cities: City[]): string[] {
     lines.push(
       '### Recorded visit times',
       '',
-      'In recorded time order. Numbering covers these places only; untimed visits may fall anywhere. A tap records the marking time unless corrected.',
+      'In recorded time order.' +
+        (history.untimed.length
+          ? ' Numbering covers these places only; untimed visits may fall anywhere.'
+          : '') +
+        ' A tap records the marking time unless corrected.',
       '',
     );
     history.timed.forEach((s, i) =>
@@ -286,9 +290,13 @@ export function buildMemoryPrompt(
     '',
   );
 
-  lines.push(...visitedPlaceLines(stops, cities));
+  const places = visitedPlaceLines(stops, cities);
+  lines.push(...places);
+  // This prompt rebuilds a trip from its expense trail, so dates are clues by
+  // design: they must stay labelled as inferred, not become recorded visits.
   lines.push(
-    'Visit times may be missing or reflect a late marking. Do not infer chronology from planned order or ticket dates. Ask me when the order matters.',
+    (places.length ? 'Visit times may be missing or reflect a late marking. ' : '') +
+      'Treat ticket and expense dates as clues to the order, never as recorded visit times: say when an order is your inference, and ask me when it matters.',
     '',
   );
 

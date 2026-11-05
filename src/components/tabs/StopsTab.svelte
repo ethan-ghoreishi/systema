@@ -22,6 +22,7 @@
   import { instantToWall, wallToInstant, wallLabel } from '../../lib/tz';
   import { GONE, stopGroups, visitedPlaces, zoneOf } from '../../lib/moments';
   import { hasPin, mapsLink } from '../../lib/maps';
+  import { tripEndIso } from '../../lib/trip-shape';
   import { nasBackup } from '../../lib/nas.svelte';
   import PhotoPicker from '../PhotoPicker.svelte';
   import MomentCapture from '../MomentCapture.svelte';
@@ -279,26 +280,30 @@
       pinBase = pos;
       flashSaved();
     } catch (err) {
-      failed(err);
+      draftFailed(err);
     }
   }
   async function markVisited(s: Stop) {
     saveError = '';
     try {
-      // A historical marking says we went, not that we went today.
+      // A historical marking says we went, not that we went today. The trip's
+      // end date comes from its legs; `endDate` is only the fallback.
       const today = instantToWall(Date.now(), zoneOf(s, cities)).slice(0, 10);
-      await toggleVisited(
-        s,
-        trip.status === 'done' || (trip.endDate && trip.endDate < today) ? null : Date.now(),
-      );
+      const end = tripEndIso(trip, cities);
+      await toggleVisited(s, trip.status === 'done' || (end && end < today) ? null : Date.now());
     } catch (err) {
       failed(err);
     }
   }
   function failed(err: unknown) {
-    draftBlocked = true;
     savedAt = null;
     saveError = `Not saved: ${err instanceof Error ? err.message : String(err)}. Copy your text before leaving.`;
+  }
+  // Only the fields being typed are held back: an unrelated write failing is
+  // no reason to make the traveller discard a draft that never conflicted.
+  function draftFailed(err: unknown) {
+    draftBlocked = true;
+    failed(err);
   }
   function saveName() {
     if (!selected || draftBlocked) return;
@@ -306,7 +311,7 @@
     const name = nameDraft.trim() || 'Untitled stop';
     const saving = updateStop(selected.id, { name }, { name: nameBase });
     nameBase = name;
-    void saving.then(flashSaved).catch(failed);
+    void saving.then(flashSaved).catch(draftFailed);
   }
 
   function saveCity(cityId: string | null) {
@@ -320,7 +325,7 @@
     saveError = '';
     const saving = updateStop(selected.id, { notes: notesDraft }, { notes: notesBase });
     notesBase = notesDraft;
-    void saving.then(flashSaved).catch(failed);
+    void saving.then(flashSaved).catch(draftFailed);
   }
 
   function reloadDetails() {
@@ -490,7 +495,7 @@
           {#if selected.visitedAt != null}<button
               class="link-btn"
               type="button"
-              onclick={clearVisitTime}>Visit time unknown</button
+              onclick={clearVisitTime}>Clear visit time</button
             >{/if}
         </form>
       {/if}
@@ -534,7 +539,7 @@
                     lngDraft = '';
                     flashSaved();
                   })
-                  .catch(failed);
+                  .catch(draftFailed);
             }}>Remove map location</button
           >{/if}
       </form>
@@ -759,8 +764,9 @@
           {#if history.timed.length}
             <h3 class="section-title">Recorded visit times</h3>
             <p class="hint">
-              In recorded time order. Numbering covers these places only; untimed visits may fall
-              anywhere. A tap records the marking time unless corrected.
+              In recorded time order.{history.untimed.length
+                ? ' Numbering covers these places only; untimed visits may fall anywhere.'
+                : ''} A tap records the marking time unless corrected.
             </p>
             {#each history.timed as s (s.id)}
               {@render visitedRow(s)}

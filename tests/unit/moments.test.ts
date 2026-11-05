@@ -117,6 +117,28 @@ describe('stopGroups', () => {
     expect(shape(stopGroups(stops, ms, cities))).toEqual([['blq', 'a', '*loose', 'b', '*at-b']]);
   });
 
+  // These rules used to be tested through the old shared timeline. The planned
+  // list still relies on them, so they keep their checks here.
+  it('keeps several memories at one place in time order, and places an orphaned one by time', () => {
+    const stops = [stop('a', 'blq', 0, 100), stop('b', 'blq', 1, 300)];
+    const ms = [moment('second', 'blq', 400, 'a'), moment('first', 'blq', 150, 'a')];
+    expect(shape(stopGroups(stops, ms, cities))).toEqual([['blq', 'a', '*first', '*second', 'b']]);
+    const orphan = moment('gone', 'blq', 200, 'deleted-stop');
+    expect(shape(stopGroups(stops, [orphan], cities))).toEqual([['blq', 'a', '*gone', 'b']]);
+  });
+
+  it('never puts a loose memory between a place and its own, whichever was written first', () => {
+    const planned = { ...stop('planned', 'blq', 0), visited: false };
+    const at = moment('at-planned', 'blq', 100, 'planned');
+    const loose = moment('loose', 'blq', 900);
+    expect(shape(stopGroups([planned], [at, loose], cities))).toEqual([
+      ['blq', 'planned', '*at-planned', '*loose'],
+    ]);
+    expect(shape(stopGroups([planned], [loose, at], cities))).toEqual([
+      ['blq', 'planned', '*at-planned', '*loose'],
+    ]);
+  });
+
   it('gives a leg with moments but no stops a group of its own', () => {
     const stops = [stop('a', 'blq', 0)];
     expect(shape(stopGroups(stops, [moment('market', 'bcn', 5)], cities))).toEqual([
