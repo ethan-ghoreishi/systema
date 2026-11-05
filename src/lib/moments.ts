@@ -99,57 +99,37 @@ export type TimelineItem =
   | { kind: 'stop'; stop: Stop; at?: number }
   | { kind: 'moment'; moment: Moment; at: number };
 
-/**
- * What happened, in the order it happened: timed visits in actual order, with
- * untimed historical visits kept afterwards in planned order. Linked moments
- * stay with their stop: they describe that visit, not a second visit.
- * The planned list (`visitedOnly: false`) keeps route order, with each
- * moment placed where it belongs — at the stop it is part of, else after the
- * last stop visited before it. Stops ticked by older versions have no visit
- * time; a moment then goes after its own city's stops. Pure.
- *
- * `visitedOnly` (the default) keeps the trip pack to places actually visited;
- * the Stops list passes false, so the same rule orders the list you tick.
- */
-export function visitTimeline(
-  stops: Stop[],
-  moments: Moment[],
-  cities: City[],
-  { visitedOnly = true }: { visitedOnly?: boolean } = {},
-): TimelineItem[] {
-  if (visitedOnly) {
-    const visited = stops.filter((s) => s.visited);
-    const linked = new Set(
-      moments.filter((m) => visited.some((s) => s.id === m.stopId)).map((m) => m.id),
-    );
-    const timed: TimelineItem[] = [
-      ...visited
-        .filter((s) => s.visitedAt != null)
-        .map((stop) => ({ kind: 'stop' as const, stop, at: stop.visitedAt })),
-      ...moments
-        .filter((m) => !linked.has(m.id))
-        .map((moment) => ({ kind: 'moment' as const, moment, at: moment.at })),
-    ];
-    const idOf = (it: TimelineItem) => (it.kind === 'stop' ? it.stop.id : it.moment.id);
-    timed.sort((a, b) => a.at! - b.at! || idOf(a).localeCompare(idOf(b)));
-    const untimed: TimelineItem[] = visited
-      .filter((s) => s.visitedAt == null)
-      .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id))
-      .map((stop) => ({ kind: 'stop', stop }));
-    return [...timed, ...untimed].flatMap((it) => [
-      it,
-      ...(it.kind === 'stop'
-        ? moments
-            .filter((m) => m.stopId === it.stop.id)
-            .sort((a, b) => a.at - b.at || a.id.localeCompare(b.id))
-            .map((moment) => ({ kind: 'moment' as const, moment, at: moment.at }))
-        : []),
-    ]);
-  }
+/** Places actually visited. Unknown times are grouped by leg, never inferred from Moments. */
+export function visitedPlaces(stops: Stop[], cities: City[]) {
+  const visited = stops.filter((s) => s.visited);
+  const timed = visited
+    .filter((s) => s.visitedAt != null)
+    .sort((a, b) => a.visitedAt! - b.visitedAt! || a.id.localeCompare(b.id));
+  const untimed = visited.filter((s) => s.visitedAt == null);
+  const keys = [
+    ...new Set([
+      ...[...cities].sort((a, b) => a.order - b.order).map((c) => c.id),
+      ...untimed.map((s) => groupKey(s, cities)),
+    ]),
+  ];
+  return {
+    timed,
+    untimed: keys
+      .map((key) => ({
+        key,
+        stops: untimed
+          .filter((s) => groupKey(s, cities) === key)
+          .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id)),
+      }))
+      .filter((g) => g.stops.length),
+  };
+}
+
+/** Planned route with linked Moments beside their stop and loose Moments in their leg. */
+function plannedTimeline(stops: Stop[], moments: Moment[], cities: City[]): TimelineItem[] {
   const cityRank = new Map([...cities].sort((a, b) => a.order - b.order).map((c, i) => [c.id, i]));
   const rank = (cityId: string | null) => cityRank.get(cityId ?? '') ?? Infinity;
   const out: TimelineItem[] = [...stops]
-    .filter((s) => !visitedOnly || s.visited)
     .sort((a, b) => a.order - b.order)
     .map((stop) => ({ kind: 'stop', stop, at: stop.visitedAt }));
 
@@ -219,7 +199,7 @@ export function groupKey(
  * orders them, each with the moments that belong to it — one that is part of
  * a planned stop joins the run holding that stop, wherever that is; the rest
  * join their own group's last run. Groups with only moments come after.
- * Within a run, `visitTimeline` decides the order. Pure.
+ * Within a run, `plannedTimeline` decides the order. Pure.
  */
 export function stopGroups(
   stops: Stop[],
@@ -241,11 +221,10 @@ export function stopGroups(
   };
   const out = runs.map((run, i) => ({
     key: run.key,
-    items: visitTimeline(
+    items: plannedTimeline(
       run.stops,
       moments.filter((m) => runOf(m) === i),
       cities,
-      { visitedOnly: false },
     ),
   }));
   // Groups with no stops of their own still have their place.

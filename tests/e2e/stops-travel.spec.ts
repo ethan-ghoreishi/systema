@@ -109,7 +109,7 @@ test('actual visit order, late correction and export remain separate from the pl
   await page.getByRole('button', { name: 'Download trip pack (.md)' }).click();
   const file = await download;
   const pack = readFileSync((await file.path())!, 'utf8');
-  const history = pack.split('## Visit order')[1];
+  const history = pack.split('## Places visited')[1];
   expect(history.indexOf('Piazza Maggiore')).toBeLessThan(history.indexOf('Archiginnasio'));
   expect(history).not.toContain('Due Torri');
   expect(pack).toContain('### Due Torri');
@@ -171,7 +171,7 @@ test('Stops views support arrow keys, labelled panels and restored focus', async
   await expect(page.getByRole('button', { name: 'Piazza Maggiore notes' })).toBeFocused();
 });
 
-test('historical visits with unknown time are explicit and linked Moments stay with their visit', async ({
+test('historical places stay separate from Moments and linked memories remain accessible', async ({
   page,
 }) => {
   const { id, cityId, stops } = await seed(page);
@@ -200,14 +200,42 @@ test('historical visits with unknown time are explicit and linked Moments stay w
     },
     { id, cityId, stops },
   );
+  await page.evaluate(async (id) => {
+    const { updateTrip } = await import('/src/lib/trips.ts');
+    await updateTrip(id, {
+      nameManual: 'London → Barcelona → Bologna → London: a historical trip',
+    });
+  }, id);
   await page.goto(`/#/trip/${id}/stops`);
   await page.getByRole('tab', { name: 'Visited', exact: true }).click();
   await expect(page.locator('.visit-history .stop-name')).toHaveText([
-    'An unexpected market',
     '1. Archiginnasio',
-    'A courtyard concert',
     'Piazza Maggiore',
   ]);
+  expect(
+    await page.evaluate(() => {
+      const shell = document.querySelector('.app-shell')!.getBoundingClientRect();
+      return [
+        ...document.querySelectorAll(
+          '.screen-body, .visit-history .stop-row, .moment-history .stop-row',
+        ),
+      ].every((e) => e.getBoundingClientRect().right <= shell.right + 1);
+    }),
+  ).toBe(true);
+  await expect(page.locator('.moment-history .stop-name')).toHaveText([
+    'A courtyard concert',
+    'An unexpected market',
+  ]);
+  await page.locator('.visit-history button', { hasText: 'Archiginnasio' }).click();
+  await page
+    .getByRole('region', { name: 'Moments at this place' })
+    .getByRole('button', { name: 'A courtyard concert' })
+    .click();
+  await expect(
+    page.getByRole('dialog').getByRole('heading', { name: 'Moment', exact: true }),
+  ).toBeVisible();
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await page.getByRole('button', { name: 'Back to Stops' }).click();
   await expect(page.locator('.visit-history button', { hasText: 'Piazza Maggiore' })).toContainText(
     'Visit time unknown',
   );
@@ -219,9 +247,7 @@ test('historical visits with unknown time are explicit and linked Moments stay w
     .click();
   await page.getByRole('tab', { name: 'Visited', exact: true }).click();
   await expect(page.locator('.visit-history .stop-name')).toHaveText([
-    'An unexpected market',
     '1. Archiginnasio',
-    'A courtyard concert',
     'Piazza Maggiore',
   ]);
 });
@@ -350,4 +376,124 @@ test('deleting the last place from Visited leaves Stops usable, not stuck on an 
   // With places again, the remembered view and its selector come back.
   await page.getByRole('tab', { name: 'List', exact: true }).click();
   await expect(page.locator('.stop-list > .stop-row')).toHaveCount(3);
+});
+
+test('an old trip records a visit without inventing today, and a mistaken time can be cleared', async ({
+  page,
+}) => {
+  const { id, cityId, stops } = await seed(page);
+  // A legs-based trip: the dates live on the leg, not in the trip's fallback.
+  await page.evaluate(async (cityId) => {
+    const { updateCity } = await import('/src/lib/trips.ts');
+    await updateCity(cityId, { arrival: '2020-01-01T10:00', departure: '2020-01-02T18:00' });
+  }, cityId);
+  await page.goto(`/#/trip/${id}/stops`);
+  await page
+    .locator('.stop-row', { hasText: 'Piazza Maggiore' })
+    .getByRole('button', { name: 'Mark visited', exact: true })
+    .click();
+  await page.getByRole('tab', { name: 'Visited', exact: true }).click();
+  await expect(page.locator('.visit-history .stop-name')).toHaveText(['Piazza Maggiore']);
+  await page.locator('.visit-history button', { hasText: 'Piazza Maggiore' }).click();
+  await page.getByRole('button', { name: 'Change visit time' }).click();
+  await page.getByLabel('Actual visit time').fill('2020-01-02T10:00');
+  await page.getByRole('button', { name: 'Save visit time' }).click();
+  await page.getByRole('button', { name: 'Change visit time' }).click();
+  await page.getByRole('button', { name: 'Clear visit time', exact: true }).click();
+  const saved = await page.evaluate(async (stopId) => {
+    const { buildDataBackup } = await import('/src/lib/export.ts');
+    return (await buildDataBackup()).stops.find((s) => s.id === stopId);
+  }, stops[0].id);
+  expect(saved).toMatchObject({ visited: true, order: 0 });
+  expect(saved).not.toHaveProperty('visitedAt');
+});
+
+test('sync while a stop is open cannot overwrite newer notes or pins, and autosave resumes after review', async ({
+  makeContext,
+}) => {
+  const nas = new FakeNas();
+  const phone = await device(makeContext, nas);
+  const mac = await device(makeContext, nas);
+  const { id, stops } = await seed(phone);
+  const stopId = stops[0].id;
+  expect((await sync(phone)).ok).toBe(true);
+  expect((await sync(mac)).ok).toBe(true);
+  await phone.goto(`/#/trip/${id}/stops/${stopId}`);
+  await expect(phone.getByLabel('Notes', { exact: true })).toHaveValue('The square.');
+  await mac.evaluate(async (stopId) => {
+    const { updateStop, placeStop } = await import('/src/lib/stops.ts');
+    await updateStop(stopId, { notes: 'Synced entrance instructions.' });
+    await placeStop(stopId, { lat: 44.5, lng: 11.35 });
+  }, stopId);
+  expect((await sync(mac)).ok).toBe(true);
+  expect((await sync(phone)).ok).toBe(true);
+  // The rendered draft is stale. The write itself must compare with storage,
+  // rather than depending on the live query having refreshed in time.
+  await phone.getByLabel('Notes', { exact: true }).fill('The square. My stale addition.');
+  await expect(phone.getByRole('alert')).toContainText('changed elsewhere');
+  await expect(phone.getByLabel('Notes', { exact: true })).toHaveValue(
+    'The square. My stale addition.',
+  );
+  const read = () =>
+    phone.evaluate(async (stopId) => {
+      const { db } = await import('/src/lib/db.ts');
+      return db.stops.get(stopId);
+    }, stopId);
+  expect(await read()).toMatchObject({
+    notes: 'Synced entrance instructions.',
+    lat: 44.5,
+    lng: 11.35,
+  });
+  await phone.getByRole('button', { name: 'Reload saved details (discards draft)' }).click();
+  await expect(phone.getByLabel('Notes', { exact: true })).toHaveValue(
+    'Synced entrance instructions.',
+  );
+  await phone.getByLabel('Notes', { exact: true }).fill('');
+  await phone
+    .getByLabel('Notes', { exact: true })
+    .pressSequentially('Synced entrance instructions. Keep the archway.');
+  await expect
+    .poll(async () => (await read())?.notes)
+    .toBe('Synced entrance instructions. Keep the archway.');
+  await phone.getByText('Map location', { exact: true }).click();
+  await phone.getByLabel('Latitude', { exact: true }).fill('44.6');
+  // A remote removal is an edit too. Saving must not resurrect the old pin.
+  await mac.evaluate(async (stopId) => {
+    const { placeStop } = await import('/src/lib/stops.ts');
+    await placeStop(stopId, null);
+  }, stopId);
+  expect((await sync(mac)).ok).toBe(true);
+  expect((await sync(phone)).ok).toBe(true);
+  await phone.getByRole('button', { name: 'Save map location' }).click();
+  await expect(phone.getByRole('alert')).toContainText('changed elsewhere');
+  await expect(phone.getByLabel('Latitude', { exact: true })).toHaveValue('44.6');
+  expect(await read()).not.toHaveProperty('lat');
+  await phone.getByRole('button', { name: 'Reload saved details (discards draft)' }).click();
+  await expect(phone.getByLabel('Latitude', { exact: true })).toHaveValue('');
+  await phone.getByLabel('Latitude', { exact: true }).fill('44.7');
+  await phone.getByLabel('Longitude', { exact: true }).fill('11.7');
+  await phone.getByRole('button', { name: 'Save map location' }).click();
+  await expect.poll(async () => (await read())?.lat).toBe(44.7);
+  // Unrelated fields do not cause false conflicts in a notes-only autosave.
+  await phone.getByLabel('Notes', { exact: true }).fill('Reviewed note.');
+  await expect.poll(async () => (await read())?.notes).toBe('Reviewed note.');
+});
+
+test('removing a pin from an open editor cannot erase a pin moved elsewhere', async ({ page }) => {
+  const { id, stops } = await seed(page);
+  await page.goto(`/#/trip/${id}/stops/${stops[0].id}`);
+  await page.getByText('Map location', { exact: true }).click();
+  await expect(page.getByLabel('Latitude', { exact: true })).toHaveValue('44.4938');
+  await page.evaluate(async (stopId) => {
+    const { placeStop } = await import('/src/lib/stops.ts');
+    await placeStop(stopId, { lat: 44.8, lng: 11.8 });
+  }, stops[0].id);
+  await page.getByRole('button', { name: 'Remove map location' }).click();
+  await expect(page.getByRole('alert')).toContainText('changed elsewhere');
+  expect(
+    await page.evaluate(async (stopId) => {
+      const { db } = await import('/src/lib/db.ts');
+      return db.stops.get(stopId);
+    }, stops[0].id),
+  ).toMatchObject({ lat: 44.8, lng: 11.8 });
 });

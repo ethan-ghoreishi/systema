@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { City, Moment, Stop } from '../../src/lib/db';
-import { alignToStop, stopGroups, visitTimeline } from '../../src/lib/moments';
+import { alignToStop, stopGroups, visitedPlaces } from '../../src/lib/moments';
 
 const city = (id: string, order: number): City => ({
   id,
@@ -40,126 +40,52 @@ const alignedWith = (s: Stop, m: Moment): Moment => {
   alignToStop(m, s);
   return m;
 };
-const names = (items: ReturnType<typeof visitTimeline>) =>
-  items.map((i) => (i.kind === 'stop' ? i.stop.id : `*${i.moment.id}`));
+describe('visitedPlaces', () => {
+  const cities = [city('london-out', 0), city('bcn', 1), city('blq', 2), city('london-home', 3)];
 
-describe('visitTimeline', () => {
-  const cities = [city('blq', 0), city('bcn', 1)];
-
-  it('places each moment after the last stop visited before it', () => {
-    const stops = [stop('a', 'blq', 0, 100), stop('b', 'blq', 1, 300), stop('c', 'bcn', 2, 500)];
-    const moments = [moment('concert', 'blq', 200), moment('missed-bus', 'bcn', 450)];
-    expect(names(visitTimeline(stops, moments, cities))).toEqual([
-      'a',
-      '*concert',
-      'b',
-      '*missed-bus',
-      'c',
-    ]);
-  });
-
-  it('keeps untimed historical visits after the timed events without inventing chronology', () => {
-    const stops = [stop('a', 'blq', 0), stop('b', 'blq', 1), stop('c', 'bcn', 2)];
-    const moments = [moment('courtyard', 'blq', 50), moment('market', 'bcn', 60)];
-    expect(names(visitTimeline(stops, moments, cities))).toEqual([
-      '*courtyard',
-      '*market',
-      'a',
-      'b',
-      'c',
-    ]);
-  });
-
-  it('sorts actual visits across cities by time, keeping the planned list unchanged', () => {
-    const stops = [stop('a', 'blq', 0, 500), stop('b', 'bcn', 1, 100), stop('c', 'blq', 2, 300)];
-    const moments = [moment('at-a', 'blq', 50, 'a'), moment('loose', 'blq', 200)];
-    expect(names(visitTimeline(stops, moments, cities))).toEqual([
-      'b',
-      '*loose',
-      'c',
-      'a',
-      '*at-a',
-    ]);
-    expect(
-      visitTimeline(stops, [], cities, { visitedOnly: false }).map(
-        (it) => it.kind === 'stop' && it.stop.id,
-      ),
-    ).toEqual(['a', 'b', 'c']);
-    expect(stops.map((s) => s.order)).toEqual([0, 1, 2]);
-  });
-
-  it('keeps a linked moment with an untimed visit and uses stable tie breaks', () => {
-    const stops = [stop('unknown', 'blq', 0), stop('b', 'blq', 2, 100), stop('a', 'blq', 1, 100)];
-    expect(names(visitTimeline(stops, [moment('linked', 'blq', 50, 'unknown')], cities))).toEqual([
-      'a',
-      'b',
-      'unknown',
-      '*linked',
-    ]);
-  });
-
-  it('leaves out stops not visited', () => {
-    const s = { ...stop('skipped', 'blq', 0), visited: false };
-    expect(names(visitTimeline([s], [moment('m', 'blq', 1)], cities))).toEqual(['*m']);
-  });
-
-  // A moment that is part of a planned stop belongs with that stop, whatever
-  // its clock time says — it is the same visit, not a separate event.
-  it('puts a moment linked to a stop with that stop', () => {
-    const stops = [stop('a', 'blq', 0, 100), stop('b', 'blq', 1, 300), stop('c', 'bcn', 2, 500)];
-    const linked = moment('inside-b', 'blq', 900, 'b');
-    expect(names(visitTimeline(stops, [linked], cities))).toEqual(['a', 'b', '*inside-b', 'c']);
-  });
-
-  it('keeps several moments at one stop in their own time order', () => {
-    const stops = [stop('a', 'blq', 0, 100), stop('b', 'blq', 1, 300)];
-    const moments = [moment('second', 'blq', 400, 'a'), moment('first', 'blq', 150, 'a')];
-    expect(names(visitTimeline(stops, moments, cities))).toEqual(['a', '*first', '*second', 'b']);
-  });
-
-  // A moment at its stop is out of time order by design; it must not drag a
-  // later unlinked one along with it.
-  it('does not let a moment at a stop displace a later one', () => {
-    const stops = [stop('a', 'blq', 0, 100), stop('b', 'blq', 1, 300)];
-    const moments = [moment('at-b', 'blq', 150, 'b'), moment('loose', 'blq', 200)];
-    expect(names(visitTimeline(stops, moments, cities))).toEqual(['a', '*loose', 'b', '*at-b']);
-  });
-
-  // Whichever was written first, a stop and the moments that are part of it
-  // stay together.
-  it('never puts an unlinked moment between a stop and its own moment', () => {
-    const planned = { ...stop('planned', 'blq', 0), visited: false };
-    const at = moment('at-planned', 'blq', 100, 'planned');
-    const loose = moment('loose', 'blq', 900);
-    const rows = (ms: (typeof at)[]) =>
-      names(visitTimeline([planned], ms, cities, { visitedOnly: false }));
-    expect(rows([at, loose])).toEqual(['planned', '*at-planned', '*loose']);
-    expect(rows([loose, at])).toEqual(['planned', '*at-planned', '*loose']);
-  });
-
-  it('falls back to time when the linked stop is not in the list', () => {
-    const stops = [stop('a', 'blq', 0, 100), stop('b', 'blq', 1, 300)];
-    const orphan = moment('gone', 'blq', 200, 'deleted-stop');
-    expect(names(visitTimeline(stops, [orphan], cities))).toEqual(['a', '*gone', 'b']);
-  });
-
-  // The Stops list orders by the same rule, but shows what is not ticked yet.
-  it('keeps unvisited stops when asked (the Stops list)', () => {
+  it('keeps a historical multi-city trip readable without inventing visit order', () => {
     const stops = [
-      { ...stop('a', 'blq', 0, 100) },
-      { ...stop('planned', 'blq', 1), visited: false },
+      stop('Bologna square', 'blq', 0),
+      stop('Barcelona cathedral', 'bcn', 4),
+      stop('London home', 'london-home', 2),
+      stop('London outbound', 'london-out', 8),
+      stop('Barcelona market', 'bcn', 1),
+      { ...stop('Skipped', 'blq', 3), visited: false },
     ];
-    const moments = [moment('linked', 'blq', 50, 'planned'), moment('loose', 'blq', 900)];
-    // 'loose' follows the last stop with a visit time; 'planned' has none, so
-    // it anchors nothing — only the moment that is part of it.
-    expect(names(visitTimeline(stops, moments, cities, { visitedOnly: false }))).toEqual([
-      'a',
-      '*loose',
-      'planned',
-      '*linked',
+    const result = visitedPlaces(stops, [...cities].reverse());
+    expect(result.timed).toEqual([]);
+    expect(result.untimed.map((g) => [g.key, ...g.stops.map((s) => s.id)])).toEqual([
+      ['london-out', 'London outbound'],
+      ['bcn', 'Barcelona market', 'Barcelona cathedral'],
+      ['blq', 'Bologna square'],
+      ['london-home', 'London home'],
     ]);
-    // The pack keeps only visited stops, so the linked one falls back to time.
-    expect(names(visitTimeline(stops, moments, cities))).toEqual(['*linked', 'a', '*loose']);
+    expect(stops.map((s) => s.order)).toEqual([0, 4, 2, 8, 1, 3]);
+  });
+
+  it('orders only timed places by their recorded instants across legs, with stable ties', () => {
+    const stops = [
+      stop('late', 'bcn', 0, 500),
+      stop('b', 'blq', 1, 100),
+      stop('a', 'bcn', 2, 100),
+      stop('unknown', 'blq', 3),
+    ];
+    expect(visitedPlaces(stops, cities).timed.map((s) => s.id)).toEqual(['a', 'b', 'late']);
+    // A late marking can be corrected or cleared without touching planned order.
+    const corrected = stops.map((s) => (s.id === 'late' ? { ...s, visitedAt: 50 } : s));
+    expect(visitedPlaces(corrected, cities).timed.map((s) => s.id)).toEqual(['late', 'a', 'b']);
+    corrected[0] = { ...corrected[0], visitedAt: undefined };
+    expect(visitedPlaces(corrected, cities).timed.map((s) => s.id)).toEqual(['a', 'b']);
+    expect(corrected.map((s) => s.order)).toEqual([0, 1, 2, 3]);
+  });
+
+  it('keeps untimed visits from deleted legs and unassigned records', () => {
+    const gone = { ...stop('Rome', 'old', 1), cityId: null, legName: 'Rome' };
+    const unassigned = { ...stop('No leg', '', 0), cityId: null };
+    expect(visitedPlaces([gone, unassigned], cities).untimed.map((g) => g.key)).toEqual([
+      'gone:Rome',
+      null,
+    ]);
   });
 });
 
@@ -182,6 +108,34 @@ describe('stopGroups', () => {
       ['blq', 'a', '*at-a'],
       ['bcn', 'b'],
       ['blq', 'c', '*loose'],
+    ]);
+  });
+
+  it('keeps linked memories at their place without letting their times move the planned route', () => {
+    const stops = [stop('a', 'blq', 0, 100), stop('b', 'blq', 1, 300)];
+    const ms = [moment('at-b', 'blq', 150, 'b'), moment('loose', 'blq', 200)];
+    expect(shape(stopGroups(stops, ms, cities))).toEqual([['blq', 'a', '*loose', 'b', '*at-b']]);
+  });
+
+  // These rules used to be tested through the old shared timeline. The planned
+  // list still relies on them, so they keep their checks here.
+  it('keeps several memories at one place in time order, and places an orphaned one by time', () => {
+    const stops = [stop('a', 'blq', 0, 100), stop('b', 'blq', 1, 300)];
+    const ms = [moment('second', 'blq', 400, 'a'), moment('first', 'blq', 150, 'a')];
+    expect(shape(stopGroups(stops, ms, cities))).toEqual([['blq', 'a', '*first', '*second', 'b']]);
+    const orphan = moment('gone', 'blq', 200, 'deleted-stop');
+    expect(shape(stopGroups(stops, [orphan], cities))).toEqual([['blq', 'a', '*gone', 'b']]);
+  });
+
+  it('never puts a loose memory between a place and its own, whichever was written first', () => {
+    const planned = { ...stop('planned', 'blq', 0), visited: false };
+    const at = moment('at-planned', 'blq', 100, 'planned');
+    const loose = moment('loose', 'blq', 900);
+    expect(shape(stopGroups([planned], [at, loose], cities))).toEqual([
+      ['blq', 'planned', '*at-planned', '*loose'],
+    ]);
+    expect(shape(stopGroups([planned], [loose, at], cities))).toEqual([
+      ['blq', 'planned', '*at-planned', '*loose'],
     ]);
   });
 

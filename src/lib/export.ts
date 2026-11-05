@@ -1,7 +1,7 @@
 import type { Table } from 'dexie';
 import { validateBackup } from './backup-validation';
 import { photoExt, photoRef, photoRefs, photoTime } from './photos';
-import { visitTimeline, zoneOf } from './moments';
+import { GONE, visitedPlaces, zoneOf } from './moments';
 import { instantToWall, wallLabel } from './tz';
 import { isZip, unzip, verifyZip, zip } from './zip';
 import {
@@ -97,6 +97,47 @@ export interface PackInput {
   moments?: Moment[];
 }
 
+/** Shared with both journal prompts: the same place-only history as Visited. */
+function visitedPlaceLines(stops: Stop[], cities: City[]): string[] {
+  const history = visitedPlaces(stops, cities);
+  if (!history.timed.length && !history.untimed.length) return [];
+  const leg = (s: Stop) => cities.find((c) => c.id === s.cityId)?.name ?? s.legName ?? 'Unassigned';
+  const lines = ['## Places visited', ''];
+  if (history.timed.length) {
+    lines.push(
+      '### Recorded visit times',
+      '',
+      'In recorded time order.' +
+        (history.untimed.length
+          ? ' Numbering covers these places only; untimed visits may fall anywhere.'
+          : '') +
+        ' A tap records the marking time unless corrected.',
+      '',
+    );
+    history.timed.forEach((s, i) =>
+      lines.push(`${i + 1}. ${localStamp(s.visitedAt!, zoneOf(s, cities))}, ${s.name} (${leg(s)})`),
+    );
+    lines.push('');
+  }
+  if (history.untimed.length) {
+    lines.push(
+      '### Visit time unknown',
+      '',
+      'Grouped by leg, listed in planned order for reference. Actual visit order is unknown.',
+      '',
+    );
+    for (const group of history.untimed) {
+      const label = group.key?.startsWith(GONE)
+        ? `${group.key.slice(GONE.length)} (leg deleted)`
+        : (cities.find((c) => c.id === group.key)?.name ?? 'Unassigned');
+      lines.push(`#### ${label}`, '');
+      for (const s of group.stops) lines.push(`- ${s.name}`);
+      lines.push('');
+    }
+  }
+  return lines;
+}
+
 /**
  * Build the trip pack Markdown. Pure given the trip's data.
  *
@@ -129,7 +170,7 @@ export function buildTripPack({
     manifest.filter((e) => pred(photos.find((p) => p.id === e.id)!)).map((e) => e.ref);
 
   if (orderedStops.length) {
-    lines.push('## Stops', '');
+    lines.push('## Stops (planned order)', '');
     for (const s of orderedStops) {
       lines.push(`### ${s.name}${s.visited ? ' (visited)' : ''}`);
       if (s.guide?.anchor) lines.push(`Anchor: ${s.guide.anchor}`);
@@ -143,41 +184,16 @@ export function buildTripPack({
   }
 
   const stopName = new Map(stops.map((s) => [s.id, s.name]));
-  const timeline = visitTimeline(stops, moments, cities);
-  if (timeline.length) {
-    lines.push(
-      '## Visit order',
-      '',
-      'Timed visits are in actual order. Moments linked to a stop stay with that visit. Visits without a recorded time follow separately in planned order.',
-      '',
-    );
-    timeline.forEach((it, i) => {
-      if (it.kind === 'stop') {
-        const c = cityById.get(it.stop.cityId ?? '');
-        const when =
-          it.at != null
-            ? `${localStamp(it.at, zoneOf(it.stop, cities))}, `
-            : 'Visit time unknown, ';
-        lines.push(`${i + 1}. ${when}${it.stop.name}${c ? ` (${c.name})` : ''}`);
-      } else {
-        const c = cityById.get(it.moment.cityId ?? '');
-        lines.push(
-          `${i + 1}. ${localStamp(it.at, zoneOf(it.moment, cities))}, ${
-            it.moment.stopId && stopName.get(it.moment.stopId)
-              ? `at ${stopName.get(it.moment.stopId)}`
-              : 'off-plan'
-          }: ${it.moment.title}${c ? ` (${c.name})` : ''}`,
-        );
-      }
-    });
-    lines.push('');
-  }
+  lines.push(...visitedPlaceLines(stops, cities));
 
   if (moments.length) {
-    lines.push('## Unplanned / serendipitous moments (in visit order)', '');
-    for (const it of timeline) {
-      if (it.kind !== 'moment') continue;
-      const m = it.moment;
+    lines.push(
+      '## Moments (recorded time order)',
+      '',
+      'Moments are observations, experiences or discovered sites. A link to a place is context, not proof of its visit time.',
+      '',
+    );
+    for (const m of [...moments].sort((a, b) => a.at - b.at || a.id.localeCompare(b.id))) {
       const c = cityById.get(m.cityId ?? '');
       const refs = refsFor((p) => p.momentId === m.id);
       const bits = [
@@ -219,13 +235,13 @@ export function buildTripPack({
 // rendered — by stable reference, so duplicates and off-plan places are safe.
 export const JOURNAL_PROMPT =
   'You are helping me write a post-trip journal in my City Systems Playbook style. ' +
-  'Using the trip pack below (plan, ticked stops, visit order, unplanned moments, photos list, expense summary), ' +
+  'Using the trip pack below (plan, places visited, recorded visit times, Moments, photos list, expense summary), ' +
   'write a debrief that states my city thesis, tests it against what I actually saw, gives a ' +
-  'short reading of each main stop, draws the London and Esfahan contrasts, and ends with a ' +
+  'short reading of the main places I visited, draws the London and Esfahan contrasts, and ends with a ' +
   'brief counterfactual on what I would do differently. Plain UK English, no em-dashes. ' +
-  'The unplanned moments are things that happened off the plan, in the order they happened: weave them ' +
-  'naturally into the story where they happened, with the same care as the planned stops, rather than ' +
-  'listing them separately. ' +
+  'Treat unvisited stops as plans, not experiences. Use recorded visit times where available. Untimed places are grouped by leg and listed in planned order for reference, not actual chronology. ' +
+  'Never infer a visit time from a linked Moment, a ticket, an expense or the plan. Ask me if missing chronology matters. ' +
+  'Moments may be observations at a stop, standalone experiences or discovered sites. Weave them naturally into the story without treating each as a separate place visit. ' +
   'I have attached my photographs in the order of the Photos section, which gives each one a reference ' +
   'such as P-3f9a1c, with where and when it was taken. Where a photograph would naturally illustrate ' +
   'the narrative, insert a placeholder on its own line exactly as listed, for example [photo: P-3f9a1c]. ' +
@@ -246,6 +262,7 @@ export function buildMemoryPrompt(
   cities: City[],
   stops: Stop[],
   expenses: Expense[],
+  moments: Moment[] = [],
 ): string {
   const real = realExpenses(expenses);
   const lines: string[] = [];
@@ -273,11 +290,26 @@ export function buildMemoryPrompt(
     '',
   );
 
-  const visited = [...stops].sort((a, b) => a.order - b.order).filter((s) => s.visited);
-  if (visited.length) {
-    lines.push('## Places visited (from tickets and entries)', '');
-    for (const s of visited) lines.push(`- ${s.name}`);
-    lines.push('');
+  const places = visitedPlaceLines(stops, cities);
+  lines.push(...places);
+  // This prompt rebuilds a trip from its expense trail, so dates are clues by
+  // design: they must stay labelled as inferred, not become recorded visits.
+  lines.push(
+    (places.length ? 'Visit times may be missing or reflect a late marking. ' : '') +
+      'Treat ticket and expense dates as clues to the order, never as recorded visit times: say when an order is your inference, and ask me when it matters.',
+    '',
+  );
+
+  if (moments.length) {
+    lines.push('## Moments (recorded time order)', '');
+    for (const m of [...moments].sort((a, b) => a.at - b.at || a.id.localeCompare(b.id))) {
+      const place = stops.find((s) => s.id === m.stopId)?.name;
+      const leg = cities.find((c) => c.id === m.cityId)?.name ?? m.legName;
+      lines.push(
+        `- ${localStamp(m.at, zoneOf(m, cities))}${leg ? `, ${leg}` : ''}: ${m.title}${m.note ? `. ${m.note}` : ''}${place ? ` (at ${place})` : ''}`,
+      );
+    }
+    lines.push('Moments provide context, not a visit time for a linked place.', '');
   }
 
   if (real.length) {

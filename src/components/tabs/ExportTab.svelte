@@ -95,7 +95,7 @@
   }
 
   function copyMemoryPrompt() {
-    const text = buildMemoryPrompt(trip, cities, stops, expenses);
+    const text = buildMemoryPrompt(trip, cities, stops, expenses, moments);
     void copyText(text, 'Reconstruction prompt').then((ok) => {
       if (ok)
         status =
@@ -140,8 +140,9 @@
   <div class="card">
     <h2 class="section-title">Journal this trip</h2>
     <p class="hint">
-      Copy the prompt (it already includes the trip pack: plan, ticked stops, the visit order with
-      your off-plan moments, the photo list and the expense summary) and paste it in.
+      Copy the prompt (it already includes the trip pack: plan, places visited with recorded times
+      or an explicit unknown order, Moments, the photo list and the expense summary) and paste it
+      in.
     </p>
     <button class="btn btn--primary" onclick={copyPrompt}>Copy journaling prompt</button>
     {#if trip.status === 'done' && !(trip.journalText ?? '').trim()}

@@ -113,8 +113,8 @@ test('a moment off the plan, with library photos in the order they were taken', 
   await page.getByRole('link', { name: 'Export' }).click();
   await page.getByText('Preview trip pack').click();
   const pack = page.locator('.pack-preview');
-  await expect(pack).toContainText('## Unplanned / serendipitous moments (in visit order)');
-  await expect(pack).toContainText('off-plan: Portico concert (Bologna)');
+  await expect(pack).toContainText('## Moments (recorded time order)');
+  await expect(pack).toContainText('Fri 16 Oct, 13:00, Bologna: **Portico concert**');
   await expect(pack).toContainText(
     `1. [photo: ${ref(photos[0].id)}] Bologna, Portico concert, Fri 16 Oct, 13:05`,
   );
