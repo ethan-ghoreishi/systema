@@ -629,3 +629,11 @@ it('does not call one party size the cheapest for another', () => {
   expect(view.best).toBeNull();
   expect(view.rows.map((r) => r.party)).toEqual([2, 1]);
 });
+
+it('reads quoted decimal-comma fares without multiplying them by one hundred', () => {
+  const { rows } = parseFinderCsv(`${HEAD}\n${FARO.replace(',19.0,', ',"12,50",')}`);
+  expect(rows[0].option.outFarePP).toBe(12.5);
+  expect(() => parseFinderCsv(`${HEAD}\n${FARO.replace(',19.0,', ',"1,234",')}`)).toThrow(
+    /Out £pp is invalid or ambiguous/,
+  );
+});

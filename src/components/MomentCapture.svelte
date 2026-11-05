@@ -1,7 +1,15 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
   import type { City, Moment, Stop, Trip } from '../lib/db';
-  import { addMoment, alignToStop, deleteMoment, updateMoment, zoneOf } from '../lib/moments';
+  import {
+    addMoment,
+    alignToStop,
+    deleteMoment,
+    updateMoment,
+    zoneOf,
+    retrospective,
+    momentWhen,
+  } from '../lib/moments';
   import { addPhotos } from '../lib/photos';
   import { activeLegId } from '../lib/trip-shape';
   import { instantToWall, wallToInstant } from '../lib/tz';
@@ -40,12 +48,21 @@
     note: moment?.note ?? '',
     stopId: moment?.stopId ?? null,
     at: moment?.at ?? Date.now(),
+    precision: moment
+      ? (moment.timePrecision ?? 'exact')
+      : retrospective(trip, cities)
+        ? 'unknown'
+        : 'exact',
   }));
   let cityId = $state<string | null>(init.cityId);
   let title = $state(init.title);
   let note = $state(init.note);
   let stopId = $state<string | null>(init.stopId);
   let at = $state(init.at);
+  let precision = $state<Moment['timePrecision'] | 'exact'>(
+    init.precision as Moment['timePrecision'] | 'exact',
+  );
+  let timeDraft = $state('');
   let editingTime = $state(false);
   let files = $state<File[]>([]);
   let savedId = $state<string | undefined>(untrack(() => moment?.id));
@@ -65,6 +82,29 @@
     return zoneOf(place, cities);
   });
   const wall = $derived(instantToWall(at, tz));
+  const dateOnly = $derived(precision === 'date' || precision === 'approximate');
+  const enteredWall = $derived(
+    dateOnly ? `${timeDraft.slice(0, 10)}T12:00` : timeDraft.slice(0, 16),
+  );
+  const enteredAt = $derived(wallToInstant(enteredWall, tz));
+  const validTime = $derived(
+    !editingTime ||
+      precision === 'unknown' ||
+      (enteredAt != null && instantToWall(enteredAt, tz) === enteredWall),
+  );
+  const timeLabel = $derived(
+    editingTime && precision !== 'unknown' && !validTime
+      ? 'Choose when it happened'
+      : momentWhen(
+          {
+            at: editingTime ? (enteredAt ?? at) : at,
+            timePrecision: precision === 'exact' ? undefined : precision,
+            cityId,
+            tz,
+          },
+          cities,
+        ),
+  );
   // The stops that can be part of this leg: its own, and the ones that are on
   // no leg at all — those belong wherever the moment does.
   const onLeg = (s: Stop) => !cityId || !s.cityId || s.cityId === cityId;
@@ -85,11 +125,18 @@
   }
 
   async function save() {
-    if (!title.trim()) return;
+    if (!title.trim() || !validTime) return;
     saving = true;
     error = '';
     try {
-      const fields = { cityId, title: title.trim(), note: note.trim(), stopId, at };
+      const fields = {
+        cityId,
+        title: title.trim(),
+        note: note.trim(),
+        stopId,
+        at: editingTime && precision !== 'unknown' ? enteredAt! : at,
+        timePrecision: precision === 'exact' ? undefined : precision,
+      };
       // Kept once created, so a retry after a failed photo save updates it.
       if (savedId) await updateMoment(savedId, fields);
       else savedId = await addMoment({ tripId: trip.id, ...fields });
@@ -128,8 +175,10 @@
         >Cancel</button
       >
       <h2 class="modal-title">{moment ? 'Moment' : 'What happened?'}</h2>
-      <button class="btn btn--primary btn--sm" onclick={save} disabled={saving || !title.trim()}
-        >Save</button
+      <button
+        class="btn btn--primary btn--sm"
+        onclick={save}
+        disabled={saving || !title.trim() || !validTime}>Save</button
       >
     </header>
     <div class="modal-body">
@@ -154,20 +203,45 @@
       />
 
       <div class="moment-when">
-        <span class="hint">{moment ? 'At' : 'Now'} · {wall.slice(11, 16)}</span>
-        <button class="link-btn" onclick={() => (editingTime = !editingTime)}>change</button>
+        <span class="hint"
+          >{!moment && !editingTime && precision === 'exact'
+            ? `Now · ${wall.slice(11, 16)}`
+            : timeLabel}</span
+        >
+        <button
+          class="link-btn"
+          onclick={() => {
+            if (!editingTime && precision !== 'unknown' && !timeDraft) timeDraft = wall;
+            editingTime = true;
+          }}>change</button
+        >
       </div>
       {#if editingTime}
-        <input
-          class="field"
-          type="datetime-local"
-          aria-label="When"
-          value={wall}
-          onchange={(e) => {
-            const t = wallToInstant((e.currentTarget as HTMLInputElement).value, tz);
-            if (t != null) at = t;
-          }}
-        />
+        <label class="label" for="moment-precision">When did it happen?</label>
+        <select id="moment-precision" class="field" bind:value={precision}>
+          <option value="exact">Exact date and time</option>
+          <option value="date">Date only</option>
+          <option value="approximate">Approximate date</option>
+          <option value="unknown">Not sure when</option>
+        </select>
+        {#if precision !== 'unknown'}
+          <label class="label" for="moment-when">When · {tz ?? 'device local time'}</label>
+          <input
+            id="moment-when"
+            class="field"
+            type={dateOnly ? 'date' : 'datetime-local'}
+            aria-label="When"
+            value={dateOnly ? timeDraft.slice(0, 10) : timeDraft}
+            onchange={(e) => (timeDraft = e.currentTarget.value)}
+          />
+          {#if !validTime}<p class="hint hint--warn" role="alert">
+              Enter a valid local {dateOnly ? 'date' : 'date and time'}. Check for a clock change.
+            </p>{/if}
+        {/if}
+        <p class="hint">
+          Unknown means no event date is assumed. For an approximate date, explain what you remember
+          in the note.
+        </p>
       {/if}
 
       <textarea

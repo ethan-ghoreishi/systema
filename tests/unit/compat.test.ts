@@ -363,3 +363,24 @@ it('an explicit payment detachment stays readable and mergeable by the previous 
   const merged = oldMerge(records as any, records as any, records as any, true).merged;
   expect(merged.expenses[0].need).toBe('');
 });
+
+it.each(['date', 'approximate', 'unknown'] as const)(
+  'keeps %s Moment precision when an older device returns a snapshot',
+  (timePrecision) => {
+    const s = snapshot();
+    s.moments![0].timePrecision = timePrecision;
+    expect(() => oldValidate(s)).not.toThrow();
+    expect(() => validateBackup(s)).not.toThrow();
+    const records = { ...s, kv: [], photosMeta: s.photosMeta! } as unknown as SyncRecords;
+    const merged = oldMerge(records as any, records as any, records as any, true).merged;
+    const reconciled = mergeRecords(
+      records,
+      records,
+      merged as unknown as SyncRecords,
+      true,
+    ).merged;
+    expect(reconciled.moments![0].timePrecision).toBe(timePrecision);
+    (s.moments![0] as Record<string, unknown>).timePrecision = 'made-up';
+    expect(() => validateBackup(s)).toThrow(/moments/);
+  },
+);

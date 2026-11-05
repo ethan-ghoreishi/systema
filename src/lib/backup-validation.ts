@@ -159,6 +159,8 @@ export function validateBackup(value: unknown): asserts value is Backup {
       (r) =>
         strings(r, 'tripId title note') &&
         numbers(r, 'at createdAt') &&
+        (r.timePrecision === undefined ||
+          ['date', 'approximate', 'unknown'].includes(r.timePrecision)) &&
         optional(r, 'tz legName', 'string') &&
         coord(r.lat, 90) &&
         coord(r.lng, 180) &&

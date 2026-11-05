@@ -161,9 +161,12 @@ a {
 /* ---------- App frame ---------- */
 
 .app-shell {
-  /* Fixed to the viewport: exactly the visible area, whatever vh/dvh report. */
+  /* Use the same dynamic height as sheets, excluding Safari's browser bars. */
   position: fixed;
   inset: 0;
+  bottom: auto;
+  height: 100vh;
+  height: 100dvh;
   max-width: var(--app-max);
   margin-inline: auto;
   overflow: hidden;
@@ -1249,6 +1252,10 @@ input.city-ccy {
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+
+.modal-body > textarea.field {
+  flex-shrink: 0;
 }
 
 .delete-expense {

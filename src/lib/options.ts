@@ -2,6 +2,7 @@ import type { Opportunity, TripOption } from './db';
 import { MODE_DEFAULTS } from './readiness';
 import { wallParts } from './tz';
 import type { MeasuredCost } from './insights';
+import { parseMoney, MONEY_HINT } from './money';
 import { newId } from './ids';
 
 /**
@@ -246,6 +247,11 @@ export function parseFinderCsv(text: string): ParsedSearch {
       skipped += 1;
       continue;
     }
+    for (const field of ['Out £pp', 'Back £pp', 'True £pp']) {
+      const value = at(r, field);
+      if (value?.trim() && parseMoney(value) == null)
+        throw new OptionParseError(`${city}: ${field} is invalid or ambiguous. ${MONEY_HINT}`);
+    }
     const overnight = at(r, 'Overnight') ?? '';
     const option: TripOption = {
       id: newId(),
@@ -261,9 +267,9 @@ export function parseFinderCsv(text: string): ParsedSearch {
       ...(b.arrDay ? { backArrDay: b.arrDay } : {}),
       outFlights: at(r, 'Out flights') || undefined,
       backFlights: at(r, 'Back flights') || undefined,
-      outFarePP: num(at(r, 'Out £pp')),
-      backFarePP: num(at(r, 'Back £pp')),
-      finderPP: num(at(r, 'True £pp')),
+      outFarePP: parseMoney(at(r, 'Out £pp') ?? '') ?? undefined,
+      backFarePP: parseMoney(at(r, 'Back £pp') ?? '') ?? undefined,
+      finderPP: parseMoney(at(r, 'True £pp') ?? '') ?? undefined,
       usableH: num(at(r, 'Usable h')),
       groundH: parseGroundHours(at(r, 'Ground')),
       cities: at(r, 'Cities') || undefined,

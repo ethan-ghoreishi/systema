@@ -6,6 +6,7 @@
   import { ecbPublishes, getRate } from '../lib/fx';
   import { priceEntry } from '../lib/expenses';
   import { FARE_CURRENCIES } from '../lib/currencies';
+  import { parseMoney, MONEY_HINT } from '../lib/money';
   import { todayIso } from '../lib/sheet';
 
   /**
@@ -123,10 +124,7 @@
         .filter(Boolean),
       code(leg.to),
     ].filter(Boolean);
-  const money = (v: string) => {
-    const n = Number(v.replace(/[£,\s]/g, ''));
-    return v.trim() && Number.isFinite(n) && n >= 0 ? n : undefined;
-  };
+  const money = (v: string) => parseMoney(v) ?? undefined;
 
   // The day's rate for each fare currency, so the £ the comparison needs is
   // not something to work out by hand. A currency the ECB never publishes
@@ -256,6 +254,12 @@
   });
 
   const problems = $derived([
+    ...[out, back].flatMap((leg, i) =>
+      (leg.fare.trim() && money(leg.fare) == null) ||
+      (needsPounds(leg) && leg.gbp.trim() && money(leg.gbp) == null)
+        ? [`${i === 0 ? 'Outbound' : 'Return'} fare: enter a valid amount. ${MONEY_HINT}`]
+        : [],
+    ),
     ...blockers(built),
     ...(spansNight && sleep === 'hotel' && !(Number(nights) > 0)
       ? ['Enter the hotel nights to pay for.']

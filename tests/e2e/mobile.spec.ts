@@ -219,3 +219,47 @@ test('copying happens inside the tap; a refused copy shows the text to copy by h
   await sheet.getByRole('button', { name: 'Close' }).click();
   await expect(sheet).toHaveCount(0);
 });
+
+test('resume clears a stale keyboard inset and resizing keeps the whole tab bar on screen', async ({
+  page,
+}) => {
+  const { id } = await seed(page, 1);
+  await page.goto(`/#/trip/${id}/stops`);
+  await page.evaluate(() => {
+    Object.defineProperty(window.visualViewport!, 'height', { configurable: true, value: 300 });
+    window.visualViewport!.dispatchEvent(new Event('resize'));
+  });
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.style.getPropertyValue('--kb')))
+    .not.toBe('0px');
+  // Safari/PWA may restore its viewport on return without a resize event.
+  await page.evaluate(() => {
+    delete (window.visualViewport as any).height;
+    window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
+  });
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.style.getPropertyValue('--kb')))
+    .toBe('0px');
+  for (const size of [
+    { width: 375, height: 667 },
+    { width: 667, height: 375 },
+    { width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize(size);
+    const bar = (await page.locator('nav.tabbar').boundingBox())!;
+    expect(bar.y + bar.height).toBeCloseTo(size.height, 0);
+    for (const name of ['Plan', 'Stops', 'Expenses', 'Export']) {
+      await expect(page.getByRole('link', { name, exact: true })).toBeInViewport({ ratio: 1 });
+    }
+  }
+  // Zoom is the user's viewport, not a keyboard to compensate for.
+  await page.evaluate(() => {
+    Object.defineProperty(window.visualViewport!, 'scale', { configurable: true, value: 2 });
+    document.documentElement.style.setProperty('--kb', '0px');
+    Object.defineProperty(window.visualViewport!, 'height', { configurable: true, value: 300 });
+    window.visualViewport!.dispatchEvent(new Event('resize'));
+  });
+  expect(await page.evaluate(() => document.documentElement.style.getPropertyValue('--kb'))).toBe(
+    '0px',
+  );
+});

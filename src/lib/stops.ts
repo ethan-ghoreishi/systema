@@ -42,19 +42,23 @@ export async function updateStop(
   expected: Partial<Stop> = {},
 ): Promise<void> {
   if (!('cityId' in patch)) {
-    await db.stops.update(id, (s) => {
+    const changed = await db.stops.update(id, (s) => {
       checkDraft(s, expected);
       Object.assign(s, patch);
     });
+    if (!changed)
+      throw new Error('This stop was deleted elsewhere. Copy your draft before leaving');
     return;
   }
   // The moments that are part of this stop move legs with it, so a moment is
   // never left saying it belongs to one leg while its stop belongs to another.
   await db.transaction('rw', db.stops, db.moments, async () => {
-    await db.stops.update(id, (s) => {
+    const changed = await db.stops.update(id, (s) => {
       checkDraft(s, expected);
       Object.assign(s, patch);
     });
+    if (!changed)
+      throw new Error('This stop was deleted elsewhere. Copy your draft before leaving');
     const stop = await db.stops.get(id);
     if (stop)
       await db.moments
@@ -74,7 +78,7 @@ export async function placeStop(
   pos: { lat: number; lng: number } | null,
   expected: Pick<Stop, 'lat' | 'lng'> = {},
 ): Promise<void> {
-  await db.stops.update(id, (s) => {
+  const changed = await db.stops.update(id, (s) => {
     checkDraft(s, expected);
     if (pos) Object.assign(s, pos);
     else {
@@ -82,6 +86,7 @@ export async function placeStop(
       delete s.lng;
     }
   });
+  if (!changed) throw new Error('This stop was deleted elsewhere. Copy your draft before leaving');
 }
 
 /**
@@ -117,12 +122,13 @@ export async function toggleVisited(stop: Stop, at: number | null = Date.now()):
 /** Correct a late marking without changing the planned route. */
 export async function setVisitTime(id: string, at: number | null): Promise<void> {
   if (at != null && !Number.isFinite(at)) throw new Error('Enter a valid visit time.');
-  await db.stops.update(id, (s) => {
+  const changed = await db.stops.update(id, (s) => {
     if (!s.visited)
       throw new Error('This stop is no longer marked visited. Mark it visited first.');
     if (at == null) delete s.visitedAt;
     else s.visitedAt = at;
   });
+  if (!changed) throw new Error('This stop was deleted elsewhere');
 }
 
 /** Persist `order` to match the given array order. */

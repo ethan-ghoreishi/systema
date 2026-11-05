@@ -893,3 +893,39 @@ test('a party change while a quoted payment is open clears the quote and is chec
   expect(result).toContain('party size changed');
   expect(await flightRow(page, id)).toMatchObject({ skeleton: true, amountGBP: 0 });
 });
+
+test('decimal commas record the actual payment; invalid amounts cannot silently save booking details', async ({
+  page,
+}) => {
+  const { id } = await seed(page);
+  await page.goto(`/#/trip/${id}/plan`);
+  await need(page, 'Ticket out').getByRole('button').click();
+  await page.getByLabel('Booking reference', { exact: true }).fill('COMMA-TEST');
+  const amount = page.getByLabel('What it cost, for everyone');
+  for (const value of ['1,234', '12bad', '-12']) {
+    await amount.fill(value);
+    await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
+    await expect(page.getByRole('alert')).toContainText('valid amount');
+  }
+  await amount.fill('');
+  await save(page);
+  await expect(page.getByRole('status')).toContainText('booked');
+  await sorted(page);
+  await need(page, 'Ticket out').getByRole('button').click();
+  await amount.fill('12,50');
+  await save(page);
+  await expect(page.getByRole('status')).toContainText('£12.50');
+  const payment = await page.evaluate(async (id) => {
+    const { db } = await import('/src/lib/db.ts');
+    return db.expenses
+      .where('tripId')
+      .equals(id)
+      .filter((e) => e.need === 'flight:outbound')
+      .toArray();
+  }, id);
+  expect(payment).toHaveLength(1);
+  expect(payment[0]).toMatchObject({ amountGBP: 12.5, skeleton: false });
+  await page.getByRole('link', { name: 'Expenses', exact: true }).click();
+  await page.locator('.expense-row:not(.expense-row--skeleton)').click();
+  await expect(page.getByText('£12.5', { exact: true })).toBeVisible();
+});

@@ -814,3 +814,35 @@ test('a booking in a currency with no rate asks for the £ before it saves', asy
     gbpManual: true,
   });
 });
+
+test('manual fares use decimal commas and refuse ambiguous GBP equivalents', async ({ page }) => {
+  await page.route('https://api.frankfurter.dev/**', (r) => r.abort());
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Add a destination' }).click();
+  await page.getByLabel('Where').fill('Money test');
+  await page.getByRole('button', { name: 'Add', exact: true }).click();
+  await page.getByRole('button', { name: 'Add an option' }).click();
+  await page.locator('#out-from').fill('STN');
+  await page.locator('#out-to').fill('FAO');
+  await page.locator('#out-dep').fill('08:00');
+  await page.locator('#out-arr').fill('11:00');
+  await page.locator('#back-from').fill('FAO');
+  await page.locator('#back-to').fill('STN');
+  await page.locator('#back-dep').fill('18:00');
+  await page.locator('#back-arr').fill('21:00');
+  await page.locator('#out-fare').fill('12,50');
+  await page.locator('#back-fare').fill('1,234');
+  const save = page.getByRole('button', { name: 'Save', exact: true });
+  await expect(save).toBeDisabled();
+  await page.locator('#back-fare').fill('1.234,56');
+  await page.locator('#back-ccy').selectOption('JOD');
+  await page.locator('#back-gbp').fill('1,234');
+  await expect(save).toBeDisabled();
+  await page.locator('#back-gbp').fill('300,50');
+  await save.click();
+  const options = await page.evaluate(async () => {
+    const { db } = await import('/src/lib/db.ts');
+    return (await db.opportunities.toArray())[0].options;
+  });
+  expect(options[0]).toMatchObject({ outFarePP: 12.5, backFareLocal: 1234.56, backFarePP: 300.5 });
+});

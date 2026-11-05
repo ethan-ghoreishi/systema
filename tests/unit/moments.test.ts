@@ -1,6 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import type { City, Moment, Stop } from '../../src/lib/db';
-import { alignToStop, stopGroups, visitedPlaces } from '../../src/lib/moments';
+import {
+  alignToStop,
+  stopGroups,
+  visitedPlaces,
+  compareMoments,
+  momentWhen,
+  retrospective,
+} from '../../src/lib/moments';
 
 const city = (id: string, order: number): City => ({
   id,
@@ -193,5 +200,39 @@ describe('alignToStop', () => {
     const m = { ...moment('busker', 'bcn', 10), lat: 1, lng: 2 };
     alignToStop(m, undefined);
     expect([m.cityId, m.lat, m.lng]).toEqual(['bcn', 1, 2]);
+  });
+});
+
+describe('honest retrospective times', () => {
+  const cities = [
+    {
+      ...city('blq', 0),
+      tz: 'Europe/Rome',
+      arrival: '2020-01-01T09:00',
+      departure: '2020-01-02T18:00',
+    },
+  ];
+  const at = Date.parse('2020-01-01T11:00Z');
+  it('labels exact, date-only, approximate and unknown times without inventing a clock', () => {
+    const m = moment('m', 'blq', at);
+    expect(momentWhen(m, cities)).toContain('12:00');
+    expect(momentWhen({ ...m, timePrecision: 'date' }, cities)).toBe('Wed 1 Jan · time unknown');
+    expect(momentWhen({ ...m, timePrecision: 'approximate' }, cities)).toBe('Around Wed 1 Jan');
+    expect(momentWhen({ ...m, timePrecision: 'unknown' }, cities)).toBe('Event time unknown');
+    const unknown = { ...m, at: 0, timePrecision: 'unknown' as const };
+    expect([unknown, m].sort(compareMoments)).toEqual([m, unknown]);
+    const grouped = stopGroups([stop('s', 'blq', 0, at + 1)], [unknown], cities);
+    expect(grouped[0].items.map((i) => i.kind)).toEqual(['stop', 'moment']);
+    expect(grouped[0].items[1].at).toBeUndefined();
+  });
+  it('recognises historical legs and completed undated trips, without changing active capture', () => {
+    const trip = {
+      status: 'planning',
+      startDate: '',
+      endDate: '',
+    } as import('../../src/lib/db').Trip;
+    expect(retrospective(trip, cities, Date.parse('2026-11-05T12:00Z'))).toBe(true);
+    expect(retrospective(trip, cities, at)).toBe(false);
+    expect(retrospective({ ...trip, status: 'done' }, [], at)).toBe(true);
   });
 });
