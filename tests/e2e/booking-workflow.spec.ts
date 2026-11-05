@@ -1,5 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
+import { FakeNas, device, sync } from './nas-fake';
 
 async function seed(page: Page, quote = false) {
   await page.goto('/');
@@ -32,7 +33,7 @@ async function seed(page: Page, quote = false) {
         .where('tripId')
         .equals(id)
         .filter((e) => e.need === 'flight:outbound')
-        .modify({ quote: { amountGBP: 80 } });
+        .modify({ quote: { amountGBP: 80, note: '£40 each × 2, as quoted' } });
     return { id, cityId };
   }, quote);
 }
@@ -724,4 +725,166 @@ test('erasing the last booking detail saves the clear instead of disabling Save'
       return (await db.cities.get(cityId))!.base?.name ?? null;
     }, cityId),
   ).toBeFalsy();
+});
+
+test('a booking opened with a payment refuses a newer payment synced from another device', async ({
+  makeContext,
+}) => {
+  const nas = new FakeNas();
+  const phone = await device(makeContext, nas);
+  const mac = await device(makeContext, nas);
+  const id = await phone.evaluate(async () => {
+    const { db } = await import('/src/lib/db.ts');
+    const { createTrip, addCity } = await import('/src/lib/trips.ts');
+    const id = await createTrip('same-day');
+    await addCity(id, 'Faro', 'EUR', {
+      arrival: '2027-02-12T09:00',
+      departure: '2027-02-12T19:00',
+    });
+    await db.expenses
+      .where('tripId')
+      .equals(id)
+      .filter((e) => e.need === 'flight:outbound')
+      .modify({ skeleton: false, amountGBP: 80, currency: 'GBP' });
+    return id;
+  });
+  expect((await sync(phone)).ok).toBe(true);
+  expect((await sync(mac)).ok).toBe(true);
+  await phone.goto(`/#/trip/${id}/plan`);
+  await sorted(phone);
+  await need(phone, 'Ticket out').getByRole('button').click();
+  await expect(phone.getByLabel('What it cost, for everyone')).toHaveValue('80');
+  await phone.getByLabel('What it cost, for everyone').fill('82');
+  await mac.evaluate(async (id) => {
+    const { db } = await import('/src/lib/db.ts');
+    await db.expenses
+      .where('tripId')
+      .equals(id)
+      .filter((e) => e.need === 'flight:outbound')
+      .modify({ amountGBP: 95, date: '2026-10-02', notes: 'Newer statement' });
+  }, id);
+  expect((await sync(mac)).ok).toBe(true);
+  expect((await sync(phone)).ok).toBe(true);
+  await expect(phone.getByRole('alert')).toContainText('payment changed elsewhere');
+  await expect(phone.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
+  await expect(phone.getByLabel('What it cost, for everyone')).toHaveValue('82');
+  expect(await flightRow(phone, id)).toMatchObject({
+    amountGBP: 95,
+    date: '2026-10-02',
+    notes: 'Newer statement',
+  });
+  await phone.getByRole('button', { name: 'Cancel' }).click();
+  await need(phone, 'Ticket out').getByRole('button').click();
+  await expect(phone.getByLabel('What it cost, for everyone')).toHaveValue('95');
+  await phone.getByLabel('What it cost, for everyone').fill('96');
+  await save(phone);
+  expect(await flightRow(phone, id)).toMatchObject({ amountGBP: 96, notes: 'Newer statement' });
+});
+
+test('the transaction rejects stale payment edits even without a live-query warning, rolling back booking details', async ({
+  page,
+}) => {
+  const { id } = await seed(page);
+  const result = await page.evaluate(async (id) => {
+    const { db } = await import('/src/lib/db.ts');
+    const { bookNeed, tripNeeds, expenseForNeed } = await import('/src/lib/needs.ts');
+    const trip = (await db.trips.get(id))!;
+    const legs = await db.cities.where('tripId').equals(id).toArray();
+    const rows = await db.expenses.where('tripId').equals(id).toArray();
+    const need = tripNeeds(trip, legs, rows, []).find((n) => n.key === 'flight:outbound')!;
+    const row = expenseForNeed(rows, need)!;
+    const errors: string[] = [];
+    // Covers an unpaid form, an existing payment edited remotely, and a deleted payment.
+    for (const scenario of ['unpaid', 'paid', 'deleted']) {
+      const expected = {
+        ...row,
+        skeleton: scenario === 'unpaid',
+        amountGBP: scenario === 'unpaid' ? 0 : 80,
+      };
+      if (scenario === 'deleted') await db.expenses.delete(row.id);
+      else await db.expenses.put({ ...row, skeleton: false, amountGBP: 95, date: '2026-10-02' });
+      try {
+        await bookNeed(trip, need, {
+          expectedExpense: expected,
+          amountGBP: 82,
+          ref: 'MUST-NOT-SAVE',
+        });
+      } catch (err) {
+        errors.push((err as Error).message);
+      }
+    }
+    return {
+      errors,
+      ref: (await db.trips.get(id))!.outbound?.ref,
+      row: await db.expenses.get(row.id),
+    };
+  }, id);
+  expect(result.errors).toHaveLength(3);
+  expect(result.errors.every((e) => e.includes('payment changed elsewhere'))).toBe(true);
+  expect(result.ref).toBeUndefined();
+  expect(result.row).toBeUndefined();
+});
+
+test('historical flight quotes retain their party basis and do not seed a payment for a changed party', async ({
+  page,
+}) => {
+  const { id } = await seed(page, true);
+  await page.goto(`/#/trip/${id}/edit`);
+  await page.getByRole('button', { name: 'Increase party size' }).click();
+  await page.getByRole('button', { name: 'Done', exact: true }).click();
+  await expect(need(page, 'Ticket out')).toContainText('£40 each × 2, as quoted');
+  await need(page, 'Ticket out').getByRole('button').click();
+  await expect(page.getByLabel('What it cost, for everyone')).toHaveValue('');
+  await expect(
+    page.getByText('This is not a quote for the current party of 3.', { exact: false }),
+  ).toBeVisible();
+  await expect(page.getByLabel('Record this amount as paid')).toHaveCount(0);
+  await page.getByLabel('Booking reference', { exact: true }).fill('REFERENCE-ONLY');
+  await save(page);
+  expect(await flightRow(page, id)).toMatchObject({
+    skeleton: true,
+    amountGBP: 0,
+    quote: { amountGBP: 80, note: '£40 each × 2, as quoted' },
+  });
+  await page.getByRole('link', { name: 'Expenses', exact: true }).click();
+  const row = page.locator('.expense-row', { hasText: 'Outbound flight' });
+  await expect(row).toContainText('£40 each × 2, as quoted');
+  await row.click();
+  await page.getByLabel('What it cost, for everyone').fill('125');
+  await save(page);
+  expect(await flightRow(page, id)).toMatchObject({ skeleton: false, amountGBP: 125 });
+});
+
+test('a party change while a quoted payment is open clears the quote and is checked again at save', async ({
+  page,
+}) => {
+  const { id } = await seed(page, true);
+  await page.goto(`/#/trip/${id}/plan`);
+  await need(page, 'Ticket out').getByRole('button').click();
+  await page.getByLabel('Record this amount as paid').check();
+  await page.evaluate(async (id) => {
+    const { db } = await import('/src/lib/db.ts');
+    await db.trips.update(id, { partySize: 3 });
+  }, id);
+  await expect(page.getByLabel('What it cost, for everyone')).toHaveValue('');
+  await expect(page.getByLabel('Record this amount as paid')).toHaveCount(0);
+  const result = await page.evaluate(async (id) => {
+    const { db } = await import('/src/lib/db.ts');
+    const { bookNeed, tripNeeds } = await import('/src/lib/needs.ts');
+    const trip = (await db.trips.get(id))!;
+    const rows = await db.expenses.where('tripId').equals(id).toArray();
+    const needs = tripNeeds(trip, await db.cities.toArray(), rows, []);
+    try {
+      await bookNeed(trip, needs.find((n) => n.key === 'flight:outbound')!, {
+        amountGBP: 80,
+        quotePartySize: 2,
+        ref: 'MUST-NOT-SAVE',
+      });
+    } catch (err) {
+      return (err as Error).message;
+    }
+    return 'Saved unexpectedly';
+  }, id);
+  expect(result).toContain('party size changed');
+  expect(await flightRow(page, id)).toMatchObject({ skeleton: true, amountGBP: 0 });
 });

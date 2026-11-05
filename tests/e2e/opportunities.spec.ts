@@ -570,8 +570,12 @@ test('a quoted fare becomes a booking, and a corrected price stays corrected', a
 
   // --- A quote is not a payment ---
   const before = page.getByRole('region', { name: 'Before you go' });
-  await expect(before.locator('.need', { hasText: 'Ticket out' })).toContainText('quoted £360');
-  await expect(before.locator('.need', { hasText: 'Ticket home' })).toContainText('quoted £212');
+  await expect(before.locator('.need', { hasText: 'Ticket out' })).toContainText(
+    'historical quote £360',
+  );
+  await expect(before.locator('.need', { hasText: 'Ticket home' })).toContainText(
+    'historical quote £212',
+  );
   await page.getByRole('link', { name: 'Expenses' }).click();
   // Nothing has been spent: the quotes are beside the rows, not in the total.
   await expect(

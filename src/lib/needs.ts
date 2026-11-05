@@ -7,6 +7,7 @@ import { researchCities } from './prompt';
 import { tripDepartures } from './readiness';
 import { recomputeTripDerived } from './trips';
 import { todayIso } from './sheet';
+import { same } from './sync';
 
 /**
  * "Before you go": what is still unresolved, worked out from the trip rather
@@ -76,7 +77,7 @@ export function settles(kind: NeedKind, state: NeedState, payOnDay = false): boo
  * Rides nobody books: you walk, you tap in, you flag one down. Saying so is
  * what settles them, and these say it for themselves.
  */
-const NEVER_BOOKED = /\b(walk|walking|metro|underground|tube|taxi|uber|cab|on foot)\b/i;
+const NEVER_BOOKED = /\b(walk|walking|metro|underground|tube|on foot)\b/i;
 
 export function groundJourneySpecified(plan: DepartPlan): boolean {
   const clock = (s?: string) => /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(s ?? '');
@@ -155,7 +156,9 @@ const paymentWords = (row: Expense) =>
 
 /** 'quoted £74' — what the chosen option said this would cost, before anything was paid. */
 const quoted = (row: Expense | undefined): string | undefined =>
-  row?.quote && row.quote.amountGBP > 0 ? `quoted ${gbp(row.quote.amountGBP)}` : undefined;
+  row?.quote && row.quote.amountGBP > 0
+    ? `historical quote ${gbp(row.quote.amountGBP)}${row.quote.note ? ` (${row.quote.note})` : ' (party size not recorded)'}`
+    : undefined;
 
 /** The row carrying this need, paid or not — a skeleton row holds the quote. */
 const rowFor = (expenses: Expense[], key: string): Expense | undefined =>
@@ -614,6 +617,12 @@ export function expenseForNeed(expenses: Expense[], need: Need): Expense | undef
 }
 
 export interface BookInput {
+  /** Forms supply the row shown on opening (null for none). Noninteractive
+   * callers may omit it. Checked inside the write transaction, before any write.
+   */
+  expectedExpense?: Expense | null;
+  /** A confirmed quote can seed a payment only for the party it was offered to. */
+  quotePartySize?: number;
   /** What it came to, in sterling — the figure the ledger and the sheet keep. */
   amountGBP: number;
   /** What was actually charged, where that was not sterling. */
@@ -665,6 +674,10 @@ export async function bookNeed(
     const current = await db.trips.get(trip.id);
     if (!current) throw new Error('This trip no longer exists.');
     trip = current;
+    if (input.quotePartySize !== undefined && input.quotePartySize !== trip.partySize)
+      throw new Error(
+        'The party size changed. Close and reopen this booking to check the total paid.',
+      );
     const legs = await db.cities.where('tripId').equals(trip.id).sortBy('order');
     const expenses = await db.expenses.where('tripId').equals(trip.id).toArray();
     const stops = await db.stops.where('tripId').equals(trip.id).toArray();
@@ -679,6 +692,15 @@ export async function bookNeed(
     const place = input.place === undefined ? details.place?.trim() : input.place.trim();
     const both = input.bothWays ?? details.bothWays;
     const existing = expenseForNeed(expenses, need);
+    // A live-query warning cannot close the race between a tap and a synced
+    // write. Compare the form's snapshot before changing either half of the
+    // booking, so a rejected payment leaves the journey untouched too.
+    if (
+      (input.amountGBP > 0 || (input.amountLocal ?? 0) > 0) &&
+      input.expectedExpense !== undefined &&
+      !same(input.expectedExpense, existing ?? null)
+    )
+      throw new Error('The payment changed elsewhere. Close and reopen this booking to review it.');
     // Exactly one booking line, the way withFxNote keeps exactly one FX line:
     // a reference changed anywhere else (a departure editor, a restored older
     // backup) must not leave the one it replaced sitting in the sheet beside

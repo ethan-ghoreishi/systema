@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
   import { liveQuery } from 'dexie';
-  import { db, type Trip } from '../lib/db';
+  import { db, type Expense, type Trip } from '../lib/db';
+  import { same } from '../lib/sync';
+  import { quoteMatchesParty } from '../lib/quotes';
   import {
     bookNeed,
     bookingDetails,
@@ -52,6 +54,7 @@
       ? {
           ...bookingDetails(current, currentNeed, cities, stops, expenses),
           row: expenseForNeed(expenses, currentNeed),
+          partySize: current.partySize,
         }
       : null;
   });
@@ -83,6 +86,11 @@
   let gbpTouched = $state(false);
   // The row this sheet was filled from held no payment.
   let wasUnpaid = $state(false);
+  let openedRow = $state<Expense | null>(null);
+  let openedPartySize = $state(0);
+  const usableQuote = $derived(
+    quoteMatchesParty(openedRow?.quote, context?.partySize ?? trip.partySize),
+  );
   const recordingPayment = $derived(!quotedUnpaid || recordPayment);
   function changeCurrency(e: Event) {
     currency = (e.currentTarget as HTMLSelectElement).value;
@@ -100,6 +108,8 @@
     if (!context || untrack(() => prefilled)) return;
     prefilled = true;
     const { plan, row } = context;
+    openedRow = row ? structuredClone(row) : null;
+    openedPartySize = context.partySize;
     quotedUnpaid = !!row?.skeleton && quote != null;
     wasUnpaid = !row || !!row.skeleton;
     ref = context.ref ?? '';
@@ -118,13 +128,20 @@
         gbpTouched = true;
       }
       date = row.date || todayIso();
-    } else if (quote != null) {
+    } else if (quote != null && usableQuote) {
       amount = String(quote);
       quotedAmount = true;
     }
   });
 
   let rate = $state<number | null>(1);
+  $effect(() => {
+    if (quotedAmount && !usableQuote) {
+      amount = '';
+      quotedAmount = false;
+      recordPayment = false;
+    }
+  });
   $effect(() => {
     const c = currency;
     const paidOn = date;
@@ -154,6 +171,7 @@
   // A payment for this arrived after the sheet was filled (another device, or
   // another tab). What is on screen was typed against a row that had none.
   const paidElsewhere = $derived(wasUnpaid && !!row && !row.skeleton);
+  const paymentChanged = $derived(prefilled && !same(openedRow, row ?? null));
   const arrived = $derived(
     row && !row.fxPending ? `A payment of ${formatGBP(row.amountGBP)}` : 'A payment',
   );
@@ -177,15 +195,15 @@
       // Only while its field is on screen: see showPounds, and priceEntry.
       overrideGBP: showPounds ? num(gbp) || null : null,
       rate,
-      ...(row && !row.skeleton && !clearedManualGBP
+      ...(openedRow && !openedRow.skeleton && !clearedManualGBP
         ? {
             recorded: {
-              amount: row.currency === 'GBP' ? row.amountGBP : row.amountLocal,
-              amountGBP: row.amountGBP,
-              currency: row.currency,
-              date: row.date,
-              fxRate: row.fxRate,
-              fxPending: row.fxPending,
+              amount: openedRow.currency === 'GBP' ? openedRow.amountGBP : openedRow.amountLocal,
+              amountGBP: openedRow.amountGBP,
+              currency: openedRow.currency,
+              date: openedRow.date,
+              fxRate: openedRow.fxRate,
+              fxPending: openedRow.fxPending,
             },
           }
         : {}),
@@ -194,7 +212,7 @@
   const atRate = $derived(`About ${formatGBP(priced.amountGBP)} at the rate for the payment date.`);
   const spec = $derived(need.book);
 
-  const wouldReplace = $derived(paidElsewhere && money > 0);
+  const wouldReplace = $derived(paymentChanged && money > 0);
   // Anything on this sheet that no longer says what the trip says. Emptying
   // the last detail is a change worth saving: this sheet is where a wrong
   // hotel name or a provider that was never going to be comes back off.
@@ -231,11 +249,13 @@
     try {
       const mins = Number(journeyMin);
       const { expenseId, need: saved } = await bookNeed(trip, need, {
+        expectedExpense: openedRow,
+        ...(quotedAmount && recordingPayment ? { quotePartySize: openedPartySize } : {}),
         amountGBP: priced.amountGBP,
         amountLocal: priced.amountLocal,
         currency: priced.currency,
         fxRate: priced.fxRate,
-        gbpManual: priced.keepRecorded && row ? isManualGBP(row) : priced.gbpManual,
+        gbpManual: priced.keepRecorded && openedRow ? isManualGBP(openedRow) : priced.gbpManual,
         fxPending: priced.fxPending,
         ref: ref.trim(),
         transport: transport.trim(),
@@ -246,7 +266,7 @@
         place: place.trim(),
         bothWays,
         date,
-        paymentMethod: row?.paymentMethod,
+        paymentMethod: openedRow?.paymentMethod,
       });
       const word = STATE_WORD[saved.state];
       onDone(
@@ -344,7 +364,7 @@
         {:else if !isGBP && money > 0}
           <p class="hint">{atRate}</p>
         {/if}
-        {#if quotedUnpaid}
+        {#if quotedUnpaid && usableQuote}
           <label class="switch">
             <input type="checkbox" bind:checked={recordPayment} />
             <span>Record this amount as paid</span>
@@ -352,8 +372,9 @@
         {/if}
         {#if wouldReplace}
           <p class="hint hint--warn" role="alert">
-            {arrived} was recorded for this elsewhere while this was open. Close and reopen to edit it
-            — saving this amount would replace it.
+            The payment changed elsewhere while this was open{row && !row.skeleton
+              ? ` (${arrived.toLowerCase()})`
+              : ''}. Close and reopen to review it before saving an amount.
           </p>
         {:else if paidElsewhere}
           <p class="hint" role="status">
@@ -362,8 +383,12 @@
         {:else}
           <p class="hint">
             {#if quotedUnpaid}
-              Quote: {formatGBP(quote!)}. Confirm it as paid, or enter the actual amount. Saving
-              booking details alone keeps the quote unpaid.
+              Historical quote: {formatGBP(quote!)}. {row?.quote?.note ||
+                'Original party size not recorded.'}
+              {usableQuote
+                ? 'Confirm it as paid, or enter the actual amount.'
+                : `This is not a quote for the current party of ${context?.partySize}. Enter the actual total paid.`}
+              Saving booking details alone keeps it unpaid.
             {:else}
               Enter what you paid. Leave the amount blank to save booking details only.
             {/if}
