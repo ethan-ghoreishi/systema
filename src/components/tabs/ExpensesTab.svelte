@@ -13,11 +13,14 @@
   import { ecbPublishes } from '../../lib/fx';
   import ExpenseCapture from '../ExpenseCapture.svelte';
   import Icon from '../Icon.svelte';
+  import BookNeed from '../BookNeed.svelte';
+  import { tripNeeds, type Need } from '../../lib/needs';
 
   let { trip }: { trip: Trip } = $props();
 
   const expensesQ = liveQuery(() => db.expenses.where('tripId').equals(trip.id).sortBy('order'));
   const citiesQ = liveQuery(() => db.cities.where('tripId').equals(trip.id).sortBy('order'));
+  const stopsQ = liveQuery(() => db.stops.where('tripId').equals(trip.id).toArray());
   const expenses = $derived($expensesQ ?? []);
   const cities = $derived($citiesQ ?? []);
 
@@ -35,6 +38,8 @@
     void cities;
   });
 
+  let booking = $state<Need | null>(null);
+  let status = $state('');
   let captureOpen = $state(false);
   let captureExpense = $state<Expense | null>(null);
   let captureKey = $state(0);
@@ -45,6 +50,17 @@
     captureOpen = true;
   }
   function openEdit(e: Expense) {
+    const need =
+      e.skeleton && e.need
+        ? tripNeeds(trip, cities, expenses, $stopsQ ?? []).find((n) => n.key === e.need && n.book)
+        : undefined;
+    if (need) {
+      const owner = tripNeeds(trip, cities, expenses, $stopsQ ?? []).find(
+        (n) => n.key === need.coveredBy,
+      );
+      booking = owner ?? need;
+      return;
+    }
     captureExpense = e;
     captureKey += 1;
     captureOpen = true;
@@ -52,6 +68,7 @@
 </script>
 
 <div class="expenses">
+  {#if status}<p class="hint hint--ok" role="status">{status}</p>{/if}
   <div class="card total-card">
     <div class="total-row-top">
       <div>
@@ -148,6 +165,10 @@
     </div>
   {/if}
 </div>
+
+{#if booking}
+  <BookNeed {trip} need={booking} onClose={() => (booking = null)} onDone={(m) => (status = m)} />
+{/if}
 
 {#if captureOpen}
   {#key captureKey}

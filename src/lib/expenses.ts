@@ -222,7 +222,7 @@ export function priceEntry(e: AmountEntry): PricedEntry {
     amountLocal: isGBP ? 0 : e.amount,
     currency,
     fxRate: isGBP ? null : override != null ? null : rate,
-    fxPending: unpriced,
+    fxPending: unpriced && e.amount > 0,
     keepRecorded: false,
     autoRate,
     gbpManual: override != null,

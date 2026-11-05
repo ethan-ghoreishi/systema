@@ -79,7 +79,15 @@
   const openTrip = $derived(trips.find((t) => t.opportunityId === id && t.status !== 'done'));
   const visited = $derived(
     !!opp &&
-      ($citiesQ ?? []).some((c) => c.name.trim().toLowerCase() === opp.city.trim().toLowerCase()),
+      trips.some(
+        (t) =>
+          t.status === 'done' &&
+          (!opp.country || t.opportunityId === opp.id) &&
+          ($citiesQ ?? []).some(
+            (c) =>
+              c.tripId === t.id && c.name.trim().toLowerCase() === opp.city.trim().toLowerCase(),
+          ),
+      ),
   );
 
   let status = $state('');

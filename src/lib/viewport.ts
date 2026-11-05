@@ -17,15 +17,20 @@ function focusedField(): HTMLElement | null {
   return el instanceof HTMLElement && el.matches(FIELDS) ? el : null;
 }
 
-/**
- * Put the focused field in the middle of what is still visible. `nearest`
- * would leave a field sitting on the keyboard's top edge, where the next field
- * below it is unreachable; centring also reveals the label and the hint under
- * it, which is where a refusal is written.
- */
+/** Scroll the inner pane against the visible viewport, including iOS keyboard panning. */
 function reveal(el: HTMLElement): void {
   if (document.activeElement !== el) return;
-  el.scrollIntoView({ block: 'center', inline: 'nearest' });
+  const pane = el.closest<HTMLElement>('.modal-body, .screen-body');
+  if (!pane) return;
+  const vv = window.visualViewport;
+  const visibleTop = vv?.offsetTop ?? 0;
+  const visibleBottom = visibleTop + (vv?.height ?? window.innerHeight);
+  const bounds = pane.getBoundingClientRect();
+  const top = Math.max(bounds.top, visibleTop) + 24;
+  const bottom = Math.min(bounds.bottom, visibleBottom) - 24;
+  const field = el.getBoundingClientRect();
+  if (field.top < top || field.height > bottom - top) pane.scrollTop += Math.floor(field.top - top);
+  else if (field.bottom > bottom) pane.scrollTop += Math.ceil(field.bottom - bottom);
 }
 
 export function initViewport(): void {
@@ -36,9 +41,9 @@ export function initViewport(): void {
   };
   if (vv) {
     const update = () => {
-      const kb = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop));
+      const kb = Math.max(0, Math.round(window.innerHeight - vv.height));
       root.style.setProperty('--kb', `${kb}px`);
-      if (kb === 0) settle();
+      if (kb === 0 && !focusedField()) settle();
       else {
         const el = focusedField();
         // Next frame: the padding that `--kb` just grew has to be laid out
@@ -47,9 +52,7 @@ export function initViewport(): void {
       }
     };
     vv.addEventListener('resize', update);
-    vv.addEventListener('scroll', () => {
-      if (!focusedField()) settle();
-    });
+    vv.addEventListener('scroll', update);
     update();
   }
   // Moving between fields while the keyboard is already open fires no resize,

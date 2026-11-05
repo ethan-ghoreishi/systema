@@ -271,3 +271,11 @@ describe('what a saved expense’s £ comes to', () => {
     ).toBe(true);
   });
 });
+
+it('an empty foreign amount is not a payment awaiting an exchange rate', () => {
+  expect(priceEntry({ amount: 0, currency: 'EUR', date: '2026-11-04', rate: null })).toMatchObject({
+    amountGBP: 0,
+    amountLocal: 0,
+    fxPending: false,
+  });
+});

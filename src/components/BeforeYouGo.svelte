@@ -39,6 +39,17 @@
 
   let booking = $state<Need | null>(null);
   let status = $state('');
+  // A journey held on the other direction's ticket is edited through the
+  // purchase that covers it, so that sheet is also what the button offers to
+  // do: pressing "Price it" on a ride already paid for was the wrong promise.
+  const owner = (need: Need) => needs.find((n) => n.key === need.coveredBy) ?? need;
+  const action = (need: Need) => {
+    const o = owner(need);
+    return o.state === 'paid' ? 'Edit' : o.done ? 'Price it' : 'Book it';
+  };
+  function openBooking(need: Need) {
+    booking = owner(need);
+  }
 </script>
 
 {#if trip.status !== 'done' && !over}
@@ -66,7 +77,11 @@
         {:else if need.href}
           <a class="btn btn--ghost btn--sm" href={need.href}>Research</a>
         {:else if need.book}
-          <button class="btn btn--ghost btn--sm" onclick={() => (booking = need)}>Book it</button>
+          <button
+            class="btn btn--ghost btn--sm"
+            aria-label={`${need.label}: ${action(need)}`}
+            onclick={() => openBooking(need)}>{action(need)}</button
+          >
         {/if}
       </div>
     {/each}
@@ -89,12 +104,14 @@
                 class="btn btn--ghost btn--sm"
                 onclick={() => void setCheckedIn(trip, need.departureKey!, false)}>Undo</button
               >
-            {:else if need.book && need.state !== 'paid'}
+            {:else if need.book}
               <!-- Sorted is not paid. The coach you bought last week belongs in
                    the ledger, and hunting for it in Expenses is the friction
                    this card exists to remove. -->
-              <button class="btn btn--ghost btn--sm" onclick={() => (booking = need)}
-                >Price it</button
+              <button
+                class="btn btn--ghost btn--sm"
+                aria-label={`${need.label}: ${action(need)}`}
+                onclick={() => openBooking(need)}>{action(need)}</button
               >
             {/if}
           </div>
