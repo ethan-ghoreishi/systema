@@ -166,7 +166,8 @@
       amount: money,
       currency,
       date,
-      overrideGBP: money > 0 ? num(gbp) || null : null,
+      // Only while its field is on screen: see showPounds, and priceEntry.
+      overrideGBP: showPounds ? num(gbp) || null : null,
       rate,
       ...(row && !row.skeleton
         ? {
@@ -185,8 +186,8 @@
   const atRate = $derived(`About ${formatGBP(priced.amountGBP)} at the rate for the payment date.`);
   const spec = $derived(need.book);
 
-  // A free reservation has nothing to type: saving it *is* the record.
   const wouldReplace = $derived(paidElsewhere && money > 0);
+  // A free reservation has nothing to type: saving it *is* the record.
   const valid = $derived(
     prefilled &&
       !mustTypePounds &&
