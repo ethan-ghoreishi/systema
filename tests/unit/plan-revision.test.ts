@@ -138,6 +138,13 @@ describe('revised routes', () => {
       planSource: c,
     }));
     expect(planMatches(candidates, rows, returning)).toEqual(['st0', 'st1', 'st2']);
+    // A place the ambiguous city left unassigned is matched, never added twice.
+    const unassigned = [
+      ...rows,
+      { ...rows[0], id: 'loose', name: 'Kunsthistorisches', cityId: null, planSource: undefined },
+    ];
+    const withNew = [...candidates, { ...candidate, name: 'Kunsthistorisches', city: 'Vienna' }];
+    expect(planMatches(withNew, unassigned, returning)).toEqual(['st0', 'st1', 'st2', 'loose']);
   });
   it('ignores nested commentary headings and recovers bold location labels', () => {
     const text =

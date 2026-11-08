@@ -131,11 +131,11 @@ test('review a reordered, renamed, reduced route without losing personal records
     ['New square name', false],
     ['Museum', false],
     ['Added place', false],
-    ['Museum', false],
     ['Dinner with Ana', false],
+    ['Museum', false],
     ['Removed', true],
   ]);
-  expect(result.rows[4].id).toBe(ids.mine);
+  expect(result.rows[3].id).toBe(ids.mine);
   expect(result.rows[0].id).toBe(ids.square);
   expect(result.rows[1]).toMatchObject({
     id: ids.museum,
@@ -149,7 +149,7 @@ test('review a reordered, renamed, reduced route without losing personal records
       { text: 'Look down', done: false },
     ],
   });
-  expect(result.rows[3]).toMatchObject({ id: ids.londonMuseum, notes: 'Revised London museum' });
+  expect(result.rows[4]).toMatchObject({ id: ids.londonMuseum, notes: 'Revised London museum' });
   expect(result.rows[5]).toMatchObject({ id: ids.removed, visitedAt: 123 });
   expect(result.moment?.stopId).toBe(ids.removed);
   expect(result.photos).toBe(1);
@@ -532,4 +532,51 @@ test('re-applying an unchanged plan to a trip that returns to a city changes not
       }));
     }, ids.trip),
   ).toEqual(ids.stops.map((s) => ({ ...s, offPlan: false })));
+});
+
+test('a place put back on the route stays there when the plan is applied again', async ({
+  page,
+}) => {
+  await page.goto('/');
+  const id = await page.evaluate(async () => {
+    const { createTrip, addCity } = await import(/* @vite-ignore */ '/src/lib/trips.ts');
+    const { importStopsFromPlan } = await import(/* @vite-ignore */ '/src/lib/stops.ts');
+    const { db } = await import(/* @vite-ignore */ '/src/lib/db.ts');
+    const trip = await createTrip('custom');
+    await addCity(trip, 'Rome', 'EUR');
+    const planText = '## Route\n### Museum\nOne\n### Market\nTwo';
+    await db.trips.update(trip, { planText });
+    await importStopsFromPlan(
+      trip,
+      planText,
+      [],
+      await db.cities.where('tripId').equals(trip).sortBy('order'),
+    );
+    await db.trips.update(trip, { planText: '## Route\n### Museum\nOne' });
+    const market = (await db.stops.where('tripId').equals(trip).sortBy('order'))[1];
+    await db.stops.update(market.id, { offPlan: true });
+    return trip;
+  });
+  await page.goto(`/#/trip/${id}/stops`);
+  await page.getByText('Kept off the route (1)', { exact: true }).click();
+  await page.getByRole('button', { name: 'Return to route' }).click();
+  await page.getByRole('button', { name: 'Review Stops from plan' }).click();
+  const sheet = page.locator('dialog[open]');
+  await expect(
+    sheet.getByRole('region', { name: 'Your own places, kept on the route' }),
+  ).toContainText('Market');
+  await sheet.getByRole('button', { name: 'Apply plan' }).click();
+  await expect(sheet).toHaveCount(0);
+  expect(
+    await page.evaluate(async (trip) => {
+      const { db } = await import(/* @vite-ignore */ '/src/lib/db.ts');
+      return (await db.stops.where('tripId').equals(trip).sortBy('order')).map((s: any) => [
+        s.name,
+        !!s.offPlan,
+      ]);
+    }, id),
+  ).toEqual([
+    ['Museum', false],
+    ['Market', false],
+  ]);
 });

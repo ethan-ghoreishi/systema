@@ -71,7 +71,9 @@
   // itself has to survive leaving this tab (device-local, this session).
   const draftKey = untrack(() => `plan:${trip.id}:draft`);
   $effect(() => {
-    if (editing === 'planText') remember(draftKey, draft);
+    // The saved text it was started from: a draft never comes back over a plan
+    // that has changed since (a sync, or a city pasted on the prompt screen).
+    if (editing === 'planText') remember(draftKey, { base: original, draft });
   });
   let saveError = $state('');
   async function scheduleSave(force = false) {
@@ -106,8 +108,8 @@
     draft = text;
     if (field === 'planText') {
       view = 'plan';
-      const kept = recall<string | null>(draftKey, null);
-      if (kept != null && kept !== text) draft = kept;
+      const kept = recall<{ base: string; draft: string } | null>(draftKey, null);
+      if (kept && kept.base === text && kept.draft !== text) draft = kept.draft;
     }
     editing = field;
   }

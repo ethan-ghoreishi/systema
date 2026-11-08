@@ -194,7 +194,7 @@
           <section aria-label="Your own places, kept on the route">
             <h3 class="section-title">Your own places, kept on the route</h3>
             <p class="hint">
-              Added by hand, so the plan does not drop them. They move to the end of the route.
+              Added by hand, so the plan does not drop them. Each stays with its own leg.
             </p>
             <ul>
               {#each retained.personal as s (s.id)}<li>

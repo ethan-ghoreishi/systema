@@ -21,7 +21,9 @@ export function planCityId(candidate: StopCandidate, cities: City[]): string | n
 /**
  * Match only one unambiguous place of that name. A city the trip returns to
  * cannot say which leg a new place belongs on, but an existing place of that
- * name on one of those legs is still that place — and keeps its own leg.
+ * name on one of those legs is still that place — and keeps its own leg. A
+ * place with no leg of its own can be any leg's: otherwise re-applying the
+ * plan that created it would add it a second time.
  */
 export function planMatches(candidates: StopCandidate[], stops: Stop[], cities: City[]): string[] {
   const used = new Set<string>();
@@ -31,11 +33,7 @@ export function planMatches(candidates: StopCandidate[], stops: Stop[], cities: 
       (s) =>
         !used.has(s.id) &&
         [s.name, s.planSource?.name].some((name) => name && key(name) === key(c.name)) &&
-        (legs.size
-          ? s.cityId
-            ? legs.has(s.cityId)
-            : cities.length === 1
-          : !c.city && cities.length <= 1),
+        (!s.cityId || legs.has(s.cityId)),
     );
     const id = named.length === 1 ? named[0].id : '';
     if (id) used.add(id);
@@ -88,7 +86,9 @@ export function planRetained(
     cities.map((c) => c.name),
   );
   const prior = planMatches(previous, stops, cities);
-  const fromPlan = (s: Stop) => !!s.offPlan || !!s.planSource || prior.includes(s.id);
+  // Only what the plan in force actually listed. A place put back on the route
+  // by hand is the traveller's again, and the next revision leaves it there.
+  const fromPlan = (s: Stop) => !!s.offPlan || prior.includes(s.id);
   const unmatched = stops.filter((s) => !matches.includes(s.id));
   return {
     personal: unmatched.filter((s) => !fromPlan(s)),
@@ -153,12 +153,14 @@ export async function savePlanRevision(
     // No extraction means an unstructured plan, never an instruction to empty the route.
     if (candidates.length) {
       const { personal, offRoute } = planRetained(stops, matches, previousText, cities);
-      const tail = [
-        ...personal.map((s) => ({ ...s, offPlan: false })),
-        ...offRoute.map((s) => ({ ...s, offPlan: true })),
-      ];
-      rows.push(...tail.map((s, i) => ({ ...s, order: rows.length + i })));
-      await db.stops.bulkPut(rows);
+      // A personal place stays with its own leg, never after a later city's
+      // stops, where the list would read it as part of a leg it is not on.
+      for (const s of personal) {
+        const last = rows.map((r) => r.cityId).lastIndexOf(s.cityId);
+        rows.splice(last < 0 ? rows.length : last + 1, 0, { ...s, offPlan: false });
+      }
+      rows.push(...offRoute.map((s) => ({ ...s, offPlan: true })));
+      await db.stops.bulkPut(rows.map((s, order) => ({ ...s, order })));
     }
     await updateTrip(trip.id, { planText: text });
   });
