@@ -367,6 +367,11 @@ describe('what is left before a trip', () => {
       keys(tripNeeds(trip(), [leg()], [], [stop({ bookAhead: 'x', visited: true })], NOW)),
     ).not.toContain('book:s1');
     expect(keys(tripNeeds(trip(), [leg()], [], [stop()], NOW))).not.toContain('book:s1');
+    expect(
+      keys(
+        tripNeeds(trip(), [leg()], [], [stop({ bookAhead: 'Old obligation', offPlan: true })], NOW),
+      ),
+    ).not.toContain('book:s1');
   });
 
   // Some reservations cost nothing — a free timed entry, a slot at a library.

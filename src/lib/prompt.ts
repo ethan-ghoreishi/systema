@@ -155,10 +155,11 @@ const ROUTE_RULES = [
   '  - `Exit rule:` what can be skipped without losing the point',
   '- Where a place cannot simply be walked into — timed entry, a daily quota, a tour that sells out — add one more labelled line: `Book ahead:` what to book and how far in advance. Leave the line out entirely where nothing needs booking; it is a real obligation, not a precaution.',
   '- Then add 2-4 discovery items as Markdown task lines (`- [ ] ...`): concrete, physical things to find, spot, count, or compare on the spot at that exact place. Specific to the stop, never generic.',
-  '- Add one line per stop: `Location: <latitude>, <longitude>` — approximate decimal-degree coordinates, so the app can pin it on the map.',
+  '- Add one line per stop: `Location: <latitude>, <longitude>` — decimal-degree coordinates for the actual place or entrance, so the app can pin it on the map. Omit the line if uncertain; never invent a pin.',
   '- To show the rhythm of the day, you may put a bold line such as `**Morning**` or `**After the hotel**` between stops — never a heading, and never a city name.',
   '- Use level-3 headings for stops only — nowhere else in the document.',
   '- Order the stops as they should be walked.',
+  '- When revising, return the complete replacement route for the requested city or trip, including unchanged places. Keep place names stable unless correcting them. Do not mix alternatives into the route.',
 ];
 
 function sharedInputs(trip: Trip, cities: City[], p: PromptPrefs, interests: string[]): string[] {

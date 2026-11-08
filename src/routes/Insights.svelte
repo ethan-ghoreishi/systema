@@ -199,7 +199,7 @@
               <span class="bar-sub">{r.days ? plural(r.days, 'day') : ''}</span></span
             >
             <span class="hint">
-              {r.visited} of {r.planned} planned stops visited{r.offPlan
+              {plural(r.visited, 'place')} visited · {r.planned} in the current plan{r.offPlan
                 ? ` · ${plural(r.offPlan, 'off-plan moment')}`
                 : ''} · {plural(r.rides, 'ride')} logged{r.perVisitedStop != null
                 ? ` · ${formatGBP(r.perVisitedStop)} per place visited`

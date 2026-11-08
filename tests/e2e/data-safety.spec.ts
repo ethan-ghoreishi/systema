@@ -451,7 +451,8 @@ test('plan and journal edits can be undone, and clearing a journal asks first', 
   await page.evaluate((id) => (location.hash = `/trip/${id}/plan`), trip);
   await page.getByRole('button', { name: 'Edit plan' }).click();
   await page.getByLabel('Itinerary (Markdown)').fill('Accidental paste');
-  await expect.poll(stored).toMatchObject({ plan: 'Accidental paste' });
+  expect((await stored()).plan).toBe('# Original plan');
+  await expect(page.getByText('Plan changes save after review.')).toBeVisible();
   page.once('dialog', (d) => d.accept());
   await page.getByRole('button', { name: 'Undo changes' }).click();
   await expect.poll(stored).toMatchObject({ plan: '# Original plan' });

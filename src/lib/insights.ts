@@ -494,7 +494,7 @@ export function tripRhythm(
         name: tripDisplayName(trip, legs),
         date: tripStartIso(trip, legs),
         days: tripDays(trip, legs),
-        planned: mine.length,
+        planned: mine.filter((s) => !s.offPlan).length,
         visited,
         // Only what happened away from a planned stop: a moment that is part
         // of one happened inside the plan, not off it.
@@ -507,6 +507,6 @@ export function tripRhythm(
         perVisitedStop: visited && experiences ? round2(experiences / visited) : null,
       };
     })
-    .filter((r) => r.planned || r.offPlan || r.rides)
+    .filter((r) => r.planned || r.visited || r.offPlan || r.rides)
     .sort((a, b) => b.date.localeCompare(a.date));
 }

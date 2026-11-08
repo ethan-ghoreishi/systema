@@ -384,3 +384,16 @@ it.each(['date', 'approximate', 'unknown'] as const)(
     expect(() => validateBackup(s)).toThrow(/moments/);
   },
 );
+
+it('retains reviewed-route metadata through the previous validator and merge', () => {
+  const s = snapshot();
+  s.stops[0].offPlan = true;
+  s.stops[0].planSource = { name: 'Archiginnasio', notes: 'Imported research', checklist: [] };
+  expect(() => oldValidate(s)).not.toThrow();
+  expect(() => validateBackup(s)).not.toThrow();
+  const records = { ...s, kv: [], photosMeta: s.photosMeta! } as unknown as SyncRecords;
+  const merged = oldMerge(records as any, records as any, records as any, true).merged;
+  expect(merged.stops[0]).toMatchObject({ offPlan: true, planSource: s.stops[0].planSource });
+  (s.stops[0].planSource as any).checklist = [{ text: 'Bad', done: 'yes' }];
+  expect(() => validateBackup(s)).toThrow(/stops/);
+});

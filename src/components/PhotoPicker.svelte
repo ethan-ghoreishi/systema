@@ -12,6 +12,9 @@
     disabled = false,
   }: { onFiles: (files: File[]) => void; multiple?: boolean; disabled?: boolean } = $props();
 
+  let camera: HTMLInputElement;
+  let library: HTMLInputElement;
+
   function picked(e: Event) {
     const input = e.currentTarget as HTMLInputElement;
     const files = [...(input.files ?? [])];
@@ -21,12 +24,28 @@
 </script>
 
 <div class="photo-picker">
-  <label class="btn btn--ghost" class:btn--disabled={disabled}>
+  <button type="button" class="btn btn--ghost" {disabled} onclick={() => camera.click()}>
     <Icon name="camera" size={20} /> Take photo
-    <input type="file" accept="image/*" capture="environment" hidden onchange={picked} {disabled} />
-  </label>
-  <label class="btn btn--ghost" class:btn--disabled={disabled}>
+  </button>
+  <input
+    bind:this={camera}
+    type="file"
+    accept="image/*"
+    capture="environment"
+    hidden
+    onchange={picked}
+    {disabled}
+  />
+  <button type="button" class="btn btn--ghost" {disabled} onclick={() => library.click()}>
     <Icon name="image" size={20} /> Choose from library
-    <input type="file" accept="image/*" {multiple} hidden onchange={picked} {disabled} />
-  </label>
+  </button>
+  <input
+    bind:this={library}
+    type="file"
+    accept="image/*"
+    {multiple}
+    hidden
+    onchange={picked}
+    {disabled}
+  />
 </div>

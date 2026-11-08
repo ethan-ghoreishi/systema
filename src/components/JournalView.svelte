@@ -69,7 +69,9 @@
     <div class="journal-stats">
       <span>{formatDateRange(trip.startDate, trip.endDate)}</span>
       <span>{tripShape(trip, cities).label}</span>
-      {#if stops.length}<span>{visitedCount}/{stops.length} stops visited</span>{/if}
+      {#if stops.length}<span
+          >{visitedCount} places visited · {stops.filter((s) => !s.offPlan).length} in the current plan</span
+        >{/if}
       {#if total > 0}<span>{formatGBP(total)} spent</span>{/if}
       {#if photos.length}<span>{photos.length} photograph{photos.length > 1 ? 's' : ''}</span>{/if}
     </div>

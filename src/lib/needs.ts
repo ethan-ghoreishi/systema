@@ -455,7 +455,7 @@ export function tripNeeds(
   // --- What the plan itself says to book ahead ---
   for (const s of [...stops].sort((a, b) => a.order - b.order)) {
     const ahead = s.bookAhead?.trim();
-    if (!ahead || s.visited) continue;
+    if (!ahead || s.visited || s.offPlan) continue;
     const key = `book:${s.id}`;
     const row = paid(expenses, key);
     // A timed entry can be free, and the ledger only records what was paid —

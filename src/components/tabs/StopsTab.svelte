@@ -18,7 +18,7 @@
     newStopCandidates,
     cityIds,
   } from '../../lib/stops';
-  import { addPhotos, deletePhoto, downloadPhoto, photoTime } from '../../lib/photos';
+  import { addPhotos, photoTime } from '../../lib/photos';
   import { instantToWall, wallToInstant, wallLabel } from '../../lib/tz';
   import {
     GONE,
@@ -30,13 +30,15 @@
   } from '../../lib/moments';
   import { hasPin, mapsLink } from '../../lib/maps';
   import { tripEndIso } from '../../lib/trip-shape';
-  import { nasBackup } from '../../lib/nas.svelte';
+  import PhotoGallery from '../PhotoGallery.svelte';
   import PhotoPicker from '../PhotoPicker.svelte';
   import MomentCapture from '../MomentCapture.svelte';
   import { router, navigate } from '../../lib/router.svelte';
   import { recall, remember } from '../../lib/ui-memory';
   import Icon from '../Icon.svelte';
   import StopsMap from '../StopsMap.svelte';
+  import PlanRevision from '../PlanRevision.svelte';
+  let reviewingPlan = $state(false);
 
   let { trip }: { trip: Trip } = $props();
 
@@ -81,6 +83,7 @@
   const moments = $derived([...($momentsQ ?? [])].sort(compareMoments));
   let editingMoment = $state<Moment | null>(null);
   const stops = $derived($stopsQ ?? []);
+  const plannedStops = $derived(stops.filter((s) => !s.offPlan));
   const cities = $derived($citiesQ ?? []);
   const allPhotos = $derived($photosQ ?? []);
   const history = $derived(visitedPlaces(stops, cities));
@@ -108,9 +111,9 @@
     | { kind: 'moment'; moment: Moment };
   /** The list, as `stopGroups` orders it, with the move buttons' own indices. */
   const stopRows = $derived.by<StopRow[]>(() => {
-    const indexOf = new Map(stops.map((s, i) => [s.id, i]));
+    const indexOf = new Map(plannedStops.map((s, i) => [s.id, i]));
     const rows: StopRow[] = [];
-    for (const group of stopGroups(stops, moments, cities)) {
+    for (const group of stopGroups(plannedStops, moments, cities)) {
       if (grouped) rows.push({ kind: 'header', label: groupLabel(group.key) });
       for (const it of group.items)
         rows.push(
@@ -154,16 +157,6 @@
   const photos = $derived(
     allPhotos.filter((p) => p.stopId === selectedId).sort((a, b) => photoTime(a) - photoTime(b)),
   );
-  let photoUrls = $state<Record<string, string>>({});
-  $effect(() => {
-    const map: Record<string, string> = {};
-    for (const p of photos) map[p.id] = URL.createObjectURL(p.blob);
-    photoUrls = map;
-    return () => {
-      for (const u of Object.values(map)) URL.revokeObjectURL(u);
-    };
-  });
-
   // Transient "Saved ✓" indicator shared by all autosaving fields here.
   let savedAt = $state<number | null>(null);
   let savedTimer: ReturnType<typeof setTimeout> | null = null;
@@ -389,13 +382,6 @@
     flashSaved();
   }
 
-  /** On the NAS, waiting, or failed — so the backup state of each photo is plain. */
-  function backupBadge(id: string): string {
-    if (!nasBackup.configured) return '';
-    if (nasBackup.failures[id]) return 'not backed up';
-    return '';
-  }
-
   let newItemText = $state('');
   async function addItem() {
     if (!selected) return;
@@ -521,6 +507,17 @@
         {#each moments.filter((m) => m.stopId === selected.id) as m (m.id)}
           <button class="link-btn" onclick={() => (editingMoment = m)}>{m.title}</button>
         {/each}
+      </section>
+    {/if}
+
+    {#if selected.booked || selected.bookingRef?.trim()}
+      <section class="card" aria-label="Booking record">
+        <h2 class="section-title">Booking record</h2>
+        <p>{selected.bookingRef ? `Reference: ${selected.bookingRef}` : 'Reserved'}</p>
+        {#if selected.offPlan}<p class="hint">
+            This place is off the current route. Its reservation has been kept; changing the plan
+            does not cancel a booking.
+          </p>{/if}
       </section>
     {/if}
 
@@ -668,33 +665,7 @@
     <div>
       <span class="label">Photos</span>
       {#if photos.length}
-        <div class="photo-grid">
-          {#each photos as p (p.id)}
-            <div class="photo-thumb">
-              <img src={photoUrls[p.id]} alt={selected.name} loading="lazy" decoding="async" />
-              {#if backupBadge(p.id)}<span class="photo-badge">{backupBadge(p.id)}</span>{/if}
-              <div class="photo-actions">
-                <button class="photo-act" aria-label="Save photo" onclick={() => downloadPhoto(p)}>
-                  <Icon name="export" size={16} />
-                </button>
-                <button
-                  class="photo-act"
-                  aria-label="Delete photo"
-                  onclick={() => {
-                    if (
-                      confirm(
-                        'Delete this photo permanently from this device? Save and verify a separate copy first.',
-                      )
-                    )
-                      void deletePhoto(p.id);
-                  }}
-                >
-                  <Icon name="trash" size={16} />
-                </button>
-              </div>
-            </div>
-          {/each}
-        </div>
+        <PhotoGallery {photos} label={selected.name} />
       {/if}
       <PhotoPicker onFiles={onPhotos} />
       <p class="hint">
@@ -853,7 +824,12 @@
               >{editingOrder ? 'Done reordering' : 'Reorder plan'}</button
             >
           </div>{/if}
-        {#if extractable.length > 0}
+        {#if stops.length && trip.planText.trim()}
+          <button class="btn btn--ghost" onclick={() => (reviewingPlan = true)}
+            >Review Stops from plan</button
+          >
+        {/if}
+        {#if extractable.length > 0 && !stops.length}
           <button class="btn btn--ghost" onclick={extractNow}>
             {stops.length === 0
               ? `Extract ${extractable.length} stops from the plan`
@@ -872,6 +848,25 @@
           <button class="icon-btn" type="submit" aria-label="Add stop"><Icon name="plus" /></button>
         </form>
 
+        {#if stops.some((s) => s.offPlan)}
+          <details class="card">
+            <summary>Kept off the route ({stops.filter((s) => s.offPlan).length})</summary>
+            <p class="hint">
+              Omitted from the revised route. All personal information and history is kept.
+            </p>
+            {#each stops.filter((s) => s.offPlan) as s (s.id)}
+              <div class="cluster">
+                <button class="link-btn" onclick={() => openStop(s)}
+                  >{s.name}{s.visited ? ' · visited' : ''}</button
+                >
+                <button
+                  class="btn btn--ghost btn--sm"
+                  onclick={() => updateStop(s.id, { offPlan: false })}>Return to route</button
+                >
+              </div>
+            {/each}
+          </details>
+        {/if}
         {#if stopRows.length}
           <div class="stop-list">
             {#each stopRows as row, ri (row.kind === 'stop' ? row.stop.id : row.kind === 'moment' ? `m-${row.moment.id}` : `h-${ri}-${row.label}`)}
@@ -940,13 +935,15 @@
                         class="icon-btn icon-btn--sm"
                         aria-label="Move up"
                         disabled={i === 0}
-                        onclick={() => moveStop(stops, i, -1)}><Icon name="up" size={18} /></button
+                        onclick={() => moveStop(plannedStops, i, -1)}
+                        ><Icon name="up" size={18} /></button
                       >
                       <button
                         class="icon-btn icon-btn--sm"
                         aria-label="Move down"
-                        disabled={i === stops.length - 1}
-                        onclick={() => moveStop(stops, i, 1)}><Icon name="down" size={18} /></button
+                        disabled={i === plannedStops.length - 1}
+                        onclick={() => moveStop(plannedStops, i, 1)}
+                        ><Icon name="down" size={18} /></button
                       >
                     </div>{/if}
                 </div>
@@ -974,5 +971,16 @@
     {stops}
     moment={editingMoment}
     onClose={() => (editingMoment = null)}
+  />
+{/if}
+
+{#if reviewingPlan && $stopsQ && $citiesQ}
+  <PlanRevision
+    {trip}
+    {cities}
+    stops={$stopsQ}
+    initialText={trip.planText}
+    onSaved={() => {}}
+    onClose={() => (reviewingPlan = false)}
   />
 {/if}
