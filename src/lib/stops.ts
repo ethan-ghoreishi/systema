@@ -28,6 +28,26 @@ export async function addStop(
   return id;
 }
 
+/**
+ * Put a retained place back on the route, beside the last place on its own
+ * leg — appended, it would read as a leg the trip returns to.
+ */
+export async function returnToRoute(id: string): Promise<void> {
+  await db.transaction('rw', db.stops, async () => {
+    const stop = await db.stops.get(id);
+    if (!stop) throw new Error('This stop was deleted elsewhere');
+    const others = (await db.stops.where('tripId').equals(stop.tripId).sortBy('order')).filter(
+      (s) => s.id !== id,
+    );
+    const route = others.filter((s) => !s.offPlan);
+    const at = route.map((s) => s.cityId).lastIndexOf(stop.cityId);
+    route.splice(at < 0 ? route.length : at + 1, 0, { ...stop, offPlan: false });
+    await db.stops.bulkPut(
+      [...route, ...others.filter((s) => s.offPlan)].map((s, order) => ({ ...s, order })),
+    );
+  });
+}
+
 /** Compare only edited fields, inside the write, so sync cannot be overwritten by an old editor. */
 function checkDraft(stop: Stop, expected: Partial<Stop>): void {
   if (Object.keys(expected).some((key) => stop[key as keyof Stop] !== expected[key as keyof Stop]))

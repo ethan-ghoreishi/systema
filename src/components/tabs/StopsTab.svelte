@@ -16,6 +16,7 @@
     checklistProgress,
     importStopsFromPlan,
     newStopCandidates,
+    returnToRoute,
     cityIds,
   } from '../../lib/stops';
   import { addPhotos, photoTime } from '../../lib/photos';
@@ -859,9 +860,8 @@
                 <button class="link-btn" onclick={() => openStop(s)}
                   >{s.name}{s.visited ? ' · visited' : ''}</button
                 >
-                <button
-                  class="btn btn--ghost btn--sm"
-                  onclick={() => updateStop(s.id, { offPlan: false })}>Return to route</button
+                <button class="btn btn--ghost btn--sm" onclick={() => returnToRoute(s.id)}
+                  >Return to route</button
                 >
               </div>
             {/each}
