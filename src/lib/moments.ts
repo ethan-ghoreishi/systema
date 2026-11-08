@@ -1,8 +1,10 @@
 import { db, type City, type Moment, type Stop } from './db';
-import { instantToWall, wallLabel } from './tz';
+import { instantToWall, wallLabel, wallToInstant } from './tz';
 import { activeLegId, tripEndIso } from './trip-shape';
 import type { Trip } from './db';
 import { newId } from './ids';
+import { same } from './sync';
+import { hasPin } from './maps';
 import { deletePhotosWhere } from './photos';
 
 /**
@@ -19,6 +21,8 @@ export interface MomentInput {
   at?: number;
   timePrecision?: Moment['timePrecision'];
   stopId?: string | null;
+  lat?: number;
+  lng?: number;
 }
 
 /**
@@ -58,26 +62,70 @@ export async function addMoment(input: MomentInput): Promise<string> {
     at: input.at ?? now,
     ...(input.timePrecision ? { timePrecision: input.timePrecision } : {}),
     stopId,
+    lat: input.lat,
+    lng: input.lng,
     createdAt: now,
   };
+  validateMoment(row);
   alignToStop(row, stopId ? await db.stops.get(stopId) : undefined);
   await db.moments.add(row);
   return id;
 }
 
-export async function updateMoment(id: string, patch: Partial<Moment>): Promise<void> {
-  const stopId = 'stopId' in patch ? (patch.stopId ?? null) : undefined;
-  const stop = stopId ? await db.stops.get(stopId) : undefined;
-  await db.moments.update(id, (m) => {
-    // Taken off the plan, a moment is left without a place rather than
-    // falling back to one it carried before it was part of the stop.
-    const unlinked = stopId === null && !!m.stopId;
-    Object.assign(m, patch);
-    if (unlinked) {
-      delete m.lat;
-      delete m.lng;
+function validateMoment(m: Pick<Moment, 'at' | 'lat' | 'lng'>) {
+  if (!Number.isFinite(m.at)) throw new Error('Enter a valid event date and time');
+  if ((m.lat != null || m.lng != null) && !hasPin(m))
+    throw new Error('Enter valid latitude and longitude');
+}
+
+/** A calendar date is not an instant: moving a date-only memory to another city keeps its date. */
+export function keepMomentDate(
+  m: Moment,
+  oldZone: string | undefined,
+  newZone: string | undefined,
+): void {
+  // Nothing to keep when the zone has not moved: an unrelated edit (ticking a
+  // checklist item) must not rewrite a saved instant or churn the sync.
+  if (oldZone === newZone) return;
+  if (m.timePrecision !== 'date' && m.timePrecision !== 'approximate') return;
+  const date = instantToWall(m.at, oldZone).slice(0, 10);
+  const at = wallToInstant(`${date}T12:00`, newZone);
+  if (at == null || instantToWall(at, newZone).slice(0, 10) !== date)
+    throw new Error('This calendar date does not exist in the chosen city');
+  m.at = at;
+}
+
+export async function updateMoment(
+  id: string,
+  patch: Partial<Moment>,
+  expected?: Moment,
+): Promise<void> {
+  await db.transaction('rw', db.moments, db.stops, db.cities, db.photos, async () => {
+    const current = await db.moments.get(id);
+    if (!current)
+      throw new Error('This Moment was deleted elsewhere. Copy your draft before leaving');
+    if (expected && !same(current, expected))
+      throw new Error('This Moment changed elsewhere. Copy your draft, then reopen it');
+    if (
+      current.timePrecision &&
+      !patch.timePrecision &&
+      'timePrecision' in patch &&
+      !('at' in patch)
+    )
+      throw new Error('Enter the exact event date and time');
+    const next = { ...current, ...patch };
+    const cities = await db.cities.where('tripId').equals(current.tripId).toArray();
+    const stop = next.stopId ? await db.stops.get(next.stopId) : undefined;
+    if (current.stopId && !next.stopId && patch.lat == null && patch.lng == null) {
+      delete next.lat;
+      delete next.lng;
     }
-    alignToStop(m, stop);
+    alignToStop(next, stop);
+    if (!('at' in patch)) keepMomentDate(next, zoneOf(current, cities), zoneOf(next, cities));
+    validateMoment(next);
+    await db.moments.put(next);
+    if (next.stopId !== current.stopId)
+      await db.photos.where('momentId').equals(id).modify({ stopId: next.stopId });
   });
 }
 
@@ -291,11 +339,13 @@ export async function placeMoment(
   id: string,
   pos: { lat: number; lng: number } | null,
 ): Promise<void> {
-  await db.moments.update(id, (m) => {
+  if (pos && !hasPin(pos)) throw new Error('Enter valid latitude and longitude');
+  const changed = await db.moments.update(id, (m) => {
     if (pos) Object.assign(m, pos);
     else {
       delete m.lat;
       delete m.lng;
     }
   });
+  if (!changed) throw new Error('This Moment was deleted elsewhere');
 }

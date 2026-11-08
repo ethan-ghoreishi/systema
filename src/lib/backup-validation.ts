@@ -24,6 +24,24 @@ export function validateBackup(value: unknown): asserts value is Backup {
       .every((k) => r[k] === undefined || (typeof r[k] === 'number' && Number.isFinite(r[k])));
   const coord = (v: unknown, max: number) =>
     v === undefined || (typeof v === 'number' && Number.isFinite(v) && Math.abs(v) <= max);
+  const guide = (v: unknown) =>
+    v === undefined ||
+    (object(v) &&
+      optional(v, 'anchor minimum stretch exit', 'string') &&
+      (v.lookFor === undefined ||
+        (Array.isArray(v.lookFor) && v.lookFor.every((s: unknown) => typeof s === 'string'))));
+  const source = (v: unknown) =>
+    v === undefined ||
+    (object(v) &&
+      strings(v, 'name notes') &&
+      optional(v, 'city bookAhead', 'string') &&
+      coord(v.lat, 90) &&
+      coord(v.lng, 180) &&
+      guide(v.guide) &&
+      Array.isArray(v.checklist) &&
+      v.checklist.every(
+        (c: unknown) => object(c) && strings(c, 'text') && typeof c.done === 'boolean',
+      ));
   const departPlan = (v: unknown) =>
     v === undefined ||
     (object(v) &&
@@ -123,7 +141,8 @@ export function validateBackup(value: unknown): asserts value is Backup {
       ) &&
       optionalNumbers(r, 'visitedAt') &&
       optional(r, 'tz legName bookAhead bookingRef', 'string') &&
-      optional(r, 'booked', 'boolean') &&
+      optional(r, 'booked offPlan', 'boolean') &&
+      source(r.planSource) &&
       (r.guide === undefined ||
         (object(r.guide) &&
           optional(r.guide, 'anchor minimum stretch exit', 'string') &&

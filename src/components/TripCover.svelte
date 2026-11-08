@@ -21,7 +21,7 @@
   const multi = $derived(isMultiCity(cities));
   const points = $derived<CoverPoint[]>(
     stops
-      .filter((s) => s.lat != null && s.lng != null)
+      .filter((s) => !s.offPlan && s.lat != null && s.lng != null)
       .map((s) => ({ lat: s.lat as number, lng: s.lng as number, visited: s.visited })),
   );
 

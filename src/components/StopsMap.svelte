@@ -210,18 +210,23 @@
           L.polyline(points, { className: 'map-transfer', weight: 2, dashArray: '2 8' }),
         );
     } else {
+      const routePoints: L.LatLngExpression[] = [];
       shown.forEach((s, i) => {
         if (s.lat == null || s.lng == null) return;
         const pos: L.LatLngExpression = [s.lat, s.lng];
         points.push(pos);
+        if (!s.offPlan) routePoints.push(pos);
+        const label = s.offPlan
+          ? '•'
+          : String(shown.slice(0, i + 1).filter((stop) => !stop.offPlan).length);
         const m = L.marker(pos, {
-          icon: markerIcon(String(i + 1), s.visited),
+          icon: markerIcon(label, s.visited),
           draggable: !readonly,
           title: s.name,
         });
         m.bindPopup(
           popup(
-            `${i + 1}. ${s.name}`,
+            `${s.offPlan ? 'Kept off route: ' : label + '. '}${s.name}`,
             [
               s.visited ? 'Visited' : 'Not visited',
               ...momentsAt(s.id).map((mo) => `Moment: ${mo.title}`),
@@ -240,8 +245,10 @@
         layer!.addLayer(m);
       });
       // A walking line only within one city, and only through planned stops.
-      if (points.length > 1)
-        layer.addLayer(L.polyline(points, { className: 'map-route', weight: 3, dashArray: '6 8' }));
+      if (routePoints.length > 1)
+        layer.addLayer(
+          L.polyline(routePoints, { className: 'map-route', weight: 3, dashArray: '6 8' }),
+        );
 
       // Moments of their own: off the line, and never numbered with the stops.
       for (const mo of shownMoments) {
@@ -253,11 +260,13 @@
           draggable: !readonly,
           title: mo.title,
         });
-        marker.bindPopup(popup(mo.title, ['Off the plan'], () => void placeMoment(mo.id, null)));
+        marker.bindPopup(
+          popup(mo.title, ['Off the plan'], () => savePin(placeMoment(mo.id, null))),
+        );
         if (!readonly)
           marker.on('dragend', () => {
             const p = marker.getLatLng();
-            void placeMoment(mo.id, { lat: round6(p.lat), lng: round6(p.lng) });
+            savePin(placeMoment(mo.id, { lat: round6(p.lat), lng: round6(p.lng) }));
           });
         layer!.addLayer(marker);
       }

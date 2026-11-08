@@ -169,9 +169,14 @@ export function buildTripPack({
   const refsFor = (pred: (p: PackPhoto) => boolean) =>
     manifest.filter((e) => pred(photos.find((p) => p.id === e.id)!)).map((e) => e.ref);
 
-  if (orderedStops.length) {
-    lines.push('## Stops (planned order)', '');
-    for (const s of orderedStops) {
+  for (const offPlan of [false, true]) {
+    const group = orderedStops.filter((s) => !!s.offPlan === offPlan);
+    if (!group.length) continue;
+    lines.push(
+      offPlan ? '## Retained places (off the current route)' : '## Stops (planned order)',
+      '',
+    );
+    for (const s of group) {
       lines.push(`### ${s.name}${s.visited ? ' (visited)' : ''}`);
       if (s.guide?.anchor) lines.push(`Anchor: ${s.guide.anchor}`);
       for (const item of s.checklist) lines.push(`- [${item.done ? 'x' : ' '}] ${item.text}`);

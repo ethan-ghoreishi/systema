@@ -245,6 +245,10 @@ export interface Stop {
   notes: string; // free text — where lens content (system reading, contrasts) is pasted
   checklist: ChecklistItem[];
   visited: boolean;
+  /** Retained history or personal place omitted from the latest reviewed route. */
+  offPlan?: boolean;
+  /** Last imported content, used only to distinguish plan text from personal edits. */
+  planSource?: import('./stops').StopCandidate;
   /** Optional map position (imported from the plan or placed by hand). */
   lat?: number;
   lng?: number;

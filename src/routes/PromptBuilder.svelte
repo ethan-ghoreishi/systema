@@ -16,10 +16,10 @@
   } from '../lib/prompt';
   import { tripDisplayName, tripMetaLabel } from '../lib/trip-shape';
   import { cityBlock, replaceCityBlock } from '../lib/headings';
-  import { importStopsFromPlan } from '../lib/stops';
   import { downloadText } from '../lib/download';
   import { copyText } from '../lib/copy.svelte';
   import PastePlanDialog from '../components/PastePlanDialog.svelte';
+  import PlanRevision from '../components/PlanRevision.svelte';
 
   let { id }: { id: string } = $props();
 
@@ -46,16 +46,17 @@
   const phaseCities = $derived(researchCities(cities));
   const multi = $derived(phaseCities.length > 1);
   const names = $derived(phaseCities.map((c) => c.name));
-  const stopsQ = liveQuery(() => db.stops.where('tripId').equals(id).toArray());
+  const stopsQ = liveQuery(() => db.stops.where('tripId').equals(id).sortBy('order'));
   const stopsByCity = $derived.by(() => {
     const m: Record<string, number> = {};
-    for (const s of $stopsQ ?? []) if (s.cityId) m[s.cityId] = (m[s.cityId] ?? 0) + 1;
+    for (const s of $stopsQ ?? []) if (s.cityId && !s.offPlan) m[s.cityId] = (m[s.cityId] ?? 0) + 1;
     return m;
   });
   const hasPlan = (name: string) => !!trip && !!cityBlock(trip.planText, name, names);
   const nextCity = $derived(phaseCities.find((c) => !hasPlan(c.name))?.id);
 
   let status = $state('');
+  let revisionText = $state<string | null>(null);
   let pasting = $state<{ cityId: string | null } | null>(null);
 
   function remember() {
@@ -79,10 +80,7 @@
     if (!trip) return;
     const city = cities.find((c) => c.id === cityId);
     const planText = city ? replaceCityBlock(trip.planText, city.name, text, names) : text;
-    await updateTrip(id, { planText });
-    const added = await importStopsFromPlan(id, planText, $stopsQ ?? [], cities);
-    const what = city ? `${city.name}'s plan` : 'The plan';
-    status = `${what} saved${added ? `, and ${added} stop${added > 1 ? 's' : ''} added to Stops` : ''}.`;
+    revisionText = planText;
   }
 
   function toggleInterest(tag: string) {
@@ -310,14 +308,26 @@
   {#if pasting}
     {@const city = cities.find((c) => c.id === pasting?.cityId)}
     <PastePlanDialog
+      saveLabel="Review Stops"
       title={city ? `${city.name} plan` : 'Plan'}
       hint={city
-        ? `Paste the answer for ${city.name}. It replaces ${city.name}'s part of the plan; other cities stay as they are. New stops are added to Stops.`
+        ? `Paste the answer for ${city.name}. It replaces ${city.name}'s part of the plan; other cities stay as they are. Review the new order and match renamed places before applying. Existing records are kept.`
         : trip.planText.trim()
-          ? 'Paste the plan. It replaces the current plan (Edit plan on the Plan tab can undo it while editing). New stops are added to Stops.'
-          : 'Paste the plan. New stops are added to Stops.'}
+          ? 'Paste the plan. It replaces the current plan (Edit plan on the Plan tab can undo it while editing). Review the new order and match renamed places before applying. Existing records are kept.'
+          : 'Paste the plan. Review the new order and match renamed places before applying. Existing records are kept.'}
       onSave={(text) => savePasted(pasting!.cityId, text)}
       onClose={() => (pasting = null)}
     />
   {/if}
+{/if}
+
+{#if revisionText != null && trip && $stopsQ && $citiesQ}
+  <PlanRevision
+    {trip}
+    {cities}
+    stops={$stopsQ}
+    initialText={revisionText}
+    onSaved={() => (status = 'Plan and Stops updated. Personal information and history kept.')}
+    onClose={() => (revisionText = null)}
+  />
 {/if}

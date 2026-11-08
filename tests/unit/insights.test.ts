@@ -198,6 +198,15 @@ describe('compareCities', () => {
         createdAt: 2,
       },
     ]);
+    expect(
+      tripRhythm(
+        trips,
+        cities,
+        [],
+        stops.map((s) => ({ ...s, offPlan: true })),
+        [],
+      )[0],
+    ).toMatchObject({ planned: 0, visited: 2 });
     expect(r).toMatchObject({
       planned: 3,
       visited: 2,

@@ -1,7 +1,7 @@
 import { db, type ChecklistItem, type City, type Stop, type StopGuide } from './db';
 import { newId } from './ids';
 import { cityOfHeading, extractSections, type Section } from './headings';
-import { alignToStop } from './moments';
+import { alignToStop, keepMomentDate, zoneOf } from './moments';
 import { deletePhotosWhere } from './photos';
 
 /** Stop + checklist mutations over Dexie. */
@@ -52,7 +52,7 @@ export async function updateStop(
   }
   // The moments that are part of this stop move legs with it, so a moment is
   // never left saying it belongs to one leg while its stop belongs to another.
-  await db.transaction('rw', db.stops, db.moments, async () => {
+  await db.transaction('rw', db.stops, db.moments, db.cities, async () => {
     const changed = await db.stops.update(id, (s) => {
       checkDraft(s, expected);
       Object.assign(s, patch);
@@ -60,11 +60,16 @@ export async function updateStop(
     if (!changed)
       throw new Error('This stop was deleted elsewhere. Copy your draft before leaving');
     const stop = await db.stops.get(id);
+    const cities = await db.cities.where('tripId').equals(stop!.tripId).toArray();
     if (stop)
       await db.moments
         .where('stopId')
         .equals(id)
-        .modify((m) => alignToStop(m, stop));
+        .modify((m) => {
+          const oldZone = zoneOf(m, cities);
+          alignToStop(m, stop);
+          keepMomentDate(m, oldZone, zoneOf(m, cities));
+        });
   });
 }
 
@@ -294,7 +299,7 @@ function parseBody(body: string): ParsedBody {
       if (line.trim()) collectingCues = false;
     }
     const loc = line.match(
-      /^\s*(?:[-*]\s*)?\**location\**[:\s]\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/i,
+      /^\s*(?:[-*]\s*)?\**location\s*\**\s*:\s*\**\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/i,
     );
     if (loc) {
       const la = Number(loc[1]);
@@ -348,7 +353,8 @@ function extractFromBlock(sections: Section[], city: string | undefined): StopCa
 
   const routeIdxs: number[] = [];
   sections.forEach((s, i) => {
-    if (/route|stops|day-by-day|walk/i.test(s.text)) routeIdxs.push(i);
+    if (s.depth <= 2 && /^(?:(?:the|walking)\s+)?(?:route|stops|day-by-day|walk)\b/i.test(s.text))
+      routeIdxs.push(i);
   });
 
   for (const routeIdx of routeIdxs) {
@@ -362,10 +368,17 @@ function extractFromBlock(sections: Section[], city: string | undefined): StopCa
     // deeper, keep only the deeper (actual stop) level.
     const dayDepths = inner.filter((s) => DAY_HEAD.test(s.text)).map((s) => s.depth);
     const stopLevel = dayDepths.length ? Math.min(...dayDepths) + 1 : null;
-    for (const s of inner) {
-      if (DAY_HEAD.test(s.text)) continue;
-      if (stopLevel !== null && s.depth < stopLevel) continue;
-      out.push({ ...toCandidate(s.text, s.body), city });
+    for (const [index, s] of inner.entries()) {
+      if (
+        DAY_HEAD.test(s.text) ||
+        (stopLevel === null && s.depth !== routeDepth + 1) ||
+        (stopLevel !== null && s.depth !== stopLevel)
+      )
+        continue;
+      let body = s.body;
+      for (let j = index + 1; j < inner.length && inner[j].depth > s.depth; j += 1)
+        body += `\n\n${'#'.repeat(inner[j].depth)} ${inner[j].text}\n${inner[j].body}`;
+      out.push({ ...toCandidate(s.text, body), city });
     }
   }
 
@@ -480,13 +493,20 @@ export function guideBackfill(
   knownCities: string[] = [],
   cityIdByName: Map<string, string> = new Map(),
 ) {
-  const out: { id: string; patch: { guide?: StopGuide; bookAhead?: string } }[] = [];
+  const out: {
+    id: string;
+    patch: { guide?: StopGuide; bookAhead?: string; lat?: number; lng?: number };
+  }[] = [];
   const taken = new Set<string>();
   for (const c of extractStopsFromPlan(planText, knownCities)) {
     const stop = matchStop(c, existing, cityIdByName, taken);
     if (stop) taken.add(stop.id);
     if (!stop) continue;
-    const patch: { guide?: StopGuide; bookAhead?: string } = {};
+    const patch: { guide?: StopGuide; bookAhead?: string; lat?: number; lng?: number } = {};
+    if (stop.lat == null && stop.lng == null && c.lat != null && c.lng != null) {
+      patch.lat = c.lat;
+      patch.lng = c.lng;
+    }
     if (c.guide) {
       const have = stop.guide ?? {};
       const merged: StopGuide = { ...have };
@@ -519,31 +539,35 @@ export async function importStopsFromPlan(
   existing: Stop[],
   cities: City[] = [],
 ): Promise<number> {
-  const names = cities.map((c) => c.name);
-  const cityIdByName = cityIds(cities);
-  const fresh = newStopCandidates(planText, existing, names, cityIdByName);
-  const backfill = guideBackfill(planText, existing, names, cityIdByName);
-  for (const b of backfill) await db.stops.update(b.id, b.patch);
-  if (fresh.length === 0) return 0;
+  return db.transaction('rw', db.stops, async () => {
+    existing = await db.stops.where('tripId').equals(tripId).toArray();
+    const names = cities.map((c) => c.name);
+    const cityIdByName = cityIds(cities);
+    const fresh = newStopCandidates(planText, existing, names, cityIdByName);
+    const backfill = guideBackfill(planText, existing, names, cityIdByName);
+    for (const b of backfill) await db.stops.update(b.id, b.patch);
+    if (fresh.length === 0) return 0;
 
-  const base = await db.stops.where('tripId').equals(tripId).count();
-  const now = Date.now();
-  const rows: Stop[] = fresh.map((c, i) => ({
-    id: newId(),
-    tripId,
-    cityId: c.city ? (cityIdByName.get(key(c.city)) ?? null) : null,
-    name: c.name,
-    notes: c.notes,
-    checklist: c.checklist.map((item) => ({ id: newId(), text: item.text, done: item.done })),
-    visited: false,
-    lat: c.lat,
-    lng: c.lng,
-    ...(c.guide ? { guide: c.guide } : {}),
-    ...(c.bookAhead ? { bookAhead: c.bookAhead } : {}),
-    order: base + i,
-    createdAt: now,
-  }));
+    const base = await db.stops.where('tripId').equals(tripId).count();
+    const now = Date.now();
+    const rows: Stop[] = fresh.map((c, i) => ({
+      id: newId(),
+      tripId,
+      cityId: c.city ? (cityIdByName.get(key(c.city)) ?? null) : null,
+      name: c.name,
+      planSource: c,
+      notes: c.notes,
+      checklist: c.checklist.map((item) => ({ id: newId(), text: item.text, done: item.done })),
+      visited: false,
+      lat: c.lat,
+      lng: c.lng,
+      ...(c.guide ? { guide: c.guide } : {}),
+      ...(c.bookAhead ? { bookAhead: c.bookAhead } : {}),
+      order: base + i,
+      createdAt: now,
+    }));
 
-  await db.stops.bulkAdd(rows);
-  return rows.length;
+    await db.stops.bulkAdd(rows);
+    return rows.length;
+  });
 }

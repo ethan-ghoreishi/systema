@@ -61,16 +61,16 @@ test('research one city at a time, paste each answer, and see its anchors', asyn
 
   await page.getByRole('button', { name: 'Paste Bologna plan' }).click();
   await page.getByLabel('Plan text').fill(bologna);
-  await page.getByRole('button', { name: 'Save' }).click();
-  await expect(page.getByRole('status')).toContainText(
-    "Bologna's plan saved, and 2 stops added to Stops.",
-  );
+  await page.getByRole('button', { name: 'Review Stops', exact: true }).click();
+  await page.getByRole('button', { name: 'Apply plan' }).click();
+  await expect(page.getByRole('status')).toContainText('Plan and Stops updated.');
   await expect(page.getByText('plan in · 2 stops')).toBeVisible();
 
   await page.getByRole('button', { name: 'Paste Barcelona plan' }).click();
   await page.getByLabel('Plan text').fill(barcelona);
-  await page.getByRole('button', { name: 'Save' }).click();
-  await expect(page.getByRole('status')).toContainText("Barcelona's plan saved, and 1 stop added");
+  await page.getByRole('button', { name: 'Review Stops', exact: true }).click();
+  await page.getByRole('button', { name: 'Apply plan' }).click();
+  await expect(page.getByRole('status')).toContainText('Plan and Stops updated.');
 
   const plan = await page.evaluate(async (id) => {
     const path = '/src/lib/db.ts';

@@ -6,10 +6,12 @@
     title,
     hint,
     onSave,
+    saveLabel = 'Save',
     onClose,
   }: {
     title: string;
     hint: string;
+    saveLabel?: string;
     onSave: (text: string) => Promise<void>;
     onClose: () => void;
   } = $props();
@@ -50,7 +52,7 @@
       >
       <h2 class="modal-title">{title}</h2>
       <button class="btn btn--primary btn--sm" onclick={save} disabled={saving || !text.trim()}
-        >Save</button
+        >{saveLabel}</button
       >
     </header>
     <div class="modal-body">

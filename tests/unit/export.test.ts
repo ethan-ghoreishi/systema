@@ -380,3 +380,22 @@ describe('descendsFrom', () => {
     expect(mergeClocks({ phone: 2 }, { phone: NaN, mac: 'x' } as never)).toEqual({ phone: 2 });
   });
 });
+
+it('exports retained places with their notes and photos outside the current planned route', () => {
+  const pack = buildTripPack({
+    trip: trip(),
+    cities: [],
+    stops: [
+      stop({ id: 'active', name: 'Active', visited: false }),
+      stop({ id: 'retained', name: 'Retained', offPlan: true, notes: 'Keep this memory' }),
+    ],
+    expenses: [],
+    photos: [],
+  });
+  const planned = pack.split('## Stops (planned order)')[1].split('## Retained places')[0];
+  expect(planned).toContain('### Active');
+  expect(planned).not.toContain('Retained');
+  expect(pack).toContain('## Retained places (off the current route)');
+  expect(pack).toContain('Keep this memory');
+  expect(pack).toContain('## Places visited');
+});

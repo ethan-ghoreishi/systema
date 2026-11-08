@@ -82,29 +82,6 @@ const LIKELY: Record<string, string> = {
 const newestFirst = (expenses: Expense[]) =>
   expenses.filter((e) => !e.skeleton).sort((a, b) => b.createdAt - a.createdAt);
 
-/** The last few distinct things captured (any trip), as one-tap picks. */
-export function recentTemplates(expenses: Expense[], n = 4): ExpenseTemplate[] {
-  const seen = new Set<string>();
-  const out: ExpenseTemplate[] = [];
-  for (const e of newestFirst(expenses)) {
-    const desc = e.description.trim();
-    const key = `${e.category}|${e.subcategory}|${desc.toLowerCase()}`;
-    if (!e.category || !e.subcategory || seen.has(key)) continue;
-    seen.add(key);
-    out.push({
-      key: `recent:${key}`,
-      label: desc || e.subcategory,
-      category: e.category,
-      subcategory: e.subcategory,
-      description: desc || undefined,
-      paymentMethod: e.paymentMethod || undefined,
-      shared: e.shared,
-    });
-    if (out.length >= n) break;
-  }
-  return out;
-}
-
 /** The payment method used last — in this trip if any, else anywhere. */
 export function lastPaymentMethod(expenses: Expense[], tripId: string): string {
   const all = newestFirst(expenses);

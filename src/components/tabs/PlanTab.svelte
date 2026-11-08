@@ -9,6 +9,7 @@
   import JournalView from '../JournalView.svelte';
   import NextDeparture from '../NextDeparture.svelte';
   import BeforeYouGo from '../BeforeYouGo.svelte';
+  import PlanRevision from '../PlanRevision.svelte';
   import PersonalPrep from '../PersonalPrep.svelte';
 
   let { trip }: { trip: Trip } = $props();
@@ -64,9 +65,19 @@
     editing === 'journalText' && !draft.trim() && (trip.journalText ?? '').trim() !== '',
   );
 
+  let revising = $state(false);
+  const stopsQ = liveQuery(() => db.stops.where('tripId').equals(trip.id).sortBy('order'));
+  // Plan text is saved only once its Stops have been reviewed, so the draft
+  // itself has to survive leaving this tab (device-local, this session).
+  const draftKey = untrack(() => `plan:${trip.id}:draft`);
+  $effect(() => {
+    // The saved text it was started from: a draft never comes back over a plan
+    // that has changed since (a sync, or a city pasted on the prompt screen).
+    if (editing === 'planText') remember(draftKey, { base: original, draft });
+  });
   let saveError = $state('');
   async function scheduleSave(force = false) {
-    if (clearingJournal && !force) return true;
+    if (editing === 'planText' || (clearingJournal && !force)) return true;
     try {
       await updateTrip(
         trip.id,
@@ -95,7 +106,11 @@
     const text = (field === 'journalText' ? trip.journalText : trip.planText) ?? '';
     original = text;
     draft = text;
-    if (field === 'planText') view = 'plan';
+    if (field === 'planText') {
+      view = 'plan';
+      const kept = recall<{ base: string; draft: string } | null>(draftKey, null);
+      if (kept && kept.base === text && kept.draft !== text) draft = kept.draft;
+    }
     editing = field;
   }
 
@@ -105,6 +120,14 @@
       !confirm('Clear the saved journal for this trip? This also clears it on your synced devices.')
     )
       return;
+    if (editing === 'planText') {
+      if (draft !== original) revising = true;
+      else {
+        remember(draftKey, null);
+        editing = null;
+      }
+      return;
+    }
     if (await scheduleSave(clearingJournal)) editing = null;
   }
 
@@ -149,11 +172,17 @@
     {/if}
     {#if saveError}<p role="alert" class="hint hint--warn">{saveError}</p>{/if}
     <div class="save-bar">
-      <button class="btn btn--primary" onclick={done}>Done</button>
+      <button class="btn btn--primary" onclick={done}
+        >{editing === 'planText' && draft !== original ? 'Review Stops' : 'Done'}</button
+      >
       {#if draft !== original}
         <button class="btn btn--ghost" onclick={undoEdits}>Undo changes</button>
       {/if}
-      <span class="hint">Saved automatically as you type.</span>
+      <span class="hint"
+        >{editing === 'journalText'
+          ? 'Saved automatically as you type.'
+          : 'Plan changes save after review. Your draft is kept if you leave this tab.'}</span
+      >
     </div>
   {:else}
     {#if hasJournal || rendered}
@@ -179,6 +208,14 @@
         {#if showing === 'plan'}
           <a class="btn btn--ghost" href={`#/trip/${trip.id}/prompt`}>Research prompt</a>
           <button class="btn btn--ghost" onclick={() => startEdit('planText')}>Edit plan</button>
+          <button
+            class="btn btn--primary"
+            onclick={() => {
+              original = trip.planText;
+              draft = '';
+              revising = true;
+            }}>Paste revised plan</button
+          >
         {:else}
           <button class="btn btn--ghost" onclick={() => startEdit('journalText')}
             >Edit journal</button
@@ -232,9 +269,31 @@
         </p>
         <div class="cluster">
           <a class="btn btn--primary" href={`#/trip/${trip.id}/prompt`}>Build research prompt</a>
-          <button class="btn btn--ghost" onclick={() => startEdit('planText')}>Paste plan</button>
+          <button
+            class="btn btn--ghost"
+            onclick={() => {
+              original = trip.planText;
+              draft = '';
+              revising = true;
+            }}>Paste plan</button
+          >
         </div>
       </div>
     {/if}
   {/if}
 </div>
+
+{#if revising && $stopsQ && $citiesQ}
+  <PlanRevision
+    {trip}
+    {cities}
+    stops={$stopsQ}
+    initialText={draft}
+    previousText={original}
+    onSaved={() => {
+      remember(draftKey, null);
+      editing = null;
+    }}
+    onClose={() => (revising = false)}
+  />
+{/if}

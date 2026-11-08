@@ -5,7 +5,6 @@ import {
   isShared,
   lastPaymentMethod,
   likelySubcategory,
-  recentTemplates,
   sharedDestination,
 } from '../../src/lib/expense-defaults';
 import { describe, it, expect } from 'vitest';
@@ -134,7 +133,7 @@ describe('quick capture defaults', () => {
     createdAt: 1,
   };
 
-  it('offers recent picks, the last payment method, and a likely subcategory', () => {
+  it('offers the last payment method and a likely subcategory', () => {
     const older = {
       ...base,
       id: 'o',
@@ -143,7 +142,6 @@ describe('quick capture defaults', () => {
       subcategory: 'Café',
       description: '',
     };
-    expect(recentTemplates([older, base]).map((t) => t.label)).toEqual(['Archiginnasio', 'Café']);
     expect(lastPaymentMethod([base], 'other-trip')).toBe('Cash Payment');
     expect(lastPaymentMethod([], 't')).toBe('Card Payment');
     expect(likelySubcategory('Food', [])).toBe('Grocery Shopping');
