@@ -98,9 +98,9 @@ test('review a reordered, renamed, reduced route without losing personal records
   await expect(sheet.getByRole('region', { name: 'Kept off the route' })).toContainText(
     'Removed · visited',
   );
-  await expect(
-    sheet.getByRole('region', { name: 'Your own places, kept on the route' }),
-  ).toContainText('Dinner with Ana');
+  await expect(sheet.getByRole('region', { name: 'Kept on the route' })).toContainText(
+    'Dinner with Ana',
+  );
   await sheet.getByRole('button', { name: 'Apply plan' }).click();
   await expect(sheet).toHaveCount(0);
   const check = async () =>
@@ -543,8 +543,10 @@ test('a place put back on the route stays there when the plan is applied again',
     const { importStopsFromPlan } = await import(/* @vite-ignore */ '/src/lib/stops.ts');
     const { db } = await import(/* @vite-ignore */ '/src/lib/db.ts');
     const trip = await createTrip('custom');
-    await addCity(trip, 'Rome', 'EUR');
-    const planText = '## Route\n### Museum\nOne\n### Market\nTwo';
+    const rome = await addCity(trip, 'Rome', 'EUR');
+    const lisbon = await addCity(trip, 'Lisbon', 'EUR');
+    const planText =
+      '# Rome\n## Route\n### Museum\nOne\n### Market\nTwo\n# Lisbon\n## Route\n### Castle\nThree';
     await db.trips.update(trip, { planText });
     await importStopsFromPlan(
       trip,
@@ -552,9 +554,14 @@ test('a place put back on the route stays there when the plan is applied again',
       [],
       await db.cities.where('tripId').equals(trip).sortBy('order'),
     );
-    await db.trips.update(trip, { planText: '## Route\n### Museum\nOne' });
+    await db.trips.update(trip, {
+      planText: '# Rome\n## Route\n### Museum\nOne\n# Lisbon\n## Route\n### Castle\nThree',
+    });
     const market = (await db.stops.where('tripId').equals(trip).sortBy('order'))[1];
-    await db.stops.update(market.id, { offPlan: true });
+    // Off the route and last of all: putting it back must not leave it there.
+    await db.stops.update(market.id, { offPlan: true, order: 9 });
+    void rome;
+    void lisbon;
     return trip;
   });
   await page.goto(`/#/trip/${id}/stops`);
@@ -562,9 +569,7 @@ test('a place put back on the route stays there when the plan is applied again',
   await page.getByRole('button', { name: 'Return to route' }).click();
   await page.getByRole('button', { name: 'Review Stops from plan' }).click();
   const sheet = page.locator('dialog[open]');
-  await expect(
-    sheet.getByRole('region', { name: 'Your own places, kept on the route' }),
-  ).toContainText('Market');
+  await expect(sheet.getByRole('region', { name: 'Kept on the route' })).toContainText('Market');
   await sheet.getByRole('button', { name: 'Apply plan' }).click();
   await expect(sheet).toHaveCount(0);
   expect(
@@ -577,6 +582,8 @@ test('a place put back on the route stays there when the plan is applied again',
     }, id),
   ).toEqual([
     ['Museum', false],
+    // Back beside the last place on its own leg, never after a later city.
     ['Market', false],
+    ['Castle', false],
   ]);
 });

@@ -191,10 +191,11 @@
           </section>
         {/if}
         {#if candidates.length && retained.personal.length}
-          <section aria-label="Your own places, kept on the route">
-            <h3 class="section-title">Your own places, kept on the route</h3>
+          <section aria-label="Kept on the route">
+            <h3 class="section-title">Kept on the route</h3>
             <p class="hint">
-              Added by hand, so the plan does not drop them. Each stays with its own leg.
+              Not in this plan, but not the plan's to drop: places you added by hand, and places you
+              put back on the route. Each stays with its own leg.
             </p>
             <ul>
               {#each retained.personal as s (s.id)}<li>
