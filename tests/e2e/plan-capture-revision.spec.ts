@@ -567,6 +567,9 @@ test('a place put back on the route stays there when the plan is applied again',
   await page.goto(`/#/trip/${id}/stops`);
   await page.getByText('Kept off the route (1)', { exact: true }).click();
   await page.getByRole('button', { name: 'Return to route' }).click();
+  // Back on the route, and beside its own leg rather than after the other city.
+  await expect(page.getByText('Kept off the route (1)', { exact: true })).toHaveCount(0);
+  await expect(page.locator('.stop-name')).toHaveText(['Museum', 'Market', 'Castle']);
   await page.getByRole('button', { name: 'Review Stops from plan' }).click();
   const sheet = page.locator('dialog[open]');
   await expect(sheet.getByRole('region', { name: 'Kept on the route' })).toContainText('Market');
