@@ -84,6 +84,9 @@ export function keepMomentDate(
   oldZone: string | undefined,
   newZone: string | undefined,
 ): void {
+  // Nothing to keep when the zone has not moved: an unrelated edit (ticking a
+  // checklist item) must not rewrite a saved instant or churn the sync.
+  if (oldZone === newZone) return;
   if (m.timePrecision !== 'date' && m.timePrecision !== 'approximate') return;
   const date = instantToWall(m.at, oldZone).slice(0, 10);
   const at = wallToInstant(`${date}T12:00`, newZone);

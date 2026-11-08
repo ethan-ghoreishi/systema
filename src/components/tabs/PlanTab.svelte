@@ -67,6 +67,12 @@
 
   let revising = $state(false);
   const stopsQ = liveQuery(() => db.stops.where('tripId').equals(trip.id).sortBy('order'));
+  // Plan text is saved only once its Stops have been reviewed, so the draft
+  // itself has to survive leaving this tab (device-local, this session).
+  const draftKey = untrack(() => `plan:${trip.id}:draft`);
+  $effect(() => {
+    if (editing === 'planText') remember(draftKey, draft);
+  });
   let saveError = $state('');
   async function scheduleSave(force = false) {
     if (editing === 'planText' || (clearingJournal && !force)) return true;
@@ -98,7 +104,11 @@
     const text = (field === 'journalText' ? trip.journalText : trip.planText) ?? '';
     original = text;
     draft = text;
-    if (field === 'planText') view = 'plan';
+    if (field === 'planText') {
+      view = 'plan';
+      const kept = recall<string | null>(draftKey, null);
+      if (kept != null && kept !== text) draft = kept;
+    }
     editing = field;
   }
 
@@ -110,7 +120,10 @@
       return;
     if (editing === 'planText') {
       if (draft !== original) revising = true;
-      else editing = null;
+      else {
+        remember(draftKey, null);
+        editing = null;
+      }
       return;
     }
     if (await scheduleSave(clearingJournal)) editing = null;
@@ -166,7 +179,7 @@
       <span class="hint"
         >{editing === 'journalText'
           ? 'Saved automatically as you type.'
-          : 'Plan changes save after review.'}</span
+          : 'Plan changes save after review. Your draft is kept if you leave this tab.'}</span
       >
     </div>
   {:else}
@@ -275,7 +288,10 @@
     stops={$stopsQ}
     initialText={draft}
     previousText={original}
-    onSaved={() => (editing = null)}
+    onSaved={() => {
+      remember(draftKey, null);
+      editing = null;
+    }}
     onClose={() => (revising = false)}
   />
 {/if}

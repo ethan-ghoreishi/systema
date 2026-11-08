@@ -11,6 +11,7 @@
   }: { photos: Photo[]; label: string; disabled?: boolean } = $props();
   let urls = $state<Record<string, string>>({});
   let opened = $state<Photo | null>(null);
+  let viewer: HTMLDialogElement;
   let error = $state('');
   let unavailable = $state<Record<string, boolean>>({});
   $effect(() => {
@@ -18,6 +19,10 @@
     urls = next;
     return () => Object.values(next).forEach((url) => URL.revokeObjectURL(url));
   });
+  function open(photo: Photo) {
+    opened = photo;
+    viewer.showModal();
+  }
   function badge(id: string): string {
     return nasBackup.configured && nasBackup.failures[id] ? 'not backed up' : '';
   }
@@ -30,7 +35,7 @@
       return;
     try {
       await deletePhoto(photo.id);
-      opened = null;
+      if (viewer.open) viewer.close();
       error = '';
     } catch (err) {
       error = `Photo not deleted: ${err instanceof Error ? err.message : String(err)}`;
@@ -42,7 +47,7 @@
 <div class="photo-grid">
   {#each photos as p (p.id)}
     <div class="photo-thumb">
-      <button class="photo-open" aria-label={`View photo of ${label}`} onclick={() => (opened = p)}>
+      <button class="photo-open" aria-label={`View photo of ${label}`} onclick={() => open(p)}>
         <img
           src={urls[p.id]}
           alt={label}
@@ -65,12 +70,30 @@
     </div>
   {/each}
 </div>
-{#if opened && urls[opened.id]}
-  <div class="card" role="region" aria-label="Full photograph">
-    <button class="btn btn--ghost" onclick={() => (opened = null)}>Close photo</button>
-    <img style="display:block;width:100%;height:auto" src={urls[opened.id]} alt={label} />
+<!-- The enlarged photograph sits above everything, the way every other
+     full-screen view here does: inline it would open below the fold. -->
+<dialog
+  class="modal"
+  aria-label="Photograph"
+  bind:this={viewer}
+  onclose={(e) => {
+    e.stopPropagation();
+    opened = null;
+  }}
+  oncancel={(e) => e.stopPropagation()}
+>
+  <div class="modal-sheet">
+    <header class="modal-head">
+      <button class="btn btn--ghost btn--sm" onclick={() => viewer.close()}>Close photo</button>
+      <h2 class="modal-title">{label}</h2>
+    </header>
+    <div class="modal-body">
+      {#if opened && urls[opened.id]}
+        <img class="photo-full" src={urls[opened.id]} alt={label} />
+      {/if}
+    </div>
   </div>
-{/if}
+</dialog>
 
 <style>
   .photo-open {
@@ -81,5 +104,12 @@
     border: 0;
     background: transparent;
     cursor: pointer;
+  }
+
+  .photo-full {
+    display: block;
+    width: 100%;
+    height: auto;
+    margin-inline: auto;
   }
 </style>

@@ -12,9 +12,16 @@ test('review a reordered, renamed, reduced route without losing personal records
   const nas = new FakeNas();
   const page = await device(makeContext, nas);
   const ids = await page.evaluate(async () => {
-    const { db, createTrip, addCity, importStopsFromPlan, updateStop, addMoment, addPhoto } = (
-      window as any
-    ).m;
+    const {
+      db,
+      createTrip,
+      addCity,
+      addStop,
+      importStopsFromPlan,
+      updateStop,
+      addMoment,
+      addPhoto,
+    } = (window as any).m;
     const trip = await createTrip('custom');
     const rome = await addCity(trip, 'Rome', 'EUR', { tz: 'Europe/Rome' });
     const london = await addCity(trip, 'London', 'GBP', { tz: 'Europe/London' });
@@ -53,7 +60,10 @@ test('review a reordered, renamed, reduced route without losing personal records
       stopId: removed.id,
       momentId: moment,
     });
+    // Added by hand, never part of the plan: a revised route has no say over it.
+    const mine = await addStop(trip, 'Dinner with Ana', rome);
     return {
+      mine,
       trip,
       rome,
       london,
@@ -74,10 +84,23 @@ test('review a reordered, renamed, reduced route without losing personal records
       '# Rome\n## Route\n### New square name\nUpdated square\n### Museum\nRevised research\nAnchor: New entrance\nLocation: 42, 13\n- [ ] Look down\n### Added place\nLocation: 41.8, 12.3\n# London\n## Route\n### Museum\nRevised London museum',
     );
   await sheet.getByRole('button', { name: 'Review Stops', exact: true }).click();
+  // An unchanged place states what will happen to it and needs no interaction.
+  await expect(sheet.getByText('Keeps your record · Rome', { exact: true }).first()).toBeVisible();
+  await sheet
+    .getByRole('button', { name: 'Match an existing place for 1. New square name' })
+    .click();
   await sheet.getByLabel('1. New square name · Rome').selectOption(ids.square);
+  // Matching across legs is allowed, but never silently moves the record.
+  await sheet.getByRole('button', { name: 'Match an existing place for 3. Added place' }).click();
+  await sheet.getByLabel('3. Added place · Rome').selectOption(ids.londonMuseum);
+  await expect(sheet.getByText('This record belongs to London and stays there')).toBeVisible();
+  await sheet.getByLabel('3. Added place · Rome').selectOption('');
   await expect(sheet.getByRole('region', { name: 'Kept off the route' })).toContainText(
     'Removed · visited',
   );
+  await expect(
+    sheet.getByRole('region', { name: 'Your own places, kept on the route' }),
+  ).toContainText('Dinner with Ana');
   await sheet.getByRole('button', { name: 'Apply plan' }).click();
   await expect(sheet).toHaveCount(0);
   const check = async () =>
@@ -109,8 +132,10 @@ test('review a reordered, renamed, reduced route without losing personal records
     ['Museum', false],
     ['Added place', false],
     ['Museum', false],
+    ['Dinner with Ana', false],
     ['Removed', true],
   ]);
+  expect(result.rows[4].id).toBe(ids.mine);
   expect(result.rows[0].id).toBe(ids.square);
   expect(result.rows[1]).toMatchObject({
     id: ids.museum,
@@ -125,7 +150,7 @@ test('review a reordered, renamed, reduced route without losing personal records
     ],
   });
   expect(result.rows[3]).toMatchObject({ id: ids.londonMuseum, notes: 'Revised London museum' });
-  expect(result.rows[4]).toMatchObject({ id: ids.removed, visitedAt: 123 });
+  expect(result.rows[5]).toMatchObject({ id: ids.removed, visitedAt: 123 });
   expect(result.moment?.stopId).toBe(ids.removed);
   expect(result.photos).toBe(1);
   await page.goto(`/#/trip/${ids.trip}/stops`);
@@ -222,8 +247,9 @@ test('real Moment photos open from List and Visited, survive NAS and ZIP, and de
   await expect(image).toHaveCount(1);
   await expect.poll(() => image.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(1);
   await sheet.getByRole('button', { name: 'View photo of Photographed courtyard' }).click();
-  await expect(sheet.getByRole('region', { name: 'Full photograph' })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Photograph' })).toBeVisible();
   await sheet.getByRole('button', { name: 'Close photo' }).click();
+  await expect(page.getByRole('dialog', { name: 'Photograph' })).toBeHidden();
   await sheet.getByText('Map location (optional)', { exact: true }).click();
   await sheet.getByLabel('Latitude').fill('41.91');
   await sheet.getByLabel('Longitude').fill('12.45');
@@ -407,7 +433,15 @@ test('editing plan text stages the change until review, and a cancelled review k
       return (await db.trips.get(id)).planText;
     }, id),
   ).toBe('## Route\n### Old place\nOriginal');
+  // The draft also survives leaving the trip and coming back.
+  await page.goto(`/#/trip/${id}/stops`);
+  await page.goto(`/#/trip/${id}/plan`);
+  await page.getByRole('button', { name: 'Edit plan', exact: true }).click();
+  await expect(page.getByLabel('Itinerary (Markdown)')).toHaveValue(
+    '## Route\n### New place\nRevised',
+  );
   await page.getByRole('button', { name: 'Review Stops', exact: true }).click();
+  await sheet.getByRole('button', { name: 'Match an existing place for 1. New place' }).click();
   await sheet.getByLabel('1. New place').selectOption({ label: 'Old place · keep this record' });
   await sheet.getByRole('button', { name: 'Apply plan' }).click();
   await expect(sheet).toHaveCount(0);
@@ -455,4 +489,47 @@ test('a concurrent expense correction is not overwritten by an open editor', asy
       return (await db.expenses.get(id)).amountGBP;
     }, ids.expense),
   ).toBe(12);
+});
+
+test('re-applying an unchanged plan to a trip that returns to a city changes nothing', async ({
+  page,
+}) => {
+  await page.goto('/');
+  const ids = await page.evaluate(async () => {
+    const { createTrip, addCity } = await import(/* @vite-ignore */ '/src/lib/trips.ts');
+    const { importStopsFromPlan } = await import(/* @vite-ignore */ '/src/lib/stops.ts');
+    const { db } = await import(/* @vite-ignore */ '/src/lib/db.ts');
+    const trip = await createTrip('custom');
+    await addCity(trip, 'Vienna', 'EUR');
+    await addCity(trip, 'Salzburg', 'EUR');
+    await addCity(trip, 'Vienna', 'EUR');
+    const planText =
+      '# Vienna\n## Route\n### Belvedere\nGarden side\n### Naschmarkt\nMarket\n# Salzburg\n## Route\n### Fortress\nAbove the river';
+    await db.trips.update(trip, { planText });
+    await importStopsFromPlan(
+      trip,
+      planText,
+      [],
+      await db.cities.where('tripId').equals(trip).sortBy('order'),
+    );
+    const rows = await db.stops.where('tripId').equals(trip).sortBy('order');
+    return { trip, stops: rows.map((s) => ({ id: s.id, name: s.name, cityId: s.cityId })) };
+  });
+  await page.goto(`/#/trip/${ids.trip}/stops`);
+  await page.getByRole('button', { name: 'Review Stops from plan' }).click();
+  const sheet = page.locator('dialog[open]');
+  await expect(sheet.getByRole('region', { name: 'Kept off the route' })).toHaveCount(0);
+  await sheet.getByRole('button', { name: 'Apply plan' }).click();
+  await expect(sheet).toHaveCount(0);
+  expect(
+    await page.evaluate(async (trip) => {
+      const { db } = await import(/* @vite-ignore */ '/src/lib/db.ts');
+      return (await db.stops.where('tripId').equals(trip).sortBy('order')).map((s: any) => ({
+        id: s.id,
+        name: s.name,
+        cityId: s.cityId,
+        offPlan: !!s.offPlan,
+      }));
+    }, ids.trip),
+  ).toEqual(ids.stops.map((s) => ({ ...s, offPlan: false })));
 });

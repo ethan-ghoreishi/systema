@@ -6,27 +6,35 @@ import { updateTrip } from './trips';
 
 const key = (name: string) => name.trim().toLocaleLowerCase();
 
-/** Unlabelled single-city plans are safe to assign; repeated city names need an explicit leg. */
-export function planCityId(candidate: StopCandidate, cities: City[]): string | null {
+/** The legs this plan text could be speaking about: every leg of that name. */
+function planCities(candidate: StopCandidate, cities: City[]): City[] {
   const named = cities.filter((city) => key(city.name) === key(candidate.city ?? ''));
-  return named.length === 1
-    ? named[0].id
-    : !candidate.city && cities.length === 1
-      ? cities[0].id
-      : null;
+  return named.length ? named : !candidate.city && cities.length === 1 ? cities : [];
 }
 
-/** Match only one unambiguous place in the same city. Renames need the traveller's choice. */
+/** Unlabelled single-city plans are safe to assign; repeated city names need an explicit leg. */
+export function planCityId(candidate: StopCandidate, cities: City[]): string | null {
+  const named = planCities(candidate, cities);
+  return named.length === 1 ? named[0].id : null;
+}
+
+/**
+ * Match only one unambiguous place of that name. A city the trip returns to
+ * cannot say which leg a new place belongs on, but an existing place of that
+ * name on one of those legs is still that place — and keeps its own leg.
+ */
 export function planMatches(candidates: StopCandidate[], stops: Stop[], cities: City[]): string[] {
   const used = new Set<string>();
   return candidates.map((c) => {
-    const cityId = planCityId(c, cities);
+    const legs = new Set(planCities(c, cities).map((city) => city.id));
     const named = stops.filter(
       (s) =>
         !used.has(s.id) &&
         [s.name, s.planSource?.name].some((name) => name && key(name) === key(c.name)) &&
-        (cityId
-          ? s.cityId === cityId || (!s.cityId && cities.length === 1)
+        (legs.size
+          ? s.cityId
+            ? legs.has(s.cityId)
+            : cities.length === 1
           : !c.city && cities.length <= 1),
     );
     const id = named.length === 1 ? named[0].id : '';
@@ -62,6 +70,30 @@ export function revisedStop(stop: Stop, next: StopCandidate, previous?: StopCand
       row.checklist.push({ id: newId(), ...item });
   }
   return row;
+}
+
+/**
+ * What becomes of the places the revised route does not list. A revised route
+ * only speaks for the places the plan itself put there: one added by hand was
+ * never the plan's to drop, so it stays on the route.
+ */
+export function planRetained(
+  stops: Stop[],
+  matches: string[],
+  previousText: string,
+  cities: City[],
+): { personal: Stop[]; offRoute: Stop[] } {
+  const previous = extractStopsFromPlan(
+    previousText,
+    cities.map((c) => c.name),
+  );
+  const prior = planMatches(previous, stops, cities);
+  const fromPlan = (s: Stop) => !!s.offPlan || !!s.planSource || prior.includes(s.id);
+  const unmatched = stops.filter((s) => !matches.includes(s.id));
+  return {
+    personal: unmatched.filter((s) => !fromPlan(s)),
+    offRoute: unmatched.filter(fromPlan),
+  };
 }
 
 export async function savePlanRevision(
@@ -120,8 +152,12 @@ export async function savePlanRevision(
     });
     // No extraction means an unstructured plan, never an instruction to empty the route.
     if (candidates.length) {
-      const retained = stops.filter((s) => !matches.includes(s.id));
-      rows.push(...retained.map((s, i) => ({ ...s, offPlan: true, order: rows.length + i })));
+      const { personal, offRoute } = planRetained(stops, matches, previousText, cities);
+      const tail = [
+        ...personal.map((s) => ({ ...s, offPlan: false })),
+        ...offRoute.map((s) => ({ ...s, offPlan: true })),
+      ];
+      rows.push(...tail.map((s, i) => ({ ...s, order: rows.length + i })));
       await db.stops.bulkPut(rows);
     }
     await updateTrip(trip.id, { planText: text });

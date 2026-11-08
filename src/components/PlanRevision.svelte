@@ -2,7 +2,7 @@
   import { onMount, untrack } from 'svelte';
   import type { City, Stop, Trip } from '../lib/db';
   import { extractStopsFromPlan } from '../lib/stops';
-  import { planCityId, planMatches, savePlanRevision } from '../lib/plan-revision';
+  import { planCityId, planMatches, planRetained, savePlanRevision } from '../lib/plan-revision';
 
   let {
     trip,
@@ -44,17 +44,24 @@
   let saving = $state(false);
   let error = $state('');
   let dialog: HTMLDialogElement;
+  // Long routes are mostly unchanged: each place states what will happen to it,
+  // and only the rows the traveller opens carry the full list of places.
+  let openRows = $state<number[]>([]);
+  const name = (s: string) => s.trim().toLocaleLowerCase();
+  const cityName = (id: string | null | undefined) =>
+    snapshot.cities.find((city) => city.id === id)?.name;
   const candidates = $derived(
     extractStopsFromPlan(
       text,
       snapshot.cities.map((c) => c.name),
     ),
   );
-  const retained = $derived(snapshot.stops.filter((s) => !matches.includes(s.id)));
+  const retained = $derived(planRetained(snapshot.stops, matches, previousText, snapshot.cities));
   const valid = $derived(new Set(matches.filter(Boolean)).size === matches.filter(Boolean).length);
   onMount(() => dialog.showModal());
   function review() {
     matches = planMatches(candidates, snapshot.stops, snapshot.cities);
+    openRows = [];
     reviewing = true;
   }
   async function save() {
@@ -115,13 +122,29 @@
         </p>
         {#each candidates as c, i (i)}
           {@const matched = snapshot.stops.find((s) => s.id === matches[i])}
-          <div>
-            <label class="label" for={`match-${i}`}
-              >{i + 1}. {c.name}{c.city ? ` · ${c.city}` : ''}</label
-            >
+          {@const matchedCity = cityName(matched?.cityId)}
+          <div class="revision-row">
+            {#if openRows.includes(i)}
+              <label class="label" for={`match-${i}`}
+                >{i + 1}. {c.name}{c.city ? ` · ${c.city}` : ''}</label
+              >
+            {:else}
+              <span class="label">{i + 1}. {c.name}{c.city ? ` · ${c.city}` : ''}</span>
+            {/if}
+            <p class="hint">
+              {matched
+                ? `Keeps your record${matched.name === c.name ? '' : ` “${matched.name}”`}${matchedCity ? ` · ${matchedCity}` : ''}${matched.visited ? ' · visited' : ''}`
+                : 'New place'}
+            </p>
             {#if matched && matched.lat == null && matched.lng == null && c.lat != null && c.lng != null}
               <p class="hint">
                 Missing map pin will be filled from the plan. Check its accuracy before navigating.
+              </p>
+            {/if}
+            {#if matched && c.city && matchedCity && name(matchedCity) !== name(c.city)}
+              <p class="hint hint--warn">
+                This record belongs to {matchedCity} and stays there, even though the plan lists it under
+                {c.city}. Match a place from {c.city} instead, or move it in Stops after applying.
               </p>
             {/if}
             {#if !matched && snapshot.cities.length && !planCityId(c, snapshot.cities)}
@@ -130,22 +153,30 @@
                 Stops.
               </p>
             {/if}
-            <select class="field" id={`match-${i}`} bind:value={matches[i]} disabled={saving}>
-              <option value="">Add as a new place</option>
-              {#each snapshot.stops as s (s.id)}
-                <option value={s.id}
-                  >{s.name}{snapshot.cities.find((city) => city.id === s.cityId)?.name
-                    ? ` · ${snapshot.cities.find((city) => city.id === s.cityId)?.name}`
-                    : ''} · keep this record</option
-                >
-              {/each}
-            </select>
+            {#if openRows.includes(i)}
+              <select class="field" id={`match-${i}`} bind:value={matches[i]} disabled={saving}>
+                <option value="">Add as a new place</option>
+                {#each snapshot.stops as s (s.id)}
+                  <option value={s.id}
+                    >{s.name}{cityName(s.cityId) ? ` · ${cityName(s.cityId)}` : ''} · keep this record</option
+                  >
+                {/each}
+              </select>
+            {:else}
+              <button
+                class="btn btn--ghost btn--sm"
+                disabled={saving}
+                aria-label={`${matched ? 'Change match' : 'Match an existing place'} for ${i + 1}. ${c.name}`}
+                onclick={() => (openRows = [...openRows, i])}
+                >{matched ? 'Change match' : 'Match an existing place'}</button
+              >
+            {/if}
           </div>
         {/each}
         {#if !valid}<p class="hint hint--warn" role="alert">
             Choose each existing place only once.
           </p>{/if}
-        {#if candidates.length && retained.length}
+        {#if candidates.length && retained.offRoute.length}
           <section aria-label="Kept off the route">
             <h3 class="section-title">Kept off the route</h3>
             <p class="hint">
@@ -153,10 +184,26 @@
               renamed, match it above.
             </p>
             <ul>
-              {#each retained as s (s.id)}<li>{s.name}{s.visited ? ' · visited' : ''}</li>{/each}
+              {#each retained.offRoute as s (s.id)}<li>
+                  {s.name}{s.visited ? ' · visited' : ''}
+                </li>{/each}
             </ul>
           </section>
-        {:else if !candidates.length}
+        {/if}
+        {#if candidates.length && retained.personal.length}
+          <section aria-label="Your own places, kept on the route">
+            <h3 class="section-title">Your own places, kept on the route</h3>
+            <p class="hint">
+              Added by hand, so the plan does not drop them. They move to the end of the route.
+            </p>
+            <ul>
+              {#each retained.personal as s (s.id)}<li>
+                  {s.name}{s.visited ? ' · visited' : ''}
+                </li>{/each}
+            </ul>
+          </section>
+        {/if}
+        {#if !candidates.length}
           <p class="hint hint--warn" role="alert">
             No places recognised. Applying saves the text and keeps your existing route. Use a “##
             Route” section with one “### Place name” heading per stop.

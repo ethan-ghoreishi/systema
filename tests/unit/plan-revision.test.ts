@@ -105,7 +105,39 @@ describe('revised routes', () => {
     expect(planMatches([candidate], rows, cities)).toEqual(['']);
     const repeated = [...cities, { ...cities[0], id: 'return-rome' }];
     expect(planCityId({ ...candidate, city: 'Rome' }, repeated)).toBeNull();
-    expect(planMatches([{ ...candidate, city: 'Rome' }], rows, repeated)).toEqual(['']);
+    // A city the trip returns to cannot place a *new* stop, but the one
+    // existing place of that name is still that place, and keeps its own leg.
+    expect(planMatches([{ ...candidate, city: 'Rome' }], rows, repeated)).toEqual(['s']);
+    expect(
+      planMatches(
+        [{ ...candidate, city: 'Rome' }],
+        [stop, { ...stop, id: 'again', cityId: 'return-rome' }],
+        repeated,
+      ),
+    ).toEqual(['']);
+  });
+  it('re-applying the same plan to a trip that returns to a city changes nothing', () => {
+    const returning = [
+      { id: 'v1', tripId: 't', name: 'Vienna', currency: 'EUR', order: 0 },
+      { id: 's1', tripId: 't', name: 'Salzburg', currency: 'EUR', order: 1 },
+      { id: 'v2', tripId: 't', name: 'Vienna', currency: 'EUR', order: 2 },
+    ];
+    const text =
+      '# Vienna\n## Route\n### Belvedere\nNotes\n### Naschmarkt\nNotes\n# Salzburg\n## Route\n### Fortress\nNotes';
+    const candidates = extractStopsFromPlan(
+      text,
+      returning.map((c) => c.name),
+    );
+    const rows: Stop[] = candidates.map((c, i) => ({
+      ...stop,
+      id: `st${i}`,
+      cityId: c.city === 'Salzburg' ? 's1' : 'v1',
+      name: c.name,
+      notes: c.notes,
+      order: i,
+      planSource: c,
+    }));
+    expect(planMatches(candidates, rows, returning)).toEqual(['st0', 'st1', 'st2']);
   });
   it('ignores nested commentary headings and recovers bold location labels', () => {
     const text =
@@ -118,6 +150,13 @@ describe('revised routes', () => {
       guideBackfill(text, [{ ...stop, name: 'Riverside Walk', cityId: null }])[0].patch,
     ).toMatchObject({ lat: 41.9, lng: 12.4 });
   });
+});
+
+it('leaves a saved instant alone when the zone has not changed', () => {
+  const at = wallToInstant('2020-05-03T09:30', 'Europe/Rome')!;
+  const m = { at, timePrecision: 'date' } as Moment;
+  keepMomentDate(m, 'Europe/Rome', 'Europe/Rome');
+  expect(m.at).toBe(at);
 });
 
 it.each(['date', 'approximate'] as const)(
