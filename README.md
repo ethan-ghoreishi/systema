@@ -205,17 +205,27 @@ subscription.**
      time. If notes or a pin change elsewhere while the editor is open, a stale
      save is refused and the draft stays available to copy before reloading.
      Unvisited places stay with the trip, ready for another visit. One tap
-     **extracts stops — with notes, anchors, checklist items and map pins —
-     from the plan**.
-  3. **Expenses** — capture is an amount and one tap: quick picks (recent and
-     templates) set the category; city, currency, date, destination and
+     **extracts stops from the plan**. Use **Paste revised plan** to review the
+     new order, match renamed places, and apply the plan and Stops together.
+     Omitted places stay under **Kept off the route**, with visits, bookings,
+     photos and Moments intact. Unchanged imported text updates; personal edits
+     and existing pins stay. Missing pins can be filled from the new plan.
+     Plan edits save after review; journal text still autosaves.
+  3. **Expenses** — capture is an amount and one tap: stable quick picks set the category; city, currency, date, destination and
      payment default from the leg you're in; the rest is under More details.
-     Trip-wide spend is an explicit choice. A likely double entry is flagged.
+     Trip-wide spend is an explicit choice. New entries get a likely-duplicate
+     warning; editing saves the same record directly. Description names the
+     purchase and defaults to the subcategory on new entries; Notes hold optional
+     context. Invalid or ambiguous amounts cannot be saved.
      Non-GBP amounts save with no £ needed and **price themselves from the
      day's ECB rate** when online; a £ typed by hand is never re-priced.
   - **What happened?** (the spark in a trip's header) keeps something off the
     plan in seconds — a place found by accident, a changed plan, a missed bus,
-    an encounter — with photos from the camera or the library.
+    an encounter, with photos from the camera or the library. Open a Moment
+    from List or Visited to view, enlarge, save or delete its photos. Optional
+    map coordinates are in the editor; Stops → Map also places Moments by tap.
+    Date-only and approximate memories keep their calendar date across cities;
+    making a memory exact requires an actual clock time.
   4. **Export** — journaling prompt prefilled with the trip pack (recorded place visits,
      Moments in their own time order, a numbered photo list with stable references to attach
      in order; photo
