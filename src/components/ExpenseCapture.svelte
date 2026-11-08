@@ -18,7 +18,6 @@
     isShared,
     lastPaymentMethod,
     likelySubcategory,
-    recentTemplates,
     sharedDestination,
     type ExpenseTemplate,
   } from '../lib/expense-defaults';
@@ -56,10 +55,9 @@
   let dialogEl: HTMLDialogElement;
   onMount(() => dialogEl.showModal());
 
-  // Every expense, for recent picks, the last payment method and duplicates.
+  // Every expense, for payment defaults and duplicate checks on new entries.
   const allQ = liveQuery(() => db.expenses.toArray());
   const all = $derived($allQ ?? []);
-  const recents = $derived(recentTemplates(all));
 
   // Snapshot props once on mount — the parent remounts this modal per open, so
   // these are deliberately initial-only (untrack avoids the reactive warning).
@@ -114,6 +112,7 @@
   // A £ typed by hand stays in the override field, so editing the date or the
   // amount can never swap it for a rate. A row already in pounds has no
   // override: its amount is the £.
+  const original = untrack(() => (expense ? $state.snapshot(expense) : undefined));
   const manualGBP = untrack(() => !!expense && expense.currency !== 'GBP' && isManualGBP(expense));
   let overrideGBP = $state(untrack(() => (manualGBP ? String(expense!.amountGBP) : '')));
   let saving = $state(false);
@@ -270,7 +269,7 @@
       date,
       category,
       subcategory,
-      description: description.trim(),
+      description: description.trim() || (expense && !expense.skeleton ? '' : subcategory),
       paymentMethod,
       amountGBP: priced.amountGBP,
       amountLocal: priced.amountLocal,
@@ -289,7 +288,10 @@
     };
 
     // A likely double entry: say so once, then save if asked again.
-    const dup = findDuplicate({ tripId: trip.id, ...fields }, all, expense?.id);
+    const dup =
+      !expense || expense.skeleton
+        ? findDuplicate({ tripId: trip.id, ...fields }, all, expense?.id)
+        : undefined;
     if (dup && duplicateOf?.id !== dup.id) {
       duplicateOf = dup;
       return;
@@ -305,7 +307,7 @@
       await db.transaction('rw', db.expenses, db.photos, async () => {
         let expenseId: string;
         if (expense) {
-          await updateExpense(expense.id, { ...fields, skeleton: false });
+          await updateExpense(expense.id, { ...fields, skeleton: false }, original);
           expenseId = expense.id;
         } else {
           expenseId = await addExpense(trip.id, fields);
@@ -343,13 +345,6 @@
       }
     }
   }
-
-  const picks = $derived([
-    ...recents,
-    ...TEMPLATES.filter(
-      (t) => !recents.some((r) => r.category === t.category && r.subcategory === t.subcategory),
-    ),
-  ]);
 </script>
 
 <!-- Escape triggers the dialog's native cancel → close → onClose. -->
@@ -389,7 +384,11 @@
         </p>
       {/if}
       <div class="amount-display">
-        <span class="amount-local">{formatAmount(localNum, currency)}</span>
+        <span class="amount-local"
+          >{amountStr.trim() && parseMoney(amountStr) == null
+            ? 'Check amount'
+            : formatAmount(localNum, currency)}</span
+        >
         {#if !isGBP}
           <span class="amount-gbp">
             {#if rateMissing && overrideNum == null}
@@ -411,6 +410,19 @@
         {/each}
       </div>
 
+      <label class="label" for="expense-amount">Amount ({currency})</label>
+      <input
+        id="expense-amount"
+        class="field"
+        inputmode="decimal"
+        bind:value={amountStr}
+        aria-describedby="expense-amount-hint"
+      />
+      {#if amountStr.trim() && (parseMoney(amountStr) == null || localNum <= 0)}
+        <p id="expense-amount-hint" class="hint hint--warn" role="alert">
+          Enter an amount above zero. {MONEY_HINT}
+        </p>
+      {/if}
       <Keypad bind:value={amountStr} />
 
       {#if noRateEver}
@@ -438,7 +450,7 @@
       <div>
         <span class="label">Quick pick</span>
         <div class="chips quick-picks">
-          {#each picks as t (t.key)}
+          {#each TEMPLATES as t (t.key)}
             <button
               class="chip chip--sm"
               class:chip--on={category === t.category &&
@@ -518,9 +530,14 @@
             id="desc"
             class="field"
             type="text"
-            placeholder="e.g. Belvedere Museum Entry"
+            placeholder={subcategory || 'e.g. Museum ticket'}
             bind:value={description}
           />
+          <p class="hint">
+            What you paid for.{!expense || expense.skeleton
+              ? ' Leave blank to use the subcategory.'
+              : ' Notes hold optional context.'}
+          </p>
         </div>
 
         <div>
@@ -582,7 +599,12 @@
               + {trip.partySize}× per person
             </button>
           </div>
-          <textarea id="notes" class="field" rows="2" bind:value={notes}></textarea>
+          <textarea
+            id="notes"
+            class="field"
+            rows="2"
+            placeholder="Optional details: shop, who it covered, or why the price changed"
+            bind:value={notes}></textarea>
         </div>
 
         <div>

@@ -1,6 +1,7 @@
 import { db, type Expense, type Trip } from './db';
 import { presetFor } from './presets';
 import { isShared } from './expense-defaults';
+import { same } from './sync';
 import { newId } from './ids';
 import { getRateForDate } from './fx';
 import { deletePhotosWhere } from './photos';
@@ -44,10 +45,18 @@ export async function addExpense(tripId: string, input: ExpenseInput): Promise<s
   return id;
 }
 
-export async function updateExpense(id: string, patch: Partial<Expense>): Promise<void> {
+export async function updateExpense(
+  id: string,
+  patch: Partial<Expense>,
+  expected?: Expense,
+): Promise<void> {
   await db.transaction('rw', db.expenses, async () => {
     const current = await db.expenses.get(id);
     if (!current) throw new Error('This expense no longer exists.');
+    if (expected && !same(current, expected))
+      throw new Error(
+        'This expense changed elsewhere. Copy your draft, then reopen it to review the saved changes',
+      );
     // A reclassified payment no longer pays for its old booking. What counts is
     // the scope the app reads, not the flag: an older row's trip-wide scope is
     // inferred from its 'CityA/CityB' destination, and the editor writes that
