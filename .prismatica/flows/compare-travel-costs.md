@@ -19,10 +19,9 @@ truth:
       changes: No travel records change.
       assumes: []
       evidence:
-        method: inferred
-        at: 2026-11-09T14:16:18.512Z
-        commit: b35a63f7b1d71d1f18b3f3b5151644d86394d49f
-        note: Code reading; mapped tests are pointers, not manual verification.
+        method: manual
+        at: 2026-11-09T20:01:39.331Z
+        commit: 496419440b221cb0193de719fd56c27ba3a3c122
     - actor: Traveller
       action: Choose a comparison question and inspect city, transfer and trip-pattern
         rows.
@@ -30,10 +29,9 @@ truth:
       changes: Only the remembered comparison choice changes.
       assumes: []
       evidence:
-        method: inferred
-        at: 2026-11-09T14:16:18.512Z
-        commit: b35a63f7b1d71d1f18b3f3b5151644d86394d49f
-        note: Code reading; mapped tests are pointers, not manual verification.
+        method: manual
+        at: 2026-11-09T20:01:39.331Z
+        commit: 496419440b221cb0193de719fd56c27ba3a3c122
     - actor: Traveller
       action: Export all expenses as CSV for reconciliation.
       shows: The master-sheet-compatible CSV is downloaded with any unpriced-entry
@@ -41,10 +39,9 @@ truth:
       changes: Source records remain unchanged.
       assumes: []
       evidence:
-        method: inferred
-        at: 2026-11-09T14:16:18.512Z
-        commit: b35a63f7b1d71d1f18b3f3b5151644d86394d49f
-        note: Code reading; mapped tests are pointers, not manual verification.
+        method: manual
+        at: 2026-11-09T20:01:39.331Z
+        commit: 496419440b221cb0193de719fd56c27ba3a3c122
   endsWith: An evidence-qualified comparison or portable ledger export is available.
   variations: []
   rules: []
@@ -127,4 +124,3 @@ _none stated_
 ## Involves
 
 _not specified_
-
