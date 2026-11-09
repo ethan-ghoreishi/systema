@@ -1,0 +1,123 @@
+{
+  "contractId": "20261109-close-stop-plan-revision-and-photo-relia-a0e7",
+  "event": "check_run",
+  "at": "2026-11-09T19:04:02.394Z",
+  "pass": true,
+  "outcomes": [
+    {
+      "name": "typecheck",
+      "status": "pass",
+      "detail": "npm run check"
+    },
+    {
+      "name": "lint",
+      "status": "pass",
+      "detail": "npm run lint"
+    },
+    {
+      "name": "unit",
+      "status": "pass",
+      "detail": "npx vitest run --reporter=json"
+    },
+    {
+      "name": "build",
+      "status": "pass",
+      "detail": "npm run build"
+    },
+    {
+      "name": "journeys",
+      "status": "pass",
+      "detail": "npx playwright test"
+    },
+    {
+      "name": "secrets",
+      "status": "pass",
+      "detail": "regex fallback: clean"
+    },
+    {
+      "name": "scope",
+      "status": "pass",
+      "detail": "32 changed file(s), all in scope"
+    },
+    {
+      "name": "traceability",
+      "status": "pass",
+      "detail": "5 acceptance check(s) trace to passing tests"
+    },
+    {
+      "name": "docs-delta",
+      "status": "pass",
+      "detail": "all required docs were updated"
+    },
+    {
+      "name": "contract-state",
+      "status": "pass",
+      "detail": "contract collections are internally consistent"
+    },
+    {
+      "name": "instruction-budget",
+      "status": "pass",
+      "detail": "prismatica-instructions/2: claude 2283 of 32768 bytes (CLAUDE.md 11 B, AGENTS.md 2272 B); codex 2272 of 32768 bytes (AGENTS.md 2272 B)"
+    },
+    {
+      "name": "atlas-uncommitted-main",
+      "status": "pass",
+      "detail": "no uncommitted Atlas records on main"
+    },
+    {
+      "name": "truth-integrity",
+      "status": "pass",
+      "detail": "12 flow(s) + rules verified"
+    },
+    {
+      "name": "flow-proposals",
+      "status": "pass",
+      "detail": "2 Flow proposal(s) can be approved as filed"
+    },
+    {
+      "name": "atlas-impact",
+      "status": "pass",
+      "detail": "flow report covers what this change touches"
+    },
+    {
+      "name": "implementation",
+      "status": "pass",
+      "detail": "attribution, not proof: prismatica 0.11.0 · build sha256:a53354b36e378c8f · installed package, not registry-verified"
+    }
+  ],
+  "changedFiles": [
+    "README.md",
+    "docs/nas-backup-setup.md",
+    "docs/travel-reliability-closure.md",
+    "nas/systema-backup.php",
+    "src/components/CoverPicker.svelte",
+    "src/components/JournalView.svelte",
+    "src/components/PhotoGallery.svelte",
+    "src/components/PlanRevision.svelte",
+    "src/components/TripCover.svelte",
+    "src/components/tabs/ExportTab.svelte",
+    "src/components/tabs/StopsTab.svelte",
+    "src/lib/backup-validation.ts",
+    "src/lib/db.ts",
+    "src/lib/export.ts",
+    "src/lib/nas.svelte.ts",
+    "src/lib/photo-format.ts",
+    "src/lib/photos.ts",
+    "src/lib/plan-revision.ts",
+    "src/lib/stops.ts",
+    "tests/e2e/nas-fake.ts",
+    "tests/e2e/php-receiver.spec.ts",
+    "tests/e2e/plan-capture-revision.spec.ts",
+    "tests/e2e/travel-reliability.spec.ts",
+    "tests/fixtures/reliability/sample.heic",
+    "tests/fixtures/reliability/sample.heif",
+    "tests/fixtures/reliability/sample.jpg",
+    "tests/fixtures/reliability/sample.png",
+    "tests/fixtures/reliability/sample.webp",
+    "tests/unit/compat.test.ts",
+    "tests/unit/photos.test.ts",
+    "tests/unit/plan-revision.test.ts",
+    "tests/unit/stops.test.ts"
+  ],
+  "prismaticaVersion": "0.11.0"
+}

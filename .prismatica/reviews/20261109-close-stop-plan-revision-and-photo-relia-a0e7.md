@@ -1,45 +1,12 @@
 ---
 id: 20261109-close-stop-plan-revision-and-photo-relia-a0e7
 contractId: 20261109-close-stop-plan-revision-and-photo-relia-a0e7
-patchId: b643adf80cb7693d238e90ee768fd3e077b86a43
+patchId: 6d78a380803438c159f0f9599fa1b0e7d3aea9fb
 reviewer: codex
 state: sealed
-verdict: request_changes
-findings:
-  - family: Safe checklist retirement across revisions and personal edits
-    summary: "P1: src/lib/plan-revision.ts:74-100 replaces planSource while leaving
-      edited items marked fromPlan. Personal edits can later become eligible for
-      deletion."
-    counterexample: "Generate Pre-booked checked, untick it, apply a plan listing it
-      unchecked, then omit it in the next revision. Expected: preserve the
-      edited item and ID. Actual: it is deleted. An edited Crypt door item is
-      likewise deleted after a later plan coincidentally lists that text. Extend
-      repeated plan revisions retire only proven untouched generated checklist
-      items."
-  - family: Consistent Stop identity and ambiguity across reviewed and legacy plan
-      paths
-    summary: "P1: planChoices excludes assigned Stops when a multi-leg plan lacks
-      city headings; matchStop separately ignores imported-name aliases. The two
-      matching paths disagree."
-    counterexample: "On Vienna-Salzburg-Vienna, review a headingless Museum
-      candidate with one or two existing assigned Museums. Expected: reuse or
-      explicit ambiguity. Actual: reviewMatches returns new-place and Apply
-      creates another record. Separately, legacy presence/import treats My
-      museum with planSource.name=Museum as new, while review reuses it. Extend
-      repeated-city plan logic never picks a leg a heading cannot name and
-      review separates ambiguous plan matches from no match and uses each record
-      once."
-  - family: Photo pending-work retention across additional selections and retries
-    summary: "P2: StopsTab.onPhotos clears unsaved on every call while PhotoPicker
-      remains enabled, silently discarding an earlier failed selection."
-    counterexample: "Select A,B,C, fail after A, then successfully select D.
-      Expected: A,D saved once and B,C still offered for retry. Actual: unsaved
-      becomes null and B,C lose their retry action. The single queue also
-      permits one Stop selection to replace another Stop's pending files. Extend
-      photo batch failures preserve committed records and retry without
-      duplicating completed work."
-createdAt: 2026-11-09T18:30:26.204Z
-sealedAt: 2026-11-09T18:47:31.523Z
+verdict: approve
+createdAt: 2026-11-09T19:10:27.908Z
+sealedAt: 2026-11-09T19:16:01.606Z
 ---
 
 # Review: Close Stop, plan revision and photo reliability gaps
@@ -53,259 +20,8 @@ sealedAt: 2026-11-09T18:47:31.523Z
 - **Contract:** 20261109-close-stop-plan-revision-and-photo-relia-a0e7
 - **Issue:** https://github.com/ethan-ghoreishi/systema/issues/26
 - **Risk tier:** heavy — auth, payments, saved data, schema/migrations — full checks, sealed review, a signed owner decision, and a tested rollback route
-- **Diff patch-id:** `b643adf80cb7693d238e90ee768fd3e077b86a43`
+- **Diff patch-id:** `6d78a380803438c159f0f9599fa1b0e7d3aea9fb`
 - **Computed by:** prismatica 0.11.0 · build sha256:a53354b36e378c8f · installed package, not registry-verified
-
-## The plan the owner approved
-
-Verbatim. `assumptions` and `possibleConflicts` are the Planner's advisory
-reading — check them against the diff rather than accepting them.
-
-````yaml
-# Approved intent: Close Stop, plan revision and photo reliability gaps
-
-The owner imported this plan and confirmed the change. Its approved meaning is
-recorded here verbatim; the transport snapshot is deliberately omitted.
-
-- **Kind:** existing-flow
-- **Risk tier:** heavy
-- **Builder:** claude
-
-## What the owner asked for
-
-This is the wording the owner and the planning agent settled on together, taken
-from the plan itself — not a description reconstructed afterwards.
-
-> Use Prismatica Start to plan a focused reliability and UX lane for Systema. Inspect the current repository and relevant history as a principal software engineer, code auditor and product UX strategist. Resolve the remaining substantiated issues with the smallest coherent changes, preserving existing functionality, simplicity and data integrity.
-> 
-> Independently investigate manual Stop city assignment and ordering after revisions with retained off-route Stops; ambiguous plan matches presented as new places; HEIC/HEIF preview, storage, downloads, ZIP backup/restore and NAS sync; repeated-city assignment in legacy extraction; accumulating plan-generated checklist items; and memory use when adding larger photo batches. These are investigation targets, not predetermined fixes. Challenge findings, distinguish confirmed defects from acceptable trade-offs, and defer speculative or low-value changes with reasons.
-> 
-> For checklist revisions: yes, retire only safely attributable untouched items. Never remove completed, manually added, edited or uncertain legacy items.
-> 
-> Prioritise correctness, user value and minimal friction over feature completeness. Preserve trips, visits, bookings, photos, Moments, local-first storage, offline use, NAS sync and historical compatibility. Avoid unrelated refactoring, unnecessary migrations, architectural expansion and cosmetic changes. Give Claude freedom to investigate and refine implementation approaches; specify desired behaviour and constraints rather than code. Define meaningful acceptance, edge cases and regression coverage, particularly for data preservation, repeated cities and sync. Resolve product and safety decisions upfront and delegate implementation judgement. Require substantive, reproducible review findings; distinguish blockers from preferences and avoid repeated speculative review cycles. Claude will build. Use Prismatica's established review and release gates. Close the remaining reliability gaps in one lane and return Systema to normal use, without an open-ended development cycle.
-
-## Why
-
-Main 8f57daa already includes PRs 23–25, including return-to-route placement and unchanged-plan idempotence. One bounded lane closes the remaining route-identity and original-photo handling gaps across existing journeys. Preserve those fixes and make uncertainty visible rather than add automatic guesses. Planning used local history, a matching remote main revision, caller/test inspection and synthetic in-memory source probes; it did not exercise a browser, real IndexedDB or a NAS.
-
-## Today
-
-Confirmed at 8f57daa:
-1. StopsTab.addStopNow derives the city from the final saved Stop, including retained off-route records. addStop uses row count as order, which can collide with or precede surviving orders after deletions/reordering. The newer returnToRoute path already handles route placement separately.
-2. planMatches safely refuses multiple exact candidates, but PlanRevision renders both ambiguity and no match as “New place” and allows Apply without a deliberate ambiguity decision. Existing manual matching and stale-review protection already work; arbitrary renamed places cannot reliably be identified automatically.
-3. Legacy cityIds collapses repeated names to the last leg. A Vienna–Salzburg–Vienna extraction probe put both Vienna blocks on the second Vienna leg. matchStop/guideBackfill can consequently select or update the wrong leg; the newer review leaves new repeated-city candidates unassigned.
-4. revisedStop appends new checklist texts and never retires obsolete generated items. A prior unchecked generated cue remained beside its replacement. planSource records candidate text, not per-item identity, so safe provenance must be demonstrated rather than assumed from similar wording.
-5. photoRecord keeps original bytes and MIME. photoExt maps HEIC/HEIF to jpg; ZIP reading and current/previous PHP receivers recognise only JPEG, PNG and WebP. Thus originals can remain byte-intact while downloads, restored MIME and NAS responses misdescribe them. Gallery thumbnail decode errors already offer “Save the original”; universal HEIC decoding is not established.
-6. addPhotos writes full images serially, whereas preparePhotos retains the prepared batch for atomic Moment/expense saves. Header reads use Promise.all: a 24-file probe started 24 header reads. An injected third-write failure left two Stop photos committed but no returned progress; StopsTab.onPhotos has no local failure feedback. These prove concurrency/partial-completion behaviour, not an out-of-memory crash or physical-iPhone limit.
-
-## Instead
-
-1. Manual Stops join the intended current route leg and appear in a stable, sensible route position. Retained history must not influence the default. With no usable route context, choose an explicit leg or leave the Stop unassigned rather than imply knowledge. Repeated city names must be distinguishable wherever this lane asks the traveller to select or match a leg. Keep ordinary entry quick; no mandatory multi-field form.
-2. Review separates a genuinely unmatched new place from a known ambiguous match. Require a deliberate reuse-or-new decision only for known ambiguity; do not add routine confirmations for obvious matches or ordinary new places. Show enough leg/history context to choose. Never fuzzy-merge, reuse one Stop twice or silently transfer history between legs. Both legacy extraction/backfill and reviewed revisions must avoid arbitrary repeated-city assignment. A new Stop whose leg is genuinely unknown stays unassigned and can use existing correction controls. Existing records are not retrospectively reassigned by inference.
-3. On revision, retire an obsolete unchecked item only when unchanged generated provenance is established. Preserve completed items, manual additions, edits, uncertain legacy items, surviving identities and tick state. A text resemblance alone is insufficient proof of origin. Use the existing source model where safe; minimal optional provenance is permitted if needed, with conservative behaviour for old records. Reapplying a plan is idempotent. Preserve the existing manual checklist controls.
-4. Preserve HEIC/HEIF originals and existing JPEG/PNG/WebP behaviour end to end: capture, local reading, single-photo download, manifest/share export, ZIP backup/restore and optional NAS sync/restore. Correctly identify supported originals even when historical .jpg names or missing/wrong MIME obscure them, without rewriting photo bytes or requiring a bulk repair. Unrecognised/undecodable input must remain safely recoverable with honest feedback. Preview may depend on native decoder support; when unavailable, provide a usable save-original fallback in affected viewing paths. Do not make universal HEIC decoding or conversion a release requirement. Preserve old backups, metadata without new fields and old receiver interoperability; no mandatory NAS upgrade. Explain actual old-client display limits.
-5. Make photo work safe under ordinary larger selections and injected read/hash/write/quota failures. Preserve capture ordering, originals, existing records and draft text. Show what saved and what remains; retry must not duplicate the already committed part of a selection. New Moment/expense records and their photos retain atomic save semantics. Reuse existing ingestion and storage; choose the smallest complete error/retry handling. Before changing memory architecture, run a fixed synthetic baseline, initially 24 photos of 5 MiB plus one 20 MiB photo, recording sizes, concurrency and observed completion/responsiveness in Chromium/WebKit. If a minimal mitigation is needed, prove it against that route. A reliable measured path can remain unchanged; do not promise unlimited batches or infer a device memory ceiling from desktop tests.
-6. Claude owns implementation choices, helper placement, test organisation, any minimal optional metadata and whether evidence justifies a memory mitigation or PHP format change. Read all callers first. Before first review, complete the family proof route below and record a disposition for all six targets: fixed, already safe or explicitly deferred with evidence. Reconcile affected existing Flow descriptions through Prismatica's proposal/approval protocol only when behaviour changes. Primary Flow is research-and-revise-trip-plan; affected neighbours are follow-stops-and-record-visits, capture-moments-and-photos, export-trip-and-save-journal, back-up-and-restore-device and sync-devices-and-resolve-conflicts.
-7. Finish through the generated lane brief and authoritative prismatica open/next actions, established Check and independent patch-bound Review, then owner seal/acceptance and normal merge/release gates. Review the complete final patch and connected consumers once; further review follows substantive fixes, new evidence or a changed patch. Blockers need a reproducible route, expected/actual state, affected invariant and concrete user/data impact. Preferences, hypothetical scale problems and absent optional enhancements are non-blocking. No arbitrary review-round limit excuses a real blocker. Once gates pass, confirmed gaps are closed and explicit limitations are accepted by the owner, stop; no extra product backlog or speculative redesign. Do not merge, deploy, contact the live NAS or operate the installed app as part of this build.
-
-## Advisory — the planning agent's reading, not established fact
-
-The two lists below are the planning agent's interpretation. Deterministic code
-checked that this plan is complete, in scope, correctly bound, and correctly
-tiered; it did not and cannot check whether this reading of the app is right.
-Verify them against the code.
-
-**Assumptions**
-
-- A1: The six targets bound this closure lane; unrelated issues are reported separately only if substantive and do not silently widen implementation.
-- A2: Unknown repeated-city leg and unsupported preview are acceptable visible states when the alternative would guess history or transform originals. Existing wrong assignments require explicit user correction, not automatic repair.
-- A3: Photo batch size is an evidence fixture, not a new product quota or a claim about native memory. Hardware checks remain owner evidence; automated WebKit is not physical iPhone verification.
-
-**Possible conflicts**
-
-- Checklist cleanup conflicts with history preservation when provenance is missing. Retain the uncertain item; if existing source text cannot establish origin, use only minimal forward provenance or defer cleanup of those records. Do not label manually recreated or edited text as disposable merely because it resembles the plan.
-- Changing only photoExt or the current PHP allowlist will not repair old JPEG-labelled originals or old receivers. Prove the whole reader/writer family, including legacy names/MIME and duplicate remote filenames for one ID if the chosen implementation can create them; keep credentials, auth and receiver transport unchanged.
-- Prepared-batch memory buys atomic creation. Do not replace it with partial parent/attachment saves or a durable ingestion subsystem merely to reduce a theoretical peak; justify any mitigation with the fixed probe and retain recoverable drafts.
-- Correct matching is more valuable than automatic completeness. Keep intentional same-name places possible with an explicit new-place choice, and make repeated-leg labels distinguishable without inventing city dates or assuming the first/last occurrence.
-
-## The complete approved plan
-
-```json
-{
-  "format": "prismatica/start@1",
-  "request": "Use Prismatica Start to plan a focused reliability and UX lane for Systema. Inspect the current repository and relevant history as a principal software engineer, code auditor and product UX strategist. Resolve the remaining substantiated issues with the smallest coherent changes, preserving existing functionality, simplicity and data integrity.\n\nIndependently investigate manual Stop city assignment and ordering after revisions with retained off-route Stops; ambiguous plan matches presented as new places; HEIC/HEIF preview, storage, downloads, ZIP backup/restore and NAS sync; repeated-city assignment in legacy extraction; accumulating plan-generated checklist items; and memory use when adding larger photo batches. These are investigation targets, not predetermined fixes. Challenge findings, distinguish confirmed defects from acceptable trade-offs, and defer speculative or low-value changes with reasons.\n\nFor checklist revisions: yes, retire only safely attributable untouched items. Never remove completed, manually added, edited or uncertain legacy items.\n\nPrioritise correctness, user value and minimal friction over feature completeness. Preserve trips, visits, bookings, photos, Moments, local-first storage, offline use, NAS sync and historical compatibility. Avoid unrelated refactoring, unnecessary migrations, architectural expansion and cosmetic changes. Give Claude freedom to investigate and refine implementation approaches; specify desired behaviour and constraints rather than code. Define meaningful acceptance, edge cases and regression coverage, particularly for data preservation, repeated cities and sync. Resolve product and safety decisions upfront and delegate implementation judgement. Require substantive, reproducible review findings; distinguish blockers from preferences and avoid repeated speculative review cycles. Claude will build. Use Prismatica's established review and release gates. Close the remaining reliability gaps in one lane and return Systema to normal use, without an open-ended development cycle.",
-  "builder": "claude",
-  "summary": "Close Stop, plan revision and photo reliability gaps",
-  "rationale": "Main 8f57daa already includes PRs 23–25, including return-to-route placement and unchanged-plan idempotence. One bounded lane closes the remaining route-identity and original-photo handling gaps across existing journeys. Preserve those fixes and make uncertainty visible rather than add automatic guesses. Planning used local history, a matching remote main revision, caller/test inspection and synthetic in-memory source probes; it did not exercise a browser, real IndexedDB or a NAS.",
-  "kind": "existing-flow",
-  "flowId": "research-and-revise-trip-plan",
-  "currentBehaviour": "Confirmed at 8f57daa:\n1. StopsTab.addStopNow derives the city from the final saved Stop, including retained off-route records. addStop uses row count as order, which can collide with or precede surviving orders after deletions/reordering. The newer returnToRoute path already handles route placement separately.\n2. planMatches safely refuses multiple exact candidates, but PlanRevision renders both ambiguity and no match as “New place” and allows Apply without a deliberate ambiguity decision. Existing manual matching and stale-review protection already work; arbitrary renamed places cannot reliably be identified automatically.\n3. Legacy cityIds collapses repeated names to the last leg. A Vienna–Salzburg–Vienna extraction probe put both Vienna blocks on the second Vienna leg. matchStop/guideBackfill can consequently select or update the wrong leg; the newer review leaves new repeated-city candidates unassigned.\n4. revisedStop appends new checklist texts and never retires obsolete generated items. A prior unchecked generated cue remained beside its replacement. planSource records candidate text, not per-item identity, so safe provenance must be demonstrated rather than assumed from similar wording.\n5. photoRecord keeps original bytes and MIME. photoExt maps HEIC/HEIF to jpg; ZIP reading and current/previous PHP receivers recognise only JPEG, PNG and WebP. Thus originals can remain byte-intact while downloads, restored MIME and NAS responses misdescribe them. Gallery thumbnail decode errors already offer “Save the original”; universal HEIC decoding is not established.\n6. addPhotos writes full images serially, whereas preparePhotos retains the prepared batch for atomic Moment/expense saves. Header reads use Promise.all: a 24-file probe started 24 header reads. An injected third-write failure left two Stop photos committed but no returned progress; StopsTab.onPhotos has no local failure feedback. These prove concurrency/partial-completion behaviour, not an out-of-memory crash or physical-iPhone limit.",
-  "desiredBehaviour": "1. Manual Stops join the intended current route leg and appear in a stable, sensible route position. Retained history must not influence the default. With no usable route context, choose an explicit leg or leave the Stop unassigned rather than imply knowledge. Repeated city names must be distinguishable wherever this lane asks the traveller to select or match a leg. Keep ordinary entry quick; no mandatory multi-field form.\n2. Review separates a genuinely unmatched new place from a known ambiguous match. Require a deliberate reuse-or-new decision only for known ambiguity; do not add routine confirmations for obvious matches or ordinary new places. Show enough leg/history context to choose. Never fuzzy-merge, reuse one Stop twice or silently transfer history between legs. Both legacy extraction/backfill and reviewed revisions must avoid arbitrary repeated-city assignment. A new Stop whose leg is genuinely unknown stays unassigned and can use existing correction controls. Existing records are not retrospectively reassigned by inference.\n3. On revision, retire an obsolete unchecked item only when unchanged generated provenance is established. Preserve completed items, manual additions, edits, uncertain legacy items, surviving identities and tick state. A text resemblance alone is insufficient proof of origin. Use the existing source model where safe; minimal optional provenance is permitted if needed, with conservative behaviour for old records. Reapplying a plan is idempotent. Preserve the existing manual checklist controls.\n4. Preserve HEIC/HEIF originals and existing JPEG/PNG/WebP behaviour end to end: capture, local reading, single-photo download, manifest/share export, ZIP backup/restore and optional NAS sync/restore. Correctly identify supported originals even when historical .jpg names or missing/wrong MIME obscure them, without rewriting photo bytes or requiring a bulk repair. Unrecognised/undecodable input must remain safely recoverable with honest feedback. Preview may depend on native decoder support; when unavailable, provide a usable save-original fallback in affected viewing paths. Do not make universal HEIC decoding or conversion a release requirement. Preserve old backups, metadata without new fields and old receiver interoperability; no mandatory NAS upgrade. Explain actual old-client display limits.\n5. Make photo work safe under ordinary larger selections and injected read/hash/write/quota failures. Preserve capture ordering, originals, existing records and draft text. Show what saved and what remains; retry must not duplicate the already committed part of a selection. New Moment/expense records and their photos retain atomic save semantics. Reuse existing ingestion and storage; choose the smallest complete error/retry handling. Before changing memory architecture, run a fixed synthetic baseline, initially 24 photos of 5 MiB plus one 20 MiB photo, recording sizes, concurrency and observed completion/responsiveness in Chromium/WebKit. If a minimal mitigation is needed, prove it against that route. A reliable measured path can remain unchanged; do not promise unlimited batches or infer a device memory ceiling from desktop tests.\n6. Claude owns implementation choices, helper placement, test organisation, any minimal optional metadata and whether evidence justifies a memory mitigation or PHP format change. Read all callers first. Before first review, complete the family proof route below and record a disposition for all six targets: fixed, already safe or explicitly deferred with evidence. Reconcile affected existing Flow descriptions through Prismatica's proposal/approval protocol only when behaviour changes. Primary Flow is research-and-revise-trip-plan; affected neighbours are follow-stops-and-record-visits, capture-moments-and-photos, export-trip-and-save-journal, back-up-and-restore-device and sync-devices-and-resolve-conflicts.\n7. Finish through the generated lane brief and authoritative prismatica open/next actions, established Check and independent patch-bound Review, then owner seal/acceptance and normal merge/release gates. Review the complete final patch and connected consumers once; further review follows substantive fixes, new evidence or a changed patch. Blockers need a reproducible route, expected/actual state, affected invariant and concrete user/data impact. Preferences, hypothetical scale problems and absent optional enhancements are non-blocking. No arbitrary review-round limit excuses a real blocker. Once gates pass, confirmed gaps are closed and explicit limitations are accepted by the owner, stop; no extra product backlog or speculative redesign. Do not merge, deploy, contact the live NAS or operate the installed app as part of this build.",
-  "mustNotChange": [
-    "Preserve existing trip/Stop/City/Moment/expense IDs, visits and times, notes, pins, bookings, payment/FX links, original photo bytes/hashes and associations. Only the explicitly authorised safe retirement of obsolete generated checklist items may remove existing checklist content.",
-    "Keep plans staged until atomic apply, reject stale reviews, retain omitted places/history and personal route additions, and preserve return-to-route placement and unchanged-plan idempotence from PRs 23–25.",
-    "Keep IndexedDB/Dexie, offline capture and reading, optional NAS, add-only validated restore, explicit photo tombstones, merge/conflict semantics and historical backup compatibility. No destructive repair, storage clear, schema/version migration or mass rewrite.",
-    "No accounts, runtime AI, paid services, new external data destinations, codec dependency or background conversion pipeline. Any optional metadata must validate and survive old/new readers and sync without forcing an upgrade.",
-    "Use synthetic data and isolated browser contexts/temporary PHP receivers only. Native owner checks use a disposable origin/profile and test receiver, never the installed app database or live personal NAS. No canonical record hand edits, fabricated evidence, hook bypass, owner approvals or merge/release decisions by an agent."
-  ],
-  "assumptions": [
-    "A1: The six targets bound this closure lane; unrelated issues are reported separately only if substantive and do not silently widen implementation.",
-    "A2: Unknown repeated-city leg and unsupported preview are acceptable visible states when the alternative would guess history or transform originals. Existing wrong assignments require explicit user correction, not automatic repair.",
-    "A3: Photo batch size is an evidence fixture, not a new product quota or a claim about native memory. Hardware checks remain owner evidence; automated WebKit is not physical iPhone verification."
-  ],
-  "possibleConflicts": [
-    "Checklist cleanup conflicts with history preservation when provenance is missing. Retain the uncertain item; if existing source text cannot establish origin, use only minimal forward provenance or defer cleanup of those records. Do not label manually recreated or edited text as disposable merely because it resembles the plan.",
-    "Changing only photoExt or the current PHP allowlist will not repair old JPEG-labelled originals or old receivers. Prove the whole reader/writer family, including legacy names/MIME and duplicate remote filenames for one ID if the chosen implementation can create them; keep credentials, auth and receiver transport unchanged.",
-    "Prepared-batch memory buys atomic creation. Do not replace it with partial parent/attachment saves or a durable ingestion subsystem merely to reduce a theoretical peak; justify any mitigation with the fixed probe and retain recoverable drafts.",
-    "Correct matching is more valuable than automatic completeness. Keep intentional same-name places possible with an explicit new-place choice, and make repeated-leg labels distinguishable without inventing city dates or assuming the first/last occurrence."
-  ],
-  "scope": {
-    "allow": [
-      "src/lib/stops.ts",
-      "src/lib/plan-revision.ts",
-      "src/lib/photos.ts",
-      "src/lib/photo-format.ts",
-      "src/lib/photo-batch.ts",
-      "src/lib/export.ts",
-      "src/lib/nas.svelte.ts",
-      "src/lib/backup-validation.ts",
-      "src/lib/db.ts",
-      "src/lib/sync.ts",
-      "src/components/tabs/StopsTab.svelte",
-      "src/components/PlanRevision.svelte",
-      "src/components/MomentCapture.svelte",
-      "src/components/ExpenseCapture.svelte",
-      "src/components/PhotoPicker.svelte",
-      "src/components/PhotoGallery.svelte",
-      "src/components/CoverPicker.svelte",
-      "src/components/TripCover.svelte",
-      "src/components/JournalView.svelte",
-      "src/components/tabs/ExportTab.svelte",
-      "nas/systema-backup.php",
-      "README.md",
-      "docs/nas-backup-setup.md",
-      "docs/travel-reliability-closure.md",
-      "tests/unit/stops.test.ts",
-      "tests/unit/plan-revision.test.ts",
-      "tests/unit/photos.test.ts",
-      "tests/unit/export.test.ts",
-      "tests/unit/backup-validation.test.ts",
-      "tests/unit/compat.test.ts",
-      "tests/unit/sync.test.ts",
-      "tests/unit/travel-reliability.test.ts",
-      "tests/e2e/plan-capture-revision.spec.ts",
-      "tests/e2e/stops-travel.spec.ts",
-      "tests/e2e/research.spec.ts",
-      "tests/e2e/moments.spec.ts",
-      "tests/e2e/data-safety.spec.ts",
-      "tests/e2e/backup.spec.ts",
-      "tests/e2e/sync.spec.ts",
-      "tests/e2e/roundtrip.spec.ts",
-      "tests/e2e/php-receiver.spec.ts",
-      "tests/e2e/nas-fake.ts",
-      "tests/e2e/travel-reliability.spec.ts",
-      "tests/fixtures/reliability/sample.heic",
-      "tests/fixtures/reliability/sample.heif",
-      "tests/fixtures/reliability/sample.jpg",
-      "tests/fixtures/reliability/sample.png",
-      "tests/fixtures/reliability/sample.webp"
-    ],
-    "forbid": [
-      ".github/**",
-      "AGENTS.md",
-      "CLAUDE.md",
-      "package.json",
-      "package-lock.json",
-      "tests/unit/fixtures/old-backup-validation.ts",
-      "tests/unit/fixtures/old-sync.ts",
-      "tests/e2e/systema-backup-v1.php",
-      "tests/e2e/systema-backup-v1.1.php"
-    ]
-  },
-  "exclusions": [
-    "No retrospective deduplication, guessed leg reassignment, old-checklist mass pruning, automatic file transcoding or photo deletion. Unknown legacy checklist provenance always prevents automatic retirement.",
-    "No itinerary/parser overhaul, fuzzy identity engine, new city-leg planning model, offline architecture change, thumbnail/cache subsystem, resumable background job framework, broad performance programme or unrelated UI redesign.",
-    "Scope permission is a ceiling, not a requirement to edit every listed file. db.ts is available for minimal optional types only; sync.ts and receipt/cover/journal consumers only for direct family compatibility or failure handling. No payment, authentication, token or deployment behaviour changes. New helper and fixture paths are reserved options, not an instruction to create an abstraction or add every fixture.",
-    "Native HEIC decoding everywhere, HEIF EXIF feature expansion and unlimited photo batch support are deferred. A memory redesign is deferred unless the fixed probe substantiates a failure; preserve and document a working bounded path instead."
-  ],
-  "acceptance": [
-    {
-      "description": "Manual addition after revised routes with off-route tails uses the chosen or evidenced current leg and a stable route position. Cover empty/all-retained routes, zero/one/multiple legs, Vienna–Salzburg–Vienna, gapped/tied orders and rapid additions. Existing IDs/history and an unrelated trip remain unchanged.",
-      "test": "manual Stops stay in the intended leg when retained records trail the itinerary"
-    },
-    {
-      "description": "Distinguish no match from multiple plausible exact matches, including repeated city names and imported-name aliases. Known ambiguity needs an explicit reuse/new choice; deliberate same-name new places remain possible. Selected records retain their leg and history, each ID is used at most once, and cancellation writes nothing.",
-      "test": "ambiguous plan matches require a deliberate reuse or new-place decision"
-    },
-    {
-      "description": "Legacy extraction, candidate-presence checks, guide backfill and reviewed apply agree on safe repeated-city identity. Exercise Vienna–Salzburg–Vienna, identical names on different legs, an unassigned existing Stop, deleted/unknown legs, missing city headings, and repeated application. No arbitrary last-leg assignment, cross-leg backfill or multiplying duplicates; unknown placement stays explicit.",
-      "test": "extraction and reviewed revisions never choose an arbitrary repeated-city leg"
-    },
-    {
-      "description": "Three revisions retire only established unchanged obsolete unchecked generated items. Completed, manual, edited, manually recreated and uncertain legacy items survive with stable IDs/ticks; retained source items are not duplicated. Include user deletion, missing planSource, same-text personal items and reapplication. Any new provenance survives validation, ZIP and old/new sync readers.",
-      "test": "repeated plan revisions retire only proven untouched generated checklist items"
-    },
-    {
-      "description": "Preserve the already-fixed unchanged-plan repeated-city behaviour, including personal and returned-to-route Stops. Extend coverage only where necessary; do not weaken existing route-retention assertions.",
-      "test": "re-applying an unchanged plan to a trip that returns to a city changes nothing"
-    },
-    {
-      "description": "Keep atomic apply and stale-editor protection: changed plan, Stop or City during review is refused without overwriting the other writer; an unstructured paste preserves the route and cancellation retains the draft.",
-      "test": "a stale plan review refuses concurrent edits and an unstructured paste keeps the route"
-    },
-    {
-      "description": "Use genuine format fixtures with documented provenance and independently known byte hashes, not text blobs merely labelled as images. HEIC/HEIF, JPEG, PNG and WebP originals retain bytes, metadata links and correct format through single downloads, manifest/share output and ZIP restore. Include legacy .jpg-labelled HEIC/HEIF, absent/wrong MIME, corrupt/unrecognised input, current/old backups, add-only restore and an unrelated trip.",
-      "test": "HEIC and HEIF originals keep their bytes and format through downloads and ZIP restore"
-    },
-    {
-      "description": "In a browser without the required decoder, affected photo views give honest unavailable-preview feedback and a working original download; decode failure never deletes, transforms or prevents retaining an original. A known decodable image still opens normally. Check Stop and Moment galleries and directly affected cover/journal readers.",
-      "test": "undecodable photo previews keep the original available to save"
-    },
-    {
-      "description": "Two isolated devices converge on revised routes, repeated legs, checklist provenance/results and mixed-format photo bytes through current, previous and original real PHP receivers. Include missing photo download/restore, existing historical jpg originals, interrupted/lost upload response, repeat idle sync and explicit tombstones. Assert hashes, links and IDs, no missing-file false success or duplicate original, no extra snapshots on idle. Frozen old receivers/readers remain unchanged.",
-      "test": "revised routes and mixed photo formats converge through current and legacy NAS receivers"
-    },
-    {
-      "description": "Exercise Stop batches and new/existing Moment and receipt saves, with fixed mixed sizes/capture times, missing EXIF, a failure before first save and an injected mid-batch read/hash/write/quota error. Existing originals stay intact; report partial Stop success and retain/retry pending work without duplicates. New Moment/expense plus photos roll back together and preserve the draft. Document measured batch/concurrency results and any conservative limit.",
-      "test": "photo batch failures preserve committed records and retry without duplicating completed work"
-    },
-    {
-      "description": "Before first review, docs/travel-reliability-closure.md contains the family proof plan and one copy-ready focused proof route, backed by committed fixtures and a uniquely titled integration test. Invariants: leg identity/order, no accidental duplicate identity, safe checklist retirement, unchanged photo bytes/format/links, atomic or honestly reported partial writes, add-only restore and sync convergence. List every reader/writer: Stop add/move/return, extraction/presence/backfill, review/retention/apply and its Plan/Prompt entry paths; List/Visited/Map, TripCover, needs/readiness, Insights, JournalView and exports; Stop/Moment/receipt/cover ingestion, galleries, downloads/share/ZIP, validation, both NAS download/restore paths, upload/check/listing and old clients/receivers. Cross the equivalence classes above, prove independently specified expected IDs/order/checklist sets/hashes and a negative control that exposes the original defect; record checked-clean consumers and limits. No assertions whose expected answer comes from the function under test.",
-      "test": "travel reliability family proof preserves identities and originals across revision restore and sync"
-    },
-    {
-      "description": "Owner reviews the six-target disposition, final exact-patch Check/independent Review and concise visual evidence at existing mobile viewports. Standard Svelte/TypeScript, lint, unit, build, journeys and secrets gates must pass, plus formatting, production PWA update, PHP syntax and isolated real-PHP suites. Provide a short disposable-origin native iPhone Safari/standalone check for camera/library HEIC, original download, offline reading and the fixed larger selection using a test receiver. Owner records hardware results or explicitly accepts the unverified native limit through the established approval gate. Agents do not mark this manual check passed or use personal data/live NAS.",
-      "test": "manual:OWNER"
-    }
-  ],
-  "risk": {
-    "touchesAuth": false,
-    "touchesPayments": false,
-    "touchesSavedData": true,
-    "copyOnly": false,
-    "rationale": "Saved Stop identity, leg/order, generated checklist retirement and photo format/attachment writes cross IndexedDB, backup and NAS boundaries. Heavy review is expected from repository path rules. Receipt UI is in scope only for shared photo handling; payment and authentication semantics are excluded."
-  },
-  "delta": {
-    "step": 3,
-    "today": "Review safely retains records, but known ambiguity looks like a new place, legacy extraction can choose the last repeated-city leg and all old generated checklist items persist. Adjacent Stop/photo paths can misplace new entries or misdescribe originals and partial saves.",
-    "instead": "Review distinguishes ambiguity and requires its deliberate resolution, applies identity-safe revisions with conservative generated-checklist retirement, and preserves the route/history and original-photo guarantees across the connected Stop, export, restore and sync paths.",
-    "keep": [
-      "Staged plan and atomic apply with stale-review refusal",
-      "Stable existing record identity, personal edits, visits, bookings, photos and linked Moments",
-      "Simple ordinary capture, offline storage, optional NAS and historical compatibility"
-    ],
-    "assumptions": [],
-    "showMe": "Run the focused fixture proof route documented in docs/travel-reliability-closure.md, including repeated-city ambiguity, safe versus forbidden checklist retirement, legacy photo formats, partial batch failure, ZIP restore and two-device real-PHP convergence; then use the established owner approval and release gates."
-  },
-  "desiredRules": [],
-  "docsDelta": [
-    "README.md",
-    "docs/nas-backup-setup.md",
-    "docs/travel-reliability-closure.md"
-  ]
-}
-```
-````
 
 ## The Delta this change was framed from
 
@@ -337,40 +53,680 @@ Run the focused fixture proof route documented in docs/travel-reliability-closur
 
 
 
-## Files in this diff
+## Re-review after a rejection — scoped to the rework
 
-- README.md
-- docs/nas-backup-setup.md
-- docs/travel-reliability-closure.md
-- nas/systema-backup.php
-- src/components/CoverPicker.svelte
-- src/components/JournalView.svelte
-- src/components/PhotoGallery.svelte
-- src/components/PlanRevision.svelte
-- src/components/TripCover.svelte
-- src/components/tabs/ExportTab.svelte
-- src/components/tabs/StopsTab.svelte
-- src/lib/backup-validation.ts
-- src/lib/db.ts
-- src/lib/export.ts
-- src/lib/nas.svelte.ts
-- src/lib/photo-format.ts
-- src/lib/photos.ts
-- src/lib/plan-revision.ts
-- src/lib/stops.ts
-- tests/e2e/nas-fake.ts
-- tests/e2e/php-receiver.spec.ts
-- tests/e2e/plan-capture-revision.spec.ts
-- tests/e2e/travel-reliability.spec.ts
-- tests/fixtures/reliability/sample.heic
-- tests/fixtures/reliability/sample.heif
-- tests/fixtures/reliability/sample.jpg
-- tests/fixtures/reliability/sample.png
-- tests/fixtures/reliability/sample.webp
-- tests/unit/compat.test.ts
-- tests/unit/photos.test.ts
-- tests/unit/plan-revision.test.ts
-- tests/unit/stops.test.ts
+The last review of this contract asked for changes. This is NOT the whole plan
+restated: it is what changed since the previously reviewed head, the findings
+that review recorded, and the paths the rework touched — read any file you need
+from the lane. The same Check already bound to this head is not to be rerun
+wholesale.
+
+Verify each prior finding's FAMILY across every consumer in the repository, not
+only the lines this rework changed: a family is closed when no instance of its
+invariant survives anywhere, and a fix that reached one consumer while a sibling
+still breaks it is not closed.
+
+**Approved intent:** `.prismatica/intents/20261109-close-stop-plan-revision-and-photo-relia-a0e7.md`
+
+**Findings from the previous review:**
+
+- **Safe checklist retirement across revisions and personal edits** — P1: src/lib/plan-revision.ts:74-100 replaces planSource while leaving edited items marked fromPlan. Personal edits can later become eligible for deletion.
+  _counterexample:_ Generate Pre-booked checked, untick it, apply a plan listing it unchecked, then omit it in the next revision. Expected: preserve the edited item and ID. Actual: it is deleted. An edited Crypt door item is likewise deleted after a later plan coincidentally lists that text. Extend repeated plan revisions retire only proven untouched generated checklist items.
+- **Consistent Stop identity and ambiguity across reviewed and legacy plan paths** — P1: planChoices excludes assigned Stops when a multi-leg plan lacks city headings; matchStop separately ignores imported-name aliases. The two matching paths disagree.
+  _counterexample:_ On Vienna-Salzburg-Vienna, review a headingless Museum candidate with one or two existing assigned Museums. Expected: reuse or explicit ambiguity. Actual: reviewMatches returns new-place and Apply creates another record. Separately, legacy presence/import treats My museum with planSource.name=Museum as new, while review reuses it. Extend repeated-city plan logic never picks a leg a heading cannot name and review separates ambiguous plan matches from no match and uses each record once.
+- **Photo pending-work retention across additional selections and retries** — P2: StopsTab.onPhotos clears unsaved on every call while PhotoPicker remains enabled, silently discarding an earlier failed selection.
+  _counterexample:_ Select A,B,C, fail after A, then successfully select D. Expected: A,D saved once and B,C still offered for retry. Actual: unsaved becomes null and B,C lose their retry action. The single queue also permits one Stop selection to replace another Stop's pending files. Extend photo batch failures preserve committed records and retry without duplicating completed work.
+
+**What changed since the previously reviewed head:**
+
+```diff
+diff --git a/docs/travel-reliability-closure.md b/docs/travel-reliability-closure.md
+index a53c5832fd99ee7e514eeed31a2fab569d1af296..d2becc8612ed3742b1a7a9bca0df117a25520664 100644
+--- a/docs/travel-reliability-closure.md
++++ b/docs/travel-reliability-closure.md
+@@ -8,14 +8,14 @@ or the live NAS; that check is the owner's (below).
+ 
+ ## Disposition of the six targets
+ 
+-| #   | Target                                                                  | Disposition                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Evidence                                                                                                                                                                                                                                              |
+-| --- | ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+-| 1   | Manual Stop leg and order after revisions with retained off-route Stops | **Fixed.** The default leg comes from the planned route only (retained places say nothing), then the only leg, else unassigned; an optional leg picker beside the box labels repeated cities "Vienna · leg 3". `addStop` places the Stop after its leg's last route place (or before the first later leg's), inside one write, so gaps, ties and quick double adds can't collide.                                                                                          | `manual Stops stay in the intended leg when retained records trail the itinerary`                                                                                                                                                                     |
+-| 2   | Ambiguous plan matches shown as "New place"                             | **Fixed.** `planChoices` lists every plausible record; review marks known ambiguity, opens a choice limited to those records (leg, visited) plus "Add as a new place", and Apply stays disabled until each is decided. `savePlanRevision` refuses an undecided row. Obvious matches and ordinary new places are unchanged.                                                                                                                                                 | `ambiguous plan matches require a deliberate reuse or new-place decision`                                                                                                                                                                             |
+-| 3   | Legacy extraction assigns repeated cities to the last leg               | **Fixed.** `cityIds` maps a name to every leg of that name. A new Stop gets a leg only when its heading names exactly one; presence and backfill treat two equally good records as ambiguous (present, but neither filled); a named but unknown leg matches only unassigned places. Existing assignments are never changed.                                                                                                                                                | `extraction and reviewed revisions never choose an arbitrary repeated-city leg`                                                                                                                                                                       |
+-| 4   | Plan-generated checklist items accumulate                               | **Fixed, forward only.** Items a plan writes carry `fromPlan: true`. A revision retires an item only when it is marked, unticked, written exactly as the last plan wrote it, and absent from the new plan. Unmarked (older or hand-added) items never go. An item the last plan listed and the traveller deleted is not re-added.                                                                                                                                          | `repeated plan revisions retire only proven untouched generated checklist items`                                                                                                                                                                      |
+-| 5   | HEIC/HEIF misdescribed in downloads, ZIP, restore and NAS               | **Fixed.** One byte sniffer (`photo-format.ts`) decides format everywhere: capture type, single download, share files, ZIP entry names, ZIP and JSON restore, NAS download and restore. Bytes are never changed. NAS uploads keep the names every receiver uses (HEIC as `.jpg`). The current receiver keeps one file per photo id. Undecodable previews say so and offer Save the original in galleries, the viewer and the journal; the cover falls back to its drawing. | `HEIC and HEIF originals keep their bytes and format through downloads and ZIP restore`, `undecodable photo previews keep the original available to save`, `revised routes and mixed photo formats converge through current and legacy NAS receivers` |
+-| 6   | Larger photo batches: memory and partial failure                        | **Partial failure fixed; memory already safe.** `addPhotos` keeps each photo it saved and throws `PhotoBatchError` with the files left; Stops shows "N saved; M not saved" and retries only those. An unreadable header now means "time unknown", not a lost batch. Moment and receipt saves were already atomic and are proven so. The fixed probe found no memory problem, so the ingestion design is unchanged.                                                         | `photo batch failures preserve committed records and retry without duplicating completed work`, probe below                                                                                                                                           |
++| #   | Target                                                                  | Disposition                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | Evidence                                                                                                                                                                                                                                              |
++| --- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
++| 1   | Manual Stop leg and order after revisions with retained off-route Stops | **Fixed.** The default leg comes from the planned route only (retained places say nothing), then the only leg, else unassigned; an optional leg picker beside the box labels repeated cities "Vienna · leg 3". `addStop` places the Stop after its leg's last route place (or before the first later leg's), inside one write, so gaps, ties and quick double adds can't collide.                                                                                                                                                                                                                                   | `manual Stops stay in the intended leg when retained records trail the itinerary`                                                                                                                                                                     |
++| 2   | Ambiguous plan matches shown as "New place"                             | **Fixed.** One rule, `stopChoices`, decides which records a plan entry could be, for review and for legacy import, presence and backfill alike: same name or import name; on a named city's legs first, then on no leg; with no city heading, any leg. `planChoices` lists those records; review marks known ambiguity, opens a choice limited to those records (leg, visited) plus "Add as a new place", and Apply stays disabled until each is decided. `savePlanRevision` refuses an undecided row. Obvious matches and ordinary new places are unchanged.                                                       | `ambiguous plan matches require a deliberate reuse or new-place decision`                                                                                                                                                                             |
++| 3   | Legacy extraction assigns repeated cities to the last leg               | **Fixed.** `cityIds` maps a name to every leg of that name. A new Stop gets a leg only when its heading names exactly one; presence and backfill treat two equally good records as ambiguous (present, but neither filled); a named but unknown leg matches only unassigned places. Existing assignments are never changed.                                                                                                                                                                                                                                                                                         | `extraction and reviewed revisions never choose an arbitrary repeated-city leg`                                                                                                                                                                       |
++| 4   | Plan-generated checklist items accumulate                               | **Fixed, forward only.** Items a plan writes carry `fromPlan: true`. Ticking or unticking by hand removes the mark, and so does a revision that lists an item no longer reading exactly as the plan wrote it, so a later plan that happens to list it can never make it retirable. A revision retires an item only when it is marked, unticked, written exactly as the last plan wrote it, and absent from the new plan. Unmarked (older or hand-added) items never go. An item the last plan listed and the traveller deleted is not re-added.                                                                     | `repeated plan revisions retire only proven untouched generated checklist items`                                                                                                                                                                      |
++| 5   | HEIC/HEIF misdescribed in downloads, ZIP, restore and NAS               | **Fixed.** One byte sniffer (`photo-format.ts`) decides format everywhere: capture type, single download, share files, ZIP entry names, ZIP and JSON restore, NAS download and restore. Bytes are never changed. NAS uploads keep the names every receiver uses (HEIC as `.jpg`). The current receiver keeps one file per photo id. Undecodable previews say so and offer Save the original in galleries, the viewer and the journal; the cover falls back to its drawing.                                                                                                                                          | `HEIC and HEIF originals keep their bytes and format through downloads and ZIP restore`, `undecodable photo previews keep the original available to save`, `revised routes and mixed photo formats converge through current and legacy NAS receivers` |
++| 6   | Larger photo batches: memory and partial failure                        | **Partial failure fixed; memory already safe.** `addPhotos` keeps each photo it saved and throws `PhotoBatchError` with the files left; Stops shows "N saved; M not saved" and retries only those. Waiting photos are kept per Stop: a later selection, on that Stop or another, adds to them rather than replacing them, and a retry takes them out at once so a second tap can't save them twice. An unreadable header now means "time unknown", not a lost batch. Moment and receipt saves were already atomic and are proven so. The fixed probe found no memory problem, so the ingestion design is unchanged. | `photo batch failures preserve committed records and retry without duplicating completed work`, probe below                                                                                                                                           |
+ 
+ Kept as they were (proven by their existing tests):
+ `re-applying an unchanged plan to a trip that returns to a city changes nothing`,
+@@ -50,12 +50,12 @@ run in the journeys gate, and ac-9's runs against real PHP receivers.
+    plan entry. Repeated application adds nothing. One photo id has one file on
+    the current receiver.
+ 3. **Safe checklist retirement:** only proven, unticked, unchanged plan items
+-   go.
++   go. The mark is proof only while the item reads exactly as a plan wrote it.
+ 4. **Originals unchanged:** photo bytes, hashes and links survive every path,
+    and each path names or types them by their bytes.
+ 5. **Atomic or honestly reported writes:** a new Moment or expense saves with
+    its photos or not at all. A Stop batch reports what saved and retries only
+-   the rest.
++   the rest; no later selection drops work still waiting.
+ 6. **Add-only restore and sync convergence:** restore adds what is missing.
+    Devices converge, and idle syncs write nothing.
+ 
+@@ -63,35 +63,38 @@ run in the journeys gate, and ac-9's runs against real PHP receivers.
+ 
+ Each was either changed or checked and left as it is.
+ 
+-| Consumer                                                                                                                | Status                                                           |
+-| ----------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+-| Stop add (`addStop`, `StopsTab.addStopNow`)                                                                             | Fixed                                                            |
+-| Stop move (`moveStop`/`reorderStops`)                                                                                   | Checked clean: renumbers what it is given                        |
+-| Return to route (`returnToRoute`)                                                                                       | Shares `onRoute`; behaviour unchanged (no legs passed)           |
+-| Extraction, presence and backfill (`importStopsFromPlan`, `newStopCandidates`, `guideBackfill`, `matchStop`, `cityIds`) | Fixed                                                            |
+-| Import positions                                                                                                        | Fixed: after the highest stored order, not the row count         |
+-| Review (`planChoices`, `planMatches`, `reviewMatches`, `PlanRevision`)                                                  | Fixed                                                            |
+-| Retention and apply (`planRetained`, `savePlanRevision`)                                                                | Undecided rows refused; retention unchanged                      |
+-| Plan and Prompt entry paths (`PlanTab`, `PromptBuilder`, `StopsTab`)                                                    | Checked clean: all three open the same `PlanRevision`            |
+-| List, Visited and Map (`stopGroups`, `visitedPlaces`, `StopsMap`)                                                       | Checked clean: an unassigned place was already a supported state |
+-| `TripCover`                                                                                                             | Fixed: an undecodable photo falls back to the drawing            |
+-| Needs, readiness, Insights                                                                                              | Checked clean: they read text, done and leg, never `fromPlan`    |
+-| `JournalView`                                                                                                           | Fixed: an undecodable photo shows a notice and Save the original |
+-| Exports (trip pack, CSV, prompts)                                                                                       | Checked clean: they read `text`/`done`                           |
+-| Stop ingestion (`addPhotos`)                                                                                            | Fixed                                                            |
+-| Moment and receipt ingestion (`preparePhotos` plus a component transaction)                                             | Already atomic; proven                                           |
+-| Cover ingestion and picker (`CoverPicker`)                                                                              | Fixed: a failed upload says so; undecodable thumbnails say so    |
+-| Galleries and viewer (`PhotoGallery`)                                                                                   | Fixed                                                            |
+-| Single download (`downloadPhoto`)                                                                                       | Fixed                                                            |
+-| Share (`ExportTab.manifestFiles`)                                                                                       | Fixed                                                            |
+-| ZIP backup (`buildZipBackup`)                                                                                           | Fixed                                                            |
+-| ZIP and JSON restore (`readBackupFile`, `importBackup`)                                                                 | Fixed                                                            |
+-| Validation (`backup-validation`)                                                                                        | `fromPlan` is an optional boolean                                |
+-| NAS download (`downloadPhotos`) and NAS restore (`restorePhotos`)                                                       | Fixed: typed by bytes                                            |
+-| Upload (`uploadOne`)                                                                                                    | Ext by bytes, mapped to receiver names                           |
+-| Check and listing                                                                                                       | Checked clean: by id and size                                    |
+-| Old clients                                                                                                             | Validator and merge carry `fromPlan` (frozen fixtures)           |
+-| Old receivers (v1, v1.1)                                                                                                | Unchanged; proven against                                        |
++| Consumer                                                                                                                | Status                                                                                                                                                 |
++| ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
++| Stop add (`addStop`, `StopsTab.addStopNow`)                                                                             | Fixed                                                                                                                                                  |
++| Stop move (`moveStop`/`reorderStops`)                                                                                   | Checked clean: renumbers what it is given                                                                                                              |
++| Return to route (`returnToRoute`)                                                                                       | Shares `onRoute`; behaviour unchanged (no legs passed)                                                                                                 |
++| Extraction, presence and backfill (`importStopsFromPlan`, `newStopCandidates`, `guideBackfill`, `matchStop`, `cityIds`) | Fixed: through `stopChoices`, shared with review                                                                                                       |
++| Import positions                                                                                                        | Fixed: after the highest stored order, not the row count                                                                                               |
++| Review (`planChoices`, `planMatches`, `reviewMatches`, `PlanRevision`)                                                  | Fixed: through `stopChoices`                                                                                                                           |
++| Checklist writers (`revisedStop`, `planItem`, `toggleChecklistItem`)                                                    | Fixed: a changed or hand-ticked item loses its mark                                                                                                    |
++| Checklist writers (`addChecklistItem`, `deleteChecklistItem`)                                                           | Checked clean: added items are unmarked; deletion removes                                                                                              |
++| Stop waiting photos (`StopsTab.onPhotos`)                                                                               | Fixed: kept per Stop, added to, retried once                                                                                                           |
++| Retention and apply (`planRetained`, `savePlanRevision`)                                                                | Undecided rows refused; retention unchanged                                                                                                            |
++| Plan and Prompt entry paths (`PlanTab`, `PromptBuilder`, `StopsTab`)                                                    | Checked clean: all three open the same `PlanRevision`                                                                                                  |
++| List, Visited and Map (`stopGroups`, `visitedPlaces`, `StopsMap`)                                                       | Checked clean: an unassigned place was already a supported state                                                                                       |
++| `TripCover`                                                                                                             | Fixed: an undecodable photo falls back to the drawing                                                                                                  |
++| Needs, readiness, Insights                                                                                              | Checked clean: they read text, done and leg, never `fromPlan`                                                                                          |
++| `JournalView`                                                                                                           | Fixed: an undecodable photo shows a notice and Save the original                                                                                       |
++| Exports (trip pack, CSV, prompts)                                                                                       | Checked clean: they read `text`/`done`                                                                                                                 |
++| Stop ingestion (`addPhotos`)                                                                                            | Fixed                                                                                                                                                  |
++| Moment and receipt ingestion (`preparePhotos` plus a component transaction)                                             | Already atomic; proven. Checked clean for waiting work: their pickers add to the draft's files, are disabled while saving, and clear only after a save |
++| Cover ingestion and picker (`CoverPicker`)                                                                              | Fixed: a failed upload says so; undecodable thumbnails say so                                                                                          |
++| Galleries and viewer (`PhotoGallery`)                                                                                   | Fixed                                                                                                                                                  |
++| Single download (`downloadPhoto`)                                                                                       | Fixed                                                                                                                                                  |
++| Share (`ExportTab.manifestFiles`)                                                                                       | Fixed                                                                                                                                                  |
++| ZIP backup (`buildZipBackup`)                                                                                           | Fixed                                                                                                                                                  |
++| ZIP and JSON restore (`readBackupFile`, `importBackup`)                                                                 | Fixed                                                                                                                                                  |
++| Validation (`backup-validation`)                                                                                        | `fromPlan` is an optional boolean                                                                                                                      |
++| NAS download (`downloadPhotos`) and NAS restore (`restorePhotos`)                                                       | Fixed: typed by bytes                                                                                                                                  |
++| Upload (`uploadOne`)                                                                                                    | Ext by bytes, mapped to receiver names                                                                                                                 |
++| Check and listing                                                                                                       | Checked clean: by id and size                                                                                                                          |
++| Old clients                                                                                                             | Validator and merge carry `fromPlan` (frozen fixtures)                                                                                                 |
++| Old receivers (v1, v1.1)                                                                                                | Unchanged; proven against                                                                                                                              |
+ 
+ ### Equivalence classes crossed
+ 
+@@ -188,6 +191,9 @@ These are accepted, not fixed.
+     the rare case of a PNG or WebP an older app named `.jpg`.
+ - **Older checklist items.** Plan items written before this version carry no
+   mark, so they are never retired automatically; delete them by hand.
++- **Ticks on an older app.** An older version ticks without removing the
++  mark. An item it unticks back to how the plan wrote it reads as untouched
++  and can be retired; any other change keeps it.
+ - **Repeated ambiguity.** A plan that lists the same place on two visits to a
+   city asks which record is which each time it is applied. That is the price
+   of never guessing.
+diff --git a/src/components/tabs/StopsTab.svelte b/src/components/tabs/StopsTab.svelte
+index 57cb38a116a4fa1c52b87637f2a88d5324e24b1f..aca07336d2b018a77d9b1338048fb37129de3eaf 100644
+--- a/src/components/tabs/StopsTab.svelte
++++ b/src/components/tabs/StopsTab.svelte
+@@ -391,24 +391,27 @@
+   }
+ 
+   // ---- detail: photos + checklist ----
+-  // Photos of a batch that stopped part-way, kept to retry for that stop only.
+-  let unsaved = $state<{ stopId: string; files: Blob[]; saved: number; reason: string } | null>(
+-    null,
+-  );
+-  async function onPhotos(files: Blob[]) {
++  // Photos of batches that stopped part-way, kept per stop until retried.
++  // Another selection, on this stop or another, adds to them, never replaces them.
++  let unsaved = $state<Record<string, { files: Blob[]; saved: number; reason: string }>>({});
++  async function onPhotos(files: Blob[], retry = false) {
+     if (!selected) return;
+     const stopId = selected.id;
+     const tz = zoneOf(selected, cities);
+-    unsaved = null;
++    // A retry takes the pending files out at once, so a second tap can't save them twice.
++    if (retry) delete unsaved[stopId];
+     try {
+       await addPhotos(files, { tripId: trip.id, stopId, kind: 'stop', tz });
+       flashSaved();
+     } catch (err) {
+       // What saved stays saved; only the rest is offered again, so nothing is added twice.
+-      unsaved =
+-        err instanceof PhotoBatchError
+-          ? { stopId, files: err.remaining, saved: err.saved.length, reason: err.message }
+-          : { stopId, files, saved: 0, reason: err instanceof Error ? err.message : String(err) };
++      const batch = err instanceof PhotoBatchError;
++      const pending = unsaved[stopId];
++      unsaved[stopId] = {
++        files: [...(pending?.files ?? []), ...(batch ? err.remaining : files)],
++        saved: (pending?.saved ?? 0) + (batch ? err.saved.length : 0),
++        reason: err instanceof Error ? err.message : String(err),
++      };
+     }
+   }
+ 
+@@ -697,13 +700,14 @@
+       {#if photos.length}
+         <PhotoGallery {photos} label={selected.name} />
+       {/if}
+-      {#if unsaved?.stopId === selected.id}
+-        {@const left = unsaved.files}
++      {#if unsaved[selected.id]}
++        {@const pending = unsaved[selected.id]}
++        {@const left = pending.files}
+         <p role="alert" class="hint hint--warn">
+-          {unsaved.saved} photo{unsaved.saved === 1 ? '' : 's'} saved; {left.length} not saved: {unsaved.reason}.
++          {pending.saved} photo{pending.saved === 1 ? '' : 's'} saved; {left.length} not saved: {pending.reason}.
+           Free some space if storage is full, then retry. The photos already saved stay as they are.
+         </p>
+-        <button class="btn btn--ghost" onclick={() => onPhotos(left)}
++        <button class="btn btn--ghost" onclick={() => onPhotos(left, true)}
+           >Retry {left.length} photo{left.length === 1 ? '' : 's'}</button
+         >
+       {/if}
+diff --git a/src/lib/plan-revision.ts b/src/lib/plan-revision.ts
+index d1a2b2078b0a3b7c63b26b436f64e9205de53c11..d818c90a5688fc594061e785140c6ac3ee8d983c 100644
+--- a/src/lib/plan-revision.ts
++++ b/src/lib/plan-revision.ts
+@@ -1,31 +1,23 @@
+-import { db, type City, type Stop, type Trip } from './db';
+-import { extractStopsFromPlan, planItem, type StopCandidate } from './stops';
++import { db, type ChecklistItem, type City, type Stop, type Trip } from './db';
++import { cityIds, extractStopsFromPlan, planItem, stopChoices, type StopCandidate } from './stops';
+ import { same } from './sync';
+ import { newId } from './ids';
+ import { updateTrip } from './trips';
+ 
+ const key = (name: string) => name.trim().toLocaleLowerCase();
+ 
+-/** The legs this plan text could be speaking about: every leg of that name. */
+-function planCities(candidate: StopCandidate, cities: City[]): City[] {
+-  const named = cities.filter((city) => key(city.name) === key(candidate.city ?? ''));
+-  return named.length ? named : !candidate.city && cities.length === 1 ? cities : [];
+-}
+-
+ /** Unlabelled single-city plans are safe to assign; repeated city names need an explicit leg. */
+ export function planCityId(candidate: StopCandidate, cities: City[]): string | null {
+-  const named = planCities(candidate, cities);
+-  return named.length === 1 ? named[0].id : null;
++  const named = cities.filter((city) => key(city.name) === key(candidate.city ?? ''));
++  const legs = named.length ? named : !candidate.city && cities.length === 1 ? cities : [];
++  return legs.length === 1 ? legs[0].id : null;
+ }
+ 
+ /**
+- * The existing places each candidate could be: same name (or the name it was
+- * imported under), on one of the candidate's legs or on none. A city the trip
+- * returns to cannot say which leg a new place belongs on, but an existing
+- * place of that name on one of those legs is still that place — and keeps its
+- * own leg. A place with no leg of its own can be any leg's: otherwise
+- * re-applying the plan that created it would add it a second time. A place
+- * that is the only choice for an earlier candidate is no one else's.
++ * The existing places each candidate could be, by the same rule legacy import
++ * uses (stopChoices). An existing place keeps its own leg, even in a city the
++ * trip returns to. A place that is the only choice for an earlier candidate is
++ * no one else's.
+  */
+ export function planChoices(
+   candidates: StopCandidate[],
+@@ -33,16 +25,11 @@ export function planChoices(
+   cities: City[],
+ ): string[][] {
+   const used = new Set<string>();
++  const legs = cityIds(cities);
+   return candidates.map((c) => {
+-    const legs = new Set(planCities(c, cities).map((city) => city.id));
+-    const named = stops.filter(
+-      (s) =>
+-        !used.has(s.id) &&
+-        [s.name, s.planSource?.name].some((name) => name && key(name) === key(c.name)) &&
+-        (!s.cityId || legs.has(s.cityId)),
+-    );
+-    if (named.length === 1) used.add(named[0].id);
+-    return named.map((s) => s.id);
++    const ids = stopChoices(c, stops, legs, used).map((s) => s.id);
++    if (ids.length === 1) used.add(ids[0]);
++    return ids;
+   });
+ }
+ 
+@@ -88,17 +75,28 @@ export function revisedStop(stop: Stop, next: StopCandidate, previous?: StopCand
+     row.lat = next.lat;
+     row.lng = next.lng;
+   }
+-  // Retire only the plan's own unticked items that the plan wrote exactly so
+-  // and no longer lists. Ticked items, items added by hand, and items whose
+-  // origin is unknown (written before items were marked) always stay.
+-  // An item the plan wrote ticked and is now unticked has been edited: it stays.
++  // Retire only the plan's own unticked items, still exactly as the plan in
++  // force wrote them, that the new plan no longer lists. Ticked items, items
++  // added by hand, and items whose origin is unknown (written before items
++  // were marked) always stay. An item that no longer reads as written — its
++  // tick or text changed — is the traveller's: once the new plan lists it, it
++  // loses its mark, so a coincidental listing can never make it retirable.
+   const listed = stop.planSource?.checklist ?? [];
+-  const untouched = new Set(listed.filter((item) => !item.done).map((item) => item.text));
++  const asWritten = (item: ChecklistItem, plan: { text: string; done: boolean }[]) =>
++    plan.some((p) => p.text === item.text && p.done === item.done);
+   const nextKeys = new Set(next.checklist.map((item) => key(item.text)));
+-  row.checklist = stop.checklist.filter(
+-    (item) =>
+-      !(item.fromPlan && !item.done && untouched.has(item.text) && !nextKeys.has(key(item.text))),
+-  );
++  row.checklist = [];
++  for (const item of stop.checklist) {
++    if (!item.fromPlan) row.checklist.push(item);
++    else if (!nextKeys.has(key(item.text))) {
++      if (item.done || !asWritten(item, listed)) row.checklist.push(item);
++    } else if (asWritten(item, listed) && asWritten(item, next.checklist)) row.checklist.push(item);
++    else {
++      const own = { ...item };
++      delete own.fromPlan;
++      row.checklist.push(own);
++    }
++  }
+   // Add new discoveries once. One the last plan already listed and that is
+   // gone from the stop was deleted by hand: it stays deleted.
+   const listedKeys = new Set(listed.map((item) => key(item.text)));
+diff --git a/src/lib/stops.ts b/src/lib/stops.ts
+index a5094eae5b7cedaa703e7d46fdd4dde26bdd3b8e..f891a5f592310516015306cf08c4552ee6031ab4 100644
+--- a/src/lib/stops.ts
++++ b/src/lib/stops.ts
+@@ -215,7 +215,10 @@ export async function addChecklistItem(stop: Stop, text: string): Promise<void>
+ export async function toggleChecklistItem(stop: Stop, itemId: string): Promise<void> {
+   await db.stops.update(stop.id, (s) => {
+     const item = s.checklist.find((c) => c.id === itemId);
+-    if (item) item.done = !item.done;
++    if (!item) return;
++    item.done = !item.done;
++    // Touched by the traveller: no later revision may retire it.
++    delete item.fromPlan;
+   });
+ }
+ 
+@@ -521,33 +524,39 @@ export function extractStopsFromPlan(
+ const key = (name: string) => name.trim().toLowerCase();
+ 
+ /**
+- * The stop already in the list that a plan candidate is, if any. Same name,
+- * and — where the plan says which city — on one of that city's legs: two
+- * cities can each have a Duomo, and neither should swallow the other. A stop
+- * that doesn't say which leg it is on (added before the trip had legs, or on
+- * a single-city trip) can stand for a candidate from any city, but only for
+- * one of them: `taken` carries the stops already spoken for. Two equally good
+- * stops — a city the trip returns to, with that place on two of its legs —
+- * are 'ambiguous': the place is there, but which record it is can't be said.
++ * The existing stops a plan candidate could be: none (a new place), one, or
++ * several (ambiguous — which record it is can't be said). The one rule both
++ * reviewed revision and legacy import/presence/backfill use. Same name, or the
++ * name it was imported under. Where the plan says which city, a stop on one of
++ * that city's legs first — two cities can each have a Duomo — and only then a
++ * stop with no leg (added before the trip had legs); a city the trip no longer
++ * has matches only those. With no city heading, any leg's stop of that name
++ * may be it. `taken` carries the stops already spoken for.
+  */
++export function stopChoices(
++  c: StopCandidate,
++  existing: Stop[],
++  legsByName: Map<string, string[]>,
++  taken: Set<string>,
++): Stop[] {
++  const legs = c.city ? (legsByName.get(key(c.city)) ?? []) : undefined;
++  const named = existing.filter(
++    (s) =>
++      !taken.has(s.id) && [s.name, s.planSource?.name].some((n) => n && key(n) === key(c.name)),
++  );
++  if (!legs) return named;
++  const own = named.filter((s) => !!s.cityId && legs.includes(s.cityId));
++  return own.length ? own : named.filter((s) => !s.cityId);
++}
++
+ function matchStop(
+   c: StopCandidate,
+   existing: Stop[],
+   legsByName: Map<string, string[]>,
+   taken: Set<string>,
+ ): Stop | 'ambiguous' | undefined {
+-  // A named city with no leg of that name (deleted, or not a city) matches only places with no leg.
+-  const legs = c.city ? (legsByName.get(key(c.city)) ?? []) : undefined;
+-  const named = existing.filter((s) => !taken.has(s.id) && key(s.name) === key(c.name));
+-  // The stop on the candidate's own leg first; only then one with no leg.
+-  for (const tier of [
+-    named.filter((s) => !!legs && !!s.cityId && legs.includes(s.cityId)),
+-    named.filter((s) => !legs || !s.cityId),
+-  ]) {
+-    if (tier.length === 1) return tier[0];
+-    if (tier.length > 1) return 'ambiguous';
+-  }
+-  return undefined;
++  const choices = stopChoices(c, existing, legsByName, taken);
++  return choices.length > 1 ? 'ambiguous' : choices[0];
+ }
+ 
+ /** Candidates not already present as stops (by name, within their own city). */
+diff --git a/tests/e2e/travel-reliability.spec.ts b/tests/e2e/travel-reliability.spec.ts
+index 4be20da569ee8f0c274349d852f3ee25b1357a54..55540b3dc3aeae0b348769dca69a620706144fc2 100644
+--- a/tests/e2e/travel-reliability.spec.ts
++++ b/tests/e2e/travel-reliability.spec.ts
+@@ -217,7 +217,8 @@ test('ambiguous plan matches require a deliberate reuse or new-place decision',
+         }),
+         row('fortress', 'Fortress', sb, 2),
+         row('b2', 'Belvedere', v2, 3),
+-        row('alb-loose', 'Albertina', null, 4),
++        // The plan's name on the other Vienna leg: either could be the plan's Albertina.
++        row('alb-loose', 'Albertina', v2, 4),
+       ]);
+       await m.db.trips.update(trip, { planText: plan });
+       return { trip, v1, sb, v2 };
+@@ -256,7 +257,7 @@ test('ambiguous plan matches require a deliberate reuse or new-place decision',
+     'Choose…',
+     'Add as a new place',
+     'My print room · Vienna · leg 1 · keep this record',
+-    'Albertina · keep this record',
++    'Albertina · Vienna · leg 3 · keep this record',
+   ]);
+ 
+   // Cancelling writes nothing.
+@@ -302,10 +303,10 @@ test('ambiguous plan matches require a deliberate reuse or new-place decision',
+     ['Belvedere', t.v1, false],
+     ['My print room', t.v1, false],
+     ['Albertina', null, false],
+-    ['Albertina', null, false],
+     ['Fortress', t.sb, false],
+     ['Mozart house', t.sb, false],
+     ['Belvedere', t.v2, false],
++    ['Albertina', t.v2, false],
+   ]);
+ });
+ 
+@@ -687,9 +688,58 @@ test('photo batch failures preserve committed records and retry without duplicat
+     png,
+   ]);
+   // The Stop's photos, from first to last, are exactly as saved above.
++  const kept = [sha(existing), early, late, png, heic, webp];
+   expect(
+     (await photos()).filter((p) => p.stopId === t.stop && !p.momentId).map((p) => p.sha),
+-  ).toEqual([sha(existing), early, late, png, heic, webp]);
++  ).toEqual(kept);
++
++  // More photos picked while some still wait: the waiting ones stay offered,
++  // on their own stop, and every photo is saved once.
++  const more = [3, 4, 5, 6, 7].map((d) => ({
++    name: `more-${d}.jpg`,
++    mimeType: 'image/jpeg',
++    buffer: jpegTakenAt(`2026:10:0${d} 10:00:00`, 2_000 + d),
++  }));
++  const [a, b, c, d, e] = more.map((f) => sha(f.buffer));
++  const other = await run(
++    page,
++    async (m, trip: string) => m.addStop(trip, 'Park Güell', null),
++    t.trip,
++  );
++  const onStop = async (stop: string) =>
++    (await photos())
++      .filter((p) => p.stopId === stop && !p.momentId)
++      .map((p) => p.sha)
++      .sort();
++  // Same-document moves, so the waiting photos are what the page still holds.
++  const open = (stop: string) =>
++    page.evaluate((h) => (location.hash = h), `#/trip/${t.trip}/stops/${stop}`);
++  await open(t.stop);
++  await failPhotoWrites(page, 1);
++  await library.setInputFiles(more.slice(0, 3));
++  await expect(alert).toContainText('1 photo saved; 2 not saved: Synthetic quota exceeded');
++  await allowPhotoWrites(page);
++  await library.setInputFiles(more[3]);
++  await expect.poll(() => onStop(t.stop)).toEqual([...kept, a, d].sort());
++  await expect(alert).toContainText('1 photo saved; 2 not saved');
++  await expect(page.getByRole('button', { name: 'Retry 2 photos' })).toBeVisible();
++
++  // Another stop's failed selection waits there, and leaves this one's alone.
++  await open(other);
++  await expect(alert).toHaveCount(0);
++  await failPhotoWrites(page, 0);
++  await library.setInputFiles(more[4]);
++  await expect(alert).toContainText('0 photos saved; 1 not saved');
++  await allowPhotoWrites(page);
++  await open(t.stop);
++  await page.getByRole('button', { name: 'Retry 2 photos' }).click();
++  await expect(alert).toHaveCount(0);
++  await expect.poll(() => onStop(t.stop)).toEqual([...kept, a, b, c, d].sort());
++  await open(other);
++  await page.getByRole('button', { name: 'Retry 1 photo' }).click();
++  await expect(alert).toHaveCount(0);
++  await expect.poll(() => onStop(other)).toEqual([e]);
++  expect(await onStop(t.stop)).toEqual([...kept, a, b, c, d].sort());
+ });
+ 
+ /** A stored ZIP's entries, read here rather than by the app's own reader. */
+@@ -1188,7 +1238,8 @@ test('travel reliability family proof preserves identities and originals across
+     ['Cathedral', t.sb, true],
+   ];
+   const checklist = [
+-    ['Find the gate', true, true],
++    // Ticked by the traveller: theirs now, never retirable.
++    ['Find the gate', true, false],
+     ['Old cue', false, false],
+     ['Upper terrace', false, true],
+   ];
+diff --git a/tests/unit/compat.test.ts b/tests/unit/compat.test.ts
+index 786ee7a0c7a4e086cbc5ddeb8e9fae6724c4f8f2..a16107745d256dbc0789f22459cece74c6ed31d5 100644
+--- a/tests/unit/compat.test.ts
++++ b/tests/unit/compat.test.ts
+@@ -518,6 +518,38 @@ it('repeated plan revisions retire only proven untouched generated checklist ite
+   // Re-applying the same plan changes nothing.
+   expect(revisedStop(three, rev3)).toEqual(three);
+ 
++  // A later plan happens to list the edited item's text and the unticked one,
++  // unticked: they stay, and are the traveller's from now on.
++  const rev4 = plan('Find the crypt door', 'Pre-booked', 'Ask for the roof');
++  const four = revisedStop(three, rev4);
++  expect(texts(four)).toEqual([
++    ['Buy tickets', true, true],
++    ['Old cue', false, false],
++    ['Light a candle', false, false],
++    ['Bring water', false, false],
++    ['Check the tower', false, false],
++    ['Find the crypt door', false, false],
++    ['Pre-booked', false, false],
++    ['Climb the dome', true, true],
++    ['Ask for the roof', false, true],
++  ]);
++  expect(revisedStop(four, rev4)).toEqual(four);
++  // The next plan drops all three: only the untouched generated one goes.
++  const roof = three.checklist.find((c) => c.text === 'Ask for the roof')!.id;
++  const five = revisedStop(four, plan());
++  expect(five.checklist.map((c) => c.id)).toEqual([
++    'buy',
++    'legacy',
++    'candle',
++    'water',
++    'tower',
++    'edited',
++    'unticked',
++    dome.id,
++  ]);
++  // Negative control: before the plan dropped it, the untouched one was there.
++  expect(four.checklist.map((c) => c.id)).toContain(roof);
++
+   // No planSource (a record from an older version): nothing is retired, even
+   // when the previous plan text lists the item.
+   const legacy = { ...start, planSource: undefined };
+diff --git a/tests/unit/plan-revision.test.ts b/tests/unit/plan-revision.test.ts
+index ccbfaf064974d311ca17dea691873262df099fed..4cd77bed6b145ad2f223fc48e82e08e1f58aae6b 100644
+--- a/tests/unit/plan-revision.test.ts
++++ b/tests/unit/plan-revision.test.ts
+@@ -199,21 +199,40 @@ describe('revised routes', () => {
+       ['Mozart house', 'Salzburg'],
+       ['Belvedere', 'Vienna'],
+     ]);
+-    // Every plausible record, by name or by the name it was imported under.
+-    // Fortress has one record: the first entry takes it, the second can't.
++    // Every plausible record, by name or by the name it was imported under. A
++    // record on the named city's leg comes before one with no leg; the renamed
++    // Albertina is found by its import name. Fortress has one record: the
++    // first entry takes it, the second can't.
+     expect(planChoices(candidates, rows, vsv)).toEqual([
+       ['b1', 'b2'],
+-      ['alb', 'alb-loose'],
++      ['alb'],
+       ['fortress'],
+       [],
+       [],
+       ['b1', 'b2'],
+     ]);
+     // Review asks about ambiguity; only a true absence is a new place.
+-    expect(reviewMatches(candidates, rows, vsv)).toEqual(['?', '?', 'fortress', '', '', '?']);
++    expect(reviewMatches(candidates, rows, vsv)).toEqual(['?', 'alb', 'fortress', '', '', '?']);
+     expect(UNDECIDED).toBe('?');
+-    // Unreviewed matching (the defect's view) would have shown all three as new.
+-    expect(planMatches(candidates, rows, vsv)).toEqual(['', '', 'fortress', '', '', '']);
++    // Unreviewed matching (the defect's view) would have shown both Belvederes as new.
++    expect(planMatches(candidates, rows, vsv)).toEqual(['', 'alb', 'fortress', '', '', '']);
++
++    // An import name on one leg and the same name on the other: still ambiguous.
++    const aliasRows = [rows[1], place('alb2', 'Albertina', 'v2')];
++    expect(reviewMatches([candidates[1]], aliasRows, vsv)).toEqual(['?']);
++
++    // No city heading on a trip with several legs: the name can't say which
++    // leg, so any leg's record of that name may be it — never a new place.
++    const bare = extractStopsFromPlan('## Route\n### Museum\nHall', vsvNames);
++    expect(bare.map((c) => c.city)).toEqual([undefined]);
++    const museum = place('m1', 'Museum', 'sb');
++    expect(reviewMatches(bare, [museum], vsv)).toEqual(['m1']);
++    expect(reviewMatches(bare, [museum, place('m2', 'Museum', 'v2')], vsv)).toEqual(['?']);
++    // Unassigned and assigned alike: no heading gives one more evidence than the other.
++    expect(reviewMatches(bare, [museum, place('m0', 'Museum', null)], vsv)).toEqual(['?']);
++    // Twice in a headingless plan with one record: the first reuses it, the second is new.
++    const twice = extractStopsFromPlan('## Route\n### Museum\nA\n### Museum\nB', vsvNames);
++    expect(reviewMatches(twice, [museum], vsv)).toEqual(['m1', '']);
+   });
+ 
+   it('repeated-city plan logic never picks a leg a heading cannot name', () => {
+@@ -269,6 +288,32 @@ describe('revised routes', () => {
+       '?',
+       '',
+     ]);
++
++    // A place renamed by hand is still the one it was imported as, on every
++    // path: present for legacy import, backfilled, and reused by review.
++    const renamed = [
++      place('mine', 'My fortress', 'sb', {
++        planSource: { name: 'Fortress', notes: 'River', checklist: [] },
++      }),
++    ];
++    const fortress = '# Salzburg\n## Route\n### Fortress\nAnchor: Funicular';
++    expect(newStopCandidates(fortress, renamed, vsvNames, ids)).toEqual([]);
++    expect(guideBackfill(fortress, renamed, vsvNames, ids)).toEqual([
++      { id: 'mine', patch: { guide: { anchor: 'Funicular' } } },
++    ]);
++    expect(reviewMatches(extractStopsFromPlan(fortress, vsvNames), renamed, vsv)).toEqual(['mine']);
++    // Legacy presence and review agree on every case above.
++    for (const [text, rows] of [
++      [plan, imported],
++      [plan, later],
++      [graz, later],
++      [bare, later],
++      [fortress, renamed],
++    ] as const) {
++      const found = reviewMatches(extractStopsFromPlan(text, vsvNames), rows, vsv);
++      const fresh = newStopCandidates(text, rows, vsvNames, ids);
++      expect(fresh.length).toBe(found.filter((m) => m === '').length);
++    }
+   });
+ 
+   it('ignores nested commentary headings and recovers bold location labels', () => {
+```
+
+**Paths the rework touched:**
+
+- `docs/travel-reliability-closure.md`
+- `src/components/tabs/StopsTab.svelte`
+- `src/lib/plan-revision.ts`
+- `src/lib/stops.ts`
+- `tests/e2e/travel-reliability.spec.ts`
+- `tests/unit/compat.test.ts`
+- `tests/unit/plan-revision.test.ts`
+
+**The builder's rework commit messages — claims to verify against the diff, never evidence:**
+
+```
+d771123 Rework three invariant families after the requested changes
+
+Family proof plan: docs/travel-reliability-closure.md ("Family proof plan",
+"Readers and writers", "Limits").
+
+Safe checklist retirement across revisions and personal edits
+  Invariant: a plan may retire only an item it wrote that still reads
+  exactly as written. The fromPlan mark is that proof only while it holds,
+  so a later plan whose text happens to match a changed item must not
+  re-establish it.
+  - revisedStop: fixed. When the new plan lists an item, the item keeps its
+    mark only if it matches both the outgoing and the new plan's listing
+    (text and tick). Otherwise the mark is dropped and the item belongs to
+    the traveller.
+  - toggleChecklistItem: fixed. A tick or untick by hand drops the mark.
+  - planItem, import and new rows in apply: checked clean. They mark only
+    what the plan writes.
+  - addChecklistItem and deleteChecklistItem: checked clean. Added items
+    are unmarked; deletion is unchanged.
+  - Validation, ZIP, old and new merge: checked clean. The mark is still
+    optional, and dropping it is an ordinary field change.
+  - Limit: an older app ticks without dropping the mark. The content rule
+    still protects an item that was ticked when written, or whose text was
+    changed.
+
+Consistent Stop identity and ambiguity across reviewed and legacy plan paths
+  Invariant: every path that asks "which existing record is this plan
+  entry?" gets the same answer.
+  - The rule: match on the name or the import name. A named city's legs
+    come first, then records with no leg. A city with no leg left matches
+    only records with no leg. With no city heading, a record on any leg can
+    match.
+  - The rule now lives in one function, stopChoices in stops.ts.
+  - planChoices, planMatches, reviewMatches, planRetained and
+    savePlanRevision's prior matches: fixed. They go through stopChoices,
+    so a headingless entry on a multi-leg trip reuses its only record or
+    asks betw
+… (truncated)
+```
 
 ## Check against the contract
 
