@@ -26,28 +26,34 @@ truth:
       action: Run the prompt outside Systema and paste the answer, or edit the
         existing plan.
       shows: Review Stops shows extracted places, proposed matches and retained
-        places.
+        places; a place two or more existing records could be is marked and
+        offers only those records (with leg and visit) or a new place.
       changes: The plan remains a draft until review is applied.
       assumes: []
       evidence:
         method: inferred
-        at: 2026-11-09T14:16:18.512Z
-        commit: b35a63f7b1d71d1f18b3f3b5151644d86394d49f
-        note: Code reading; mapped tests are pointers, not manual verification.
+        at: 2026-11-09T17:10:00.000Z
+        note: Code reading in the change lane; mapped tests are pointers, not manual
+          verification.
     - actor: Traveller
-      action: Review the matches and apply the plan.
-      shows: The plan and Stops update together; a failed save retains the draft.
+      action: Decide each ambiguous place, review the other matches and apply the plan.
+      shows: Apply stays unavailable until every ambiguous place is decided; the plan
+        and Stops update together; a failed save retains the draft.
       changes: Personal edits, visits, photos, bookings and linked Moments are
-        retained; visited places removed from the route stay off it.
+        retained; visited places removed from the route stay off it; a new place
+        under a city the trip visits more than once stays unassigned; unticked
+        checklist items the plan wrote and no longer lists are retired, while
+        ticked, hand-added and older items stay.
       assumes: []
       evidence:
         method: inferred
-        at: 2026-11-09T14:16:18.512Z
-        commit: b35a63f7b1d71d1f18b3f3b5151644d86394d49f
-        note: Code reading; mapped tests are pointers, not manual verification.
+        at: 2026-11-09T17:10:00.000Z
+        note: Code reading in the change lane; mapped tests are pointers, not manual
+          verification.
   endsWith: The revised plan and Stops are saved together with personal records retained.
   variations: []
-  rules: []
+  rules:
+    - r-preserve-personal-history
   involves: []
 mechanics:
   touchpoints:
@@ -80,11 +86,18 @@ mechanics:
       steps: []
     - file: tests/e2e/plan-capture-revision.spec.ts
       steps: []
+    - file: tests/e2e/travel-reliability.spec.ts
+      steps:
+        - 2
+        - 3
+    - file: tests/unit/compat.test.ts
+      steps:
+        - 3
 approval:
-  hash: c6dafbd9cad617b758ee5e8aee4f9a120ce5b138ad492486f6f88acfb3d2890b
-  at: 2026-11-09T14:29:10.957Z
+  hash: 0621827b47f3a23e54170596702cd665d94525599cd4474ab59214954d39c48e
+  at: 2026-11-09T20:00:55.191Z
   by: owner
-  signature: ApPtrYZt+58vGj71+ARtId0VFXQb+5kWOd9xdPaSwhpKn+BvQFWNLSHNz4/K0WWz+kcZ07mjf2HZMuBSMYs9Aw==
+  signature: 1W3VOPli3sDAcvV3j+9zNip05EGVt0uvwu8HlSBxunpWZCWxkrQsniylL5FMRUy+ZHxc20nJs48gL17aq5+FDg==
   publicKey: |
     -----BEGIN PUBLIC KEY-----
     MCowBQYDK2VwAyEAxxaiErDKWXw9qQrVISVCyYQrsfvEEbOKmcLKt92Rkro=
@@ -93,7 +106,7 @@ approval:
 
 # Research and revise a plan
 
-_Works now · approved 2026-11-09T14:29:10.957Z by owner (signed)_
+_Works now · approved 2026-11-09T20:00:55.191Z by owner (signed)_
 
 ## Goal
 
@@ -114,12 +127,12 @@ _nothing extra required_
    - Changes: Preferences are remembered; the app makes no AI request.
 
 2. **Traveller** Run the prompt outside Systema and paste the answer, or edit the existing plan.
-   - Shows: Review Stops shows extracted places, proposed matches and retained places.
+   - Shows: Review Stops shows extracted places, proposed matches and retained places; a place two or more existing records could be is marked and offers only those records (with leg and visit) or a new place.
    - Changes: The plan remains a draft until review is applied.
 
-3. **Traveller** Review the matches and apply the plan.
-   - Shows: The plan and Stops update together; a failed save retains the draft.
-   - Changes: Personal edits, visits, photos, bookings and linked Moments are retained; visited places removed from the route stay off it.
+3. **Traveller** Decide each ambiguous place, review the other matches and apply the plan.
+   - Shows: Apply stays unavailable until every ambiguous place is decided; the plan and Stops update together; a failed save retains the draft.
+   - Changes: Personal edits, visits, photos, bookings and linked Moments are retained; visited places removed from the route stay off it; a new place under a city the trip visits more than once stays unassigned; unticked checklist items the plan wrote and no longer lists are retired, while ticked, hand-added and older items stay.
 
 ## Ends with
 
@@ -131,7 +144,7 @@ _none_
 
 ## Rules
 
-_none stated_
+- r-preserve-personal-history
 
 ## Involves
 

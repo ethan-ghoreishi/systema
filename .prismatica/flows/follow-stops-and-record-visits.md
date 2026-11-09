@@ -34,16 +34,25 @@ truth:
         note: Code reading; mapped tests are pointers, not manual verification.
     - actor: Traveller
       action: Mark a visit, correct its time, or edit notes, checklist and photos.
-      shows: Saved feedback and the Visited view show the recorded history.
-      changes: Visit facts and edits persist independently of planned order.
+      shows: Saved feedback and the Visited view show the recorded history; a photo
+        batch that stops part-way says how many saved and offers to retry only
+        the rest; a photo this browser can't show offers its original to save.
+      changes: Visit facts and edits persist independently of planned order; photos
+        already saved stay, and a retry never adds them twice.
       assumes: []
       evidence:
         method: inferred
-        at: 2026-11-09T14:16:18.512Z
-        commit: b35a63f7b1d71d1f18b3f3b5151644d86394d49f
-        note: Code reading; mapped tests are pointers, not manual verification.
+        at: 2026-11-09T17:20:00.000Z
+        note: Code reading in the change lane; mapped tests are pointers, not manual
+          verification.
   endsWith: Actual visits are recorded while the planned order remains distinct.
-  variations: []
+  variations:
+    - name: Add a place by hand
+      differs: The new place joins the leg the planned route ends in (places kept off
+        the route don't count), the only leg, or a leg chosen beside the box —
+        repeated cities are labelled by leg — and sits with that leg's places.
+        With several legs and no route it stays unassigned until chosen.
+      status: works
   rules: []
   involves: []
 mechanics:
@@ -76,11 +85,14 @@ mechanics:
       steps: []
     - file: tests/e2e/maps.spec.ts
       steps: []
+    - file: tests/e2e/travel-reliability.spec.ts
+      steps:
+        - 3
 approval:
-  hash: b7cf61b4de41048c260a6c33a9ee589dcd2517091e4249d6bfc4907b0e90a36b
-  at: 2026-11-09T14:29:10.928Z
+  hash: 514fa6d9edd3601e194d740a43d0a3d5ea0db7074158fa907b1ff5aa9b9ff9a5
+  at: 2026-11-09T20:00:55.170Z
   by: owner
-  signature: WbODyZsVZn0FsE6LrB28i6MjC3bjgjOUXITsalhb1L/oUD1lbJlmLhtpxarihd6ngvuiprStZJB4nA9mUxlWCA==
+  signature: 3D6/6MBnleMRDa8NVN6nliyLOLa6SKXpFDt8cvM/fE0+pgVBnkv0Uq0KSZ3BMXYpXGCSBBvXzIr668nHbQOtCw==
   publicKey: |
     -----BEGIN PUBLIC KEY-----
     MCowBQYDK2VwAyEAxxaiErDKWXw9qQrVISVCyYQrsfvEEbOKmcLKt92Rkro=
@@ -89,7 +101,7 @@ approval:
 
 # Follow Stops and record visits
 
-_Works now · approved 2026-11-09T14:29:10.928Z by owner (signed)_
+_Works now · approved 2026-11-09T20:00:55.170Z by owner (signed)_
 
 ## Goal
 
@@ -114,8 +126,8 @@ _nothing extra required_
    - Changes: Opening directions does not mark a visit.
 
 3. **Traveller** Mark a visit, correct its time, or edit notes, checklist and photos.
-   - Shows: Saved feedback and the Visited view show the recorded history.
-   - Changes: Visit facts and edits persist independently of planned order.
+   - Shows: Saved feedback and the Visited view show the recorded history; a photo batch that stops part-way says how many saved and offers to retry only the rest; a photo this browser can't show offers its original to save.
+   - Changes: Visit facts and edits persist independently of planned order; photos already saved stay, and a retry never adds them twice.
 
 ## Ends with
 
@@ -123,7 +135,7 @@ Actual visits are recorded while the planned order remains distinct.
 
 ## Variations
 
-_none_
+- **Add a place by hand** — The new place joins the leg the planned route ends in (places kept off the route don't count), the only leg, or a leg chosen beside the box — repeated cities are labelled by leg — and sits with that leg's places. With several legs and no route it stays unassigned until chosen. _(Works now)_
 
 ## Rules
 
