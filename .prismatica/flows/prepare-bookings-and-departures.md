@@ -21,10 +21,9 @@ truth:
       changes: Booking needs are derived rather than stored as a second task list.
       assumes: []
       evidence:
-        method: inferred
-        at: 2026-11-09T14:16:18.512Z
-        commit: b35a63f7b1d71d1f18b3f3b5151644d86394d49f
-        note: Code reading; mapped tests are pointers, not manual verification.
+        method: manual
+        at: 2026-11-09T20:02:56.723Z
+        commit: ead42fcc43c9114a5a6457beb98b6d8ccabd1d66
     - actor: Traveller
       action: Open a need and enter the known reservation or actual payment.
       shows: A reference-only save reads booked; payment appears in Expenses with any
@@ -33,10 +32,9 @@ truth:
         alone creates no payment.
       assumes: []
       evidence:
-        method: inferred
-        at: 2026-11-09T14:16:18.512Z
-        commit: b35a63f7b1d71d1f18b3f3b5151644d86394d49f
-        note: Code reading; mapped tests are pointers, not manual verification.
+        method: manual
+        at: 2026-11-09T20:02:56.723Z
+        commit: ead42fcc43c9114a5a6457beb98b6d8ccabd1d66
     - actor: Traveller
       action: Mark check-in or preparation items, add personal items or put irrelevant
         ones aside.
@@ -44,10 +42,9 @@ truth:
       changes: Preparation and check-in choices persist on the trip or departure.
       assumes: []
       evidence:
-        method: inferred
-        at: 2026-11-09T14:16:18.512Z
-        commit: b35a63f7b1d71d1f18b3f3b5151644d86394d49f
-        note: Code reading; mapped tests are pointers, not manual verification.
+        method: manual
+        at: 2026-11-09T20:02:56.723Z
+        commit: ead42fcc43c9114a5a6457beb98b6d8ccabd1d66
   endsWith: Remaining arrangements and departure details reflect the saved evidence.
   variations: []
   rules: []
@@ -138,4 +135,3 @@ _none stated_
 ## Involves
 
 _not specified_
-
