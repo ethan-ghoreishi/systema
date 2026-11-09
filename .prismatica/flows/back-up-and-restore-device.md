@@ -19,10 +19,9 @@ truth:
       changes: Only the local file-backup marker changes.
       assumes: []
       evidence:
-        method: inferred
-        at: 2026-11-09T14:16:18.512Z
-        commit: b35a63f7b1d71d1f18b3f3b5151644d86394d49f
-        note: Code reading; mapped tests are pointers, not manual verification.
+        method: manual
+        at: 2026-11-09T20:01:09.612Z
+        commit: 7191da606936eed6218c680b9e3e36f2ff2f8110
     - actor: Traveller
       action: Select a ZIP or legacy JSON backup.
       shows: Validation and a preview show what would be added; damaged input is
@@ -30,10 +29,9 @@ truth:
       changes: The preview adds no records.
       assumes: []
       evidence:
-        method: inferred
-        at: 2026-11-09T14:16:18.512Z
-        commit: b35a63f7b1d71d1f18b3f3b5151644d86394d49f
-        note: Code reading; mapped tests are pointers, not manual verification.
+        method: manual
+        at: 2026-11-09T20:01:09.612Z
+        commit: 7191da606936eed6218c680b9e3e36f2ff2f8110
     - actor: Traveller
       action: Confirm Restore these records, optionally enabling fill-empty-fields
         separately.
@@ -42,10 +40,9 @@ truth:
         filled only when explicitly requested.
       assumes: []
       evidence:
-        method: inferred
-        at: 2026-11-09T14:16:18.512Z
-        commit: b35a63f7b1d71d1f18b3f3b5151644d86394d49f
-        note: Code reading; mapped tests are pointers, not manual verification.
+        method: manual
+        at: 2026-11-09T20:01:09.612Z
+        commit: 7191da606936eed6218c680b9e3e36f2ff2f8110
   endsWith: A separate backup is available and a validated restore preserves
     existing records.
   variations: []
@@ -132,4 +129,3 @@ _none stated_
 ## Involves
 
 _not specified_
-
