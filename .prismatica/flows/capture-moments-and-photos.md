@@ -19,20 +19,18 @@ truth:
       changes: Fields remain a draft until Save.
       assumes: []
       evidence:
-        method: inferred
-        at: 2026-11-09T14:16:18.512Z
-        commit: b35a63f7b1d71d1f18b3f3b5151644d86394d49f
-        note: Code reading; mapped tests are pointers, not manual verification.
+        method: manual
+        at: 2026-11-09T20:01:26.964Z
+        commit: 69d5311e036ba61b9a1b873f3e74790fb5a60bcd
     - actor: Traveller
       action: Optionally add camera or library photographs and save.
       shows: The Moment appears; failed saves leave the entry in the sheet.
       changes: Moment and prepared photo records are written transactionally.
       assumes: []
       evidence:
-        method: inferred
-        at: 2026-11-09T14:16:18.512Z
-        commit: b35a63f7b1d71d1f18b3f3b5151644d86394d49f
-        note: Code reading; mapped tests are pointers, not manual verification.
+        method: manual
+        at: 2026-11-09T20:01:26.964Z
+        commit: 69d5311e036ba61b9a1b873f3e74790fb5a60bcd
     - actor: Traveller
       action: Reopen the Moment to correct details or inspect photographs.
       shows: The entry, optional link and photographs appear.
@@ -40,10 +38,9 @@ truth:
         their calendar date when the city changes.
       assumes: []
       evidence:
-        method: inferred
-        at: 2026-11-09T14:16:18.512Z
-        commit: b35a63f7b1d71d1f18b3f3b5151644d86394d49f
-        note: Code reading; mapped tests are pointers, not manual verification.
+        method: manual
+        at: 2026-11-09T20:01:26.964Z
+        commit: 69d5311e036ba61b9a1b873f3e74790fb5a60bcd
   endsWith: A saved Moment preserves the event and its optional photographs and links.
   variations: []
   rules: []
@@ -131,4 +128,3 @@ _none stated_
 ## Involves
 
 _not specified_
-
