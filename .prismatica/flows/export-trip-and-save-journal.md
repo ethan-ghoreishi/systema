@@ -18,10 +18,9 @@ truth:
       changes: Source records stay on the device.
       assumes: []
       evidence:
-        method: inferred
-        at: 2026-11-09T14:16:18.512Z
-        commit: b35a63f7b1d71d1f18b3f3b5151644d86394d49f
-        note: Code reading; mapped tests are pointers, not manual verification.
+        method: manual
+        at: 2026-11-09T20:02:18.467Z
+        commit: 9a9c14c9e3e85cf5878e450fa2be786cd068fea8
     - actor: Traveller
       action: Write a journal externally, paste it and save.
       shows: Success or failure is reported; clearing a saved journal asks for
@@ -29,10 +28,9 @@ truth:
       changes: Journal text is stored on the trip.
       assumes: []
       evidence:
-        method: inferred
-        at: 2026-11-09T14:16:18.512Z
-        commit: b35a63f7b1d71d1f18b3f3b5151644d86394d49f
-        note: Code reading; mapped tests are pointers, not manual verification.
+        method: manual
+        at: 2026-11-09T20:02:18.467Z
+        commit: 9a9c14c9e3e85cf5878e450fa2be786cd068fea8
     - actor: Traveller
       action: Open Journal on the Plan tab.
       shows: Rendered journal, matched photographs, remaining gallery and available
@@ -41,10 +39,9 @@ truth:
         journal view.
       assumes: []
       evidence:
-        method: inferred
-        at: 2026-11-09T14:16:18.512Z
-        commit: b35a63f7b1d71d1f18b3f3b5151644d86394d49f
-        note: Code reading; mapped tests are pointers, not manual verification.
+        method: manual
+        at: 2026-11-09T20:02:18.467Z
+        commit: 9a9c14c9e3e85cf5878e450fa2be786cd068fea8
   endsWith: Portable records are available and the saved journal can be read with
     the photographs.
   variations: []
@@ -139,4 +136,3 @@ _none stated_
 ## Involves
 
 _not specified_
-
