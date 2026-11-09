@@ -7,7 +7,7 @@
     buildMemoryPrompt,
     photoManifest,
   } from '../../lib/export';
-  import { photoExt } from '../../lib/photos';
+  import { photoFormat, photoFormats, type PhotoFormat } from '../../lib/photo-format';
   import { zip } from '../../lib/zip';
   import { buildTripCsv, csvNote } from '../../lib/csv';
   import { tripDisplayName } from '../../lib/trip-shape';
@@ -27,6 +27,15 @@
   const cities = $derived($citiesQ ?? []);
   const expenses = $derived($expensesQ ?? []);
   const allPhotos = $derived($photosQ ?? []);
+  // Read ahead of the tap, which must stay synchronous to keep its share permission.
+  let formats = $state<Record<string, PhotoFormat>>({});
+  $effect(() => {
+    let live = true;
+    void photoFormats(allPhotos).then((f) => {
+      if (live) formats = f;
+    });
+    return () => (live = false);
+  });
 
   const packPhotos = $derived(
     allPhotos.map((p) => ({
@@ -109,7 +118,8 @@
     return manifest.map((e) => {
       const p = byId.get(e.id)!;
       const n = String(e.n).padStart(2, '0');
-      return new File([p.blob], `${n}-${e.ref}.${photoExt(p.blob)}`, { type: p.blob.type });
+      const f = formats[p.id] ?? photoFormat(new Uint8Array(), p.blob.type);
+      return new File([p.blob], `${n}-${e.ref}.${f.ext}`, { type: f.mime });
     });
   }
 

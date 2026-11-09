@@ -2,7 +2,8 @@ import type { Transaction } from 'dexie';
 import { db, type Photo, type Trip } from './db';
 import { newId } from './ids';
 import { settingsStore } from './settings.svelte';
-import { photoExt, sha256Hex } from './photos';
+import { sha256Hex } from './photos';
+import { nasExt, photoFormat } from './photo-format';
 import { buildDataBackup, descendsFrom, mergeClocks, toRecords, type Backup } from './export';
 import { validateBackup } from './backup-validation';
 import {
@@ -90,6 +91,16 @@ const AUTH_KEY = 'local:nasAuth'; // whether this receiver takes the token in a 
 // older row's own `backedUp` when its NAS copy turns out missing or damaged.
 const PHOTO_STATE_KEY = 'local:nasPhotoState';
 type PhotoState = Record<string, 'up' | 'redo'>;
+/**
+ * A downloaded photo as its own bytes, typed by what they are. A receiver's
+ * Content-Type only echoes the extension it was uploaded under — every HEIC,
+ * and anything unrecognised, went up as .jpg — so it is not evidence.
+ */
+async function ownBytes(res: Response): Promise<Blob> {
+  const buf = await res.arrayBuffer();
+  return new Blob([buf], { type: photoFormat(new Uint8Array(buf).subarray(0, 32)).mime });
+}
+
 const isBacked = (p: { id: string; backedUp?: boolean }, state: PhotoState) =>
   state[p.id] === 'up' || (!!p.backedUp && state[p.id] !== 'redo');
 const HISTORY_CAP = 200;
@@ -573,7 +584,7 @@ class NasBackup {
     const read = await this.readBytes(id);
     if (!read) return;
     const { p, buf } = read;
-    const ext = photoExt(p.blob);
+    const ext = nasExt(photoFormat(new Uint8Array(buf).subarray(0, 32), p.blob.type));
     // Hashed here only — older photos don't gain the fields: the previous
     // version never updates a photo's metadata from a snapshot, so changing
     // it would make two devices on different versions push forever.
@@ -756,9 +767,7 @@ class NasBackup {
           res.status,
         );
       // Own bytes, not a network-backed Blob: WebKit can store those unreadably.
-      const blob = new Blob([await res.arrayBuffer()], {
-        type: res.headers.get('content-type') ?? '',
-      });
+      const blob = await ownBytes(res);
       await db.transaction('rw', db.photos, db.kv, async () => {
         if (await db.photos.get(meta.id)) return;
         if (await db.kv.get(`${TOMBSTONE}${meta.id}`)) return;
@@ -1082,9 +1091,7 @@ class NasBackup {
         continue;
       }
       // Own bytes, not a network-backed Blob: WebKit can store those unreadably.
-      const blob = new Blob([await res.arrayBuffer()], {
-        type: res.headers.get('content-type') ?? '',
-      });
+      const blob = await ownBytes(res);
       await db.transaction('rw', db.photos, db.kv, async () => {
         if (await db.photos.get(meta.id)) return;
         await db.photos.add({ ...meta, blob, backedUp: true });

@@ -1,44 +1,58 @@
-import { db, type City, type Stop, type Trip } from './db';
-import { extractStopsFromPlan, type StopCandidate } from './stops';
+import { db, type ChecklistItem, type City, type Stop, type Trip } from './db';
+import { cityIds, extractStopsFromPlan, planItem, stopChoices, type StopCandidate } from './stops';
 import { same } from './sync';
 import { newId } from './ids';
 import { updateTrip } from './trips';
 
 const key = (name: string) => name.trim().toLocaleLowerCase();
 
-/** The legs this plan text could be speaking about: every leg of that name. */
-function planCities(candidate: StopCandidate, cities: City[]): City[] {
-  const named = cities.filter((city) => key(city.name) === key(candidate.city ?? ''));
-  return named.length ? named : !candidate.city && cities.length === 1 ? cities : [];
-}
-
 /** Unlabelled single-city plans are safe to assign; repeated city names need an explicit leg. */
 export function planCityId(candidate: StopCandidate, cities: City[]): string | null {
-  const named = planCities(candidate, cities);
-  return named.length === 1 ? named[0].id : null;
+  const named = cities.filter((city) => key(city.name) === key(candidate.city ?? ''));
+  const legs = named.length ? named : !candidate.city && cities.length === 1 ? cities : [];
+  return legs.length === 1 ? legs[0].id : null;
 }
 
 /**
- * Match only one unambiguous place of that name. A city the trip returns to
- * cannot say which leg a new place belongs on, but an existing place of that
- * name on one of those legs is still that place — and keeps its own leg. A
- * place with no leg of its own can be any leg's: otherwise re-applying the
- * plan that created it would add it a second time.
+ * The existing places each candidate could be, by the same rule legacy import
+ * uses (stopChoices). An existing place keeps its own leg, even in a city the
+ * trip returns to. A place that is the only choice for an earlier candidate is
+ * no one else's.
  */
-export function planMatches(candidates: StopCandidate[], stops: Stop[], cities: City[]): string[] {
+export function planChoices(
+  candidates: StopCandidate[],
+  stops: Stop[],
+  cities: City[],
+): string[][] {
   const used = new Set<string>();
+  const legs = cityIds(cities);
   return candidates.map((c) => {
-    const legs = new Set(planCities(c, cities).map((city) => city.id));
-    const named = stops.filter(
-      (s) =>
-        !used.has(s.id) &&
-        [s.name, s.planSource?.name].some((name) => name && key(name) === key(c.name)) &&
-        (!s.cityId || legs.has(s.cityId)),
-    );
-    const id = named.length === 1 ? named[0].id : '';
-    if (id) used.add(id);
-    return id;
+    const ids = stopChoices(c, stops, legs, used).map((s) => s.id);
+    if (ids.length === 1) used.add(ids[0]);
+    return ids;
   });
+}
+
+/** Match only one unambiguous place of that name (see planChoices); '' adds a new place. */
+export function planMatches(candidates: StopCandidate[], stops: Stop[], cities: City[]): string[] {
+  return planChoices(candidates, stops, cities).map((ids) => (ids.length === 1 ? ids[0] : ''));
+}
+
+/**
+ * A row the traveller has yet to decide: two or more existing places could
+ * be it. Never applied — guessing would move one place's history to another.
+ */
+export const UNDECIDED = '?';
+
+/** Matches for review: ambiguous rows wait for a decision instead of becoming new places. */
+export function reviewMatches(
+  candidates: StopCandidate[],
+  stops: Stop[],
+  cities: City[],
+): string[] {
+  return planChoices(candidates, stops, cities).map((ids) =>
+    ids.length === 1 ? ids[0] : ids.length ? UNDECIDED : '',
+  );
 }
 
 /** Update only content still identical to the previous plan; all personal fields stay put. */
@@ -61,11 +75,37 @@ export function revisedStop(stop: Stop, next: StopCandidate, previous?: StopCand
     row.lat = next.lat;
     row.lng = next.lng;
   }
-  // Keep ticked discoveries and personal additions; add new discoveries once.
-  row.checklist = [...stop.checklist];
+  // Retire only the plan's own unticked items, still exactly as the plan in
+  // force wrote them, that the new plan no longer lists. Ticked items, items
+  // added by hand, and items whose origin is unknown (written before items
+  // were marked) always stay. An item that no longer reads as written — its
+  // tick or text changed — is the traveller's: once the new plan lists it, it
+  // loses its mark, so a coincidental listing can never make it retirable.
+  const listed = stop.planSource?.checklist ?? [];
+  const asWritten = (item: ChecklistItem, plan: { text: string; done: boolean }[]) =>
+    plan.some((p) => p.text === item.text && p.done === item.done);
+  const nextKeys = new Set(next.checklist.map((item) => key(item.text)));
+  row.checklist = [];
+  for (const item of stop.checklist) {
+    if (!item.fromPlan) row.checklist.push(item);
+    else if (!nextKeys.has(key(item.text))) {
+      if (item.done || !asWritten(item, listed)) row.checklist.push(item);
+    } else if (asWritten(item, listed) && asWritten(item, next.checklist)) row.checklist.push(item);
+    else {
+      const own = { ...item };
+      delete own.fromPlan;
+      row.checklist.push(own);
+    }
+  }
+  // Add new discoveries once. One the last plan already listed and that is
+  // gone from the stop was deleted by hand: it stays deleted.
+  const listedKeys = new Set(listed.map((item) => key(item.text)));
   for (const item of next.checklist) {
-    if (!row.checklist.some((have) => key(have.text) === key(item.text)))
-      row.checklist.push({ id: newId(), ...item });
+    if (
+      !row.checklist.some((have) => key(have.text) === key(item.text)) &&
+      !listedKeys.has(key(item.text))
+    )
+      row.checklist.push(planItem(item));
   }
   return row;
 }
@@ -105,6 +145,8 @@ export async function savePlanRevision(
   cities: City[],
   previousText = trip.planText,
 ): Promise<void> {
+  if (matches.includes(UNDECIDED))
+    throw new Error('Choose which existing place each repeated name is, or add it as new');
   if (
     matches.length !== candidates.length ||
     new Set(matches.filter(Boolean)).size !== matches.filter(Boolean).length
@@ -138,7 +180,7 @@ export async function savePlanRevision(
         cityId: planCityId(c, cities),
         name: c.name,
         notes: c.notes,
-        checklist: c.checklist.map((item) => ({ id: newId(), ...item })),
+        checklist: c.checklist.map(planItem),
         lat: c.lat,
         lng: c.lng,
         guide: c.guide,

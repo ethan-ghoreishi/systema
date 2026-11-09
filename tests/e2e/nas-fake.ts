@@ -234,9 +234,10 @@ export function phpReceiver(
   const name = `r${Date.now()}${Math.random().toString(36).slice(2, 8)}`;
   const dir = join(root, name);
   mkdirSync(dir, { recursive: true });
+  // Whatever placeholder the receiver version ships with (the frozen ones keep theirs).
   const php = readFileSync(receiver, 'utf8').replace(
-    "'CHANGE-ME-to-a-long-random-string'",
-    "'synthetic'",
+    /^\$TOKEN = '[^']*';$/m,
+    () => "$TOKEN = 'synthetic';",
   );
   writeFileSync(join(dir, 'systema-backup.php'), php);
   return { url: `${base}/${name}/systema-backup.php`, dir };

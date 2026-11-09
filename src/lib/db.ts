@@ -235,6 +235,8 @@ export interface ChecklistItem {
   id: string;
   text: string;
   done: boolean;
+  /** Written by a plan, not by hand (absent on older items: their origin is unknown). */
+  fromPlan?: boolean;
 }
 
 export interface Stop {

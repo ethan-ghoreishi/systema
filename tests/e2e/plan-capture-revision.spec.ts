@@ -497,12 +497,14 @@ test('re-applying an unchanged plan to a trip that returns to a city changes not
   await page.goto('/');
   const ids = await page.evaluate(async () => {
     const { createTrip, addCity } = await import(/* @vite-ignore */ '/src/lib/trips.ts');
-    const { importStopsFromPlan } = await import(/* @vite-ignore */ '/src/lib/stops.ts');
+    const { importStopsFromPlan, updateStop, addStop, returnToRoute } = await import(
+      /* @vite-ignore */ '/src/lib/stops.ts'
+    );
     const { db } = await import(/* @vite-ignore */ '/src/lib/db.ts');
     const trip = await createTrip('custom');
-    await addCity(trip, 'Vienna', 'EUR');
-    await addCity(trip, 'Salzburg', 'EUR');
-    await addCity(trip, 'Vienna', 'EUR');
+    const v1 = await addCity(trip, 'Vienna', 'EUR');
+    const sb = await addCity(trip, 'Salzburg', 'EUR');
+    const v2 = await addCity(trip, 'Vienna', 'EUR');
     const planText =
       '# Vienna\n## Route\n### Belvedere\nGarden side\n### Naschmarkt\nMarket\n# Salzburg\n## Route\n### Fortress\nAbove the river';
     await db.trips.update(trip, { planText });
@@ -512,9 +514,31 @@ test('re-applying an unchanged plan to a trip that returns to a city changes not
       [],
       await db.cities.where('tripId').equals(trip).sortBy('order'),
     );
+    // The traveller puts the Vienna places on the first visit, adds a place of
+    // their own on the second, and returns a retained place to the route.
+    for (const s of await db.stops.where('tripId').equals(trip).toArray())
+      if (s.cityId !== sb) await updateStop(s.id, { cityId: v1 });
+    await addStop(trip, 'Café Central', v2);
+    const kept = await addStop(trip, 'Mirabell', sb);
+    await db.stops.update(kept, { offPlan: true, order: 99 });
+    await returnToRoute(kept);
     const rows = await db.stops.where('tripId').equals(trip).sortBy('order');
-    return { trip, stops: rows.map((s) => ({ id: s.id, name: s.name, cityId: s.cityId })) };
+    return {
+      trip,
+      v1,
+      sb,
+      v2,
+      stops: rows.map((s) => ({ id: s.id, name: s.name, cityId: s.cityId })),
+    };
   });
+  // The route being re-applied to, as the traveller left it.
+  expect(ids.stops.map((s) => [s.name, s.cityId])).toEqual([
+    ['Belvedere', ids.v1],
+    ['Naschmarkt', ids.v1],
+    ['Fortress', ids.sb],
+    ['Mirabell', ids.sb],
+    ['Café Central', ids.v2],
+  ]);
   await page.goto(`/#/trip/${ids.trip}/stops`);
   await page.getByRole('button', { name: 'Review Stops from plan' }).click();
   const sheet = page.locator('dialog[open]');

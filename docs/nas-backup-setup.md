@@ -164,6 +164,26 @@ It also keeps two snapshots pushed in the same second, never serves a
 half-written file, and keeps a daily snapshot for 90 days. To update, copy the
 new file over the old one and set `$TOKEN` again.
 
+The current receiver also keeps **one file per photo**: an upload whose name
+differs from a copy already stored (an older app named some PNGs `.jpg`) is
+treated as that photo's copy, never written beside it. Older receivers can
+store a second file in that rare case; the bytes are the same and nothing is
+lost, but updating avoids it.
+
+### HEIC, HEIF and other photo formats on the NAS
+
+Photos are stored exactly as taken — HEIC and HEIF included, never converted.
+Every receiver version names files `.jpg`, `.png` or `.webp` only, so a HEIC
+or HEIF photo (and anything systema can't identify) is stored under a `.jpg`
+name, as it always has been. The bytes are the original; systema reads the
+real format from them when it downloads or restores a photo, so no receiver
+update is needed. If you copy files off the NAS by hand, an app that opens
+files by content (Preview, Photos) shows them correctly; one that trusts the
+extension may not.
+
+An older version of the app does the same, but types a downloaded HEIC as
+JPEG. Its bytes are still the original, and this version recognises it.
+
 ### PHP settings that matter for photos
 
 In Web Station → Script Language Settings → your PHP profile:
@@ -309,7 +329,12 @@ Until the receiver is up — or any time you want a belt-and-braces copy:
   `homes/ethan/systema-backups/manual/` folder.
 
 The ZIP holds the data plus every photo as an ordinary image file, so it opens
-anywhere. It is built without loading all photos into memory.
+anywhere. It is built without loading all photos into memory. Each photo is
+named for what its bytes are — `.heic`, `.heif`, `.jpg`, `.png`, `.webp`, or
+`.bin` for a file systema can't identify — and restoring reads the format from
+the bytes, so a backup from an older version (which named HEIC `.jpg`) restores
+correctly too. An older version of the app restores a new backup's HEIC photos
+with no type; they are intact, and show wherever that browser can decode HEIC.
 
 ## Restoring — getting everything onto a (new) phone
 

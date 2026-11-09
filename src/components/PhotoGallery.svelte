@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Photo } from '../lib/db';
   import { deletePhoto, downloadPhoto } from '../lib/photos';
+  import { photoFormats, type PhotoFormat } from '../lib/photo-format';
   import { nasBackup } from '../lib/nas.svelte';
   import Icon from './Icon.svelte';
 
@@ -19,6 +20,16 @@
     urls = next;
     return () => Object.values(next).forEach((url) => URL.revokeObjectURL(url));
   });
+  // Read ahead of the Save tap: a download started after an await can be dropped.
+  let formats = $state<Record<string, PhotoFormat>>({});
+  $effect(() => {
+    let live = true;
+    void photoFormats(photos).then((f) => {
+      if (live) formats = f;
+    });
+    return () => (live = false);
+  });
+  const save = (p: Photo) => downloadPhoto(p, formats[p.id]);
   function open(photo: Photo) {
     opened = photo;
     viewer.showModal();
@@ -60,7 +71,7 @@
         >{/if}
       {#if badge(p.id)}<span class="photo-badge">{badge(p.id)}</span>{/if}
       <div class="photo-actions">
-        <button class="photo-act" aria-label="Save photo" onclick={() => downloadPhoto(p)}
+        <button class="photo-act" aria-label="Save photo" onclick={() => save(p)}
           ><Icon name="export" size={16} /></button
         >
         <button class="photo-act" aria-label="Delete photo" {disabled} onclick={() => remove(p)}
@@ -89,7 +100,23 @@
     </header>
     <div class="modal-body">
       {#if opened && urls[opened.id]}
-        <img class="photo-full" src={urls[opened.id]} alt={label} />
+        {#if unavailable[opened.id]}
+          {@const photo = opened}
+          <p class="hint hint--warn" role="status">
+            This browser can't show this photo. The original is kept unchanged; save it to open it
+            in another app.
+          </p>
+          <button class="btn btn--primary" onclick={() => save(photo)}>Save the original</button>
+        {:else}
+          <img
+            class="photo-full"
+            src={urls[opened.id]}
+            alt={label}
+            onerror={() => {
+              if (opened) unavailable[opened.id] = true;
+            }}
+          />
+        {/if}
       {/if}
     </div>
   </div>

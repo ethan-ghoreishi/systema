@@ -3,6 +3,7 @@ import { newId } from './ids';
 import { TOMBSTONE } from './sync';
 import { exifTime } from './exif';
 import { wallToInstant } from './tz';
+import { photoFormat, type PhotoFormat } from './photo-format';
 
 /**
  * Photo blobs live in IndexedDB (no cloud cost). Deleting one also drops its
@@ -45,8 +46,13 @@ export async function captureTime(file: Blob, tz?: string): Promise<number | und
 
 /** Files in the order they were taken (reads only each file's header). */
 async function inCaptureOrder(files: Blob[], tz?: string) {
+  // A header that can't be read means an unknown time, not a lost batch.
   const timed = await Promise.all(
-    files.map(async (file, i) => ({ file, i, takenAt: await captureTime(file, tz) })),
+    files.map(async (file, i) => ({
+      file,
+      i,
+      takenAt: await captureTime(file, tz).catch(() => undefined),
+    })),
   );
   return timed.sort((a, b) => (a.takenAt ?? Infinity) - (b.takenAt ?? Infinity) || a.i - b.i);
 }
@@ -71,7 +77,10 @@ async function photoRecord(
     expenseId: target.expenseId ?? null,
     ...(target.momentId ? { momentId: target.momentId } : {}),
     kind: target.kind,
-    blob: new Blob([buf], { type: file.type }),
+    // The type the bytes show: a picker can give HEIC no type, or the wrong one.
+    blob: new Blob([buf], {
+      type: photoFormat(new Uint8Array(buf).subarray(0, 32), file.type).mime,
+    }),
     bytes: buf.byteLength,
     ...(sha256 ? { sha256 } : {}),
     ...(takenAt != null ? { takenAt } : {}),
@@ -92,18 +101,41 @@ export async function preparePhotos(files: Blob[], target: PhotoTarget): Promise
   return out;
 }
 
+/** A batch that stopped part-way: the photos already saved, and the files still to save. */
+export class PhotoBatchError extends Error {
+  constructor(
+    readonly saved: string[],
+    readonly remaining: Blob[],
+    cause: unknown,
+  ) {
+    super(cause instanceof Error ? cause.message : String(cause));
+  }
+}
+
 /**
  * Store picked or captured images in the order they were taken, one at a
  * time — a big multi-select from the library never sits in memory at once.
- * Distinct, ordered stamps keep a batch in capture order everywhere.
+ * Distinct, ordered stamps keep a batch in capture order everywhere. Each
+ * photo is saved as it is read, so a failure part-way (storage full, a file
+ * that can't be read) keeps what was saved and throws a PhotoBatchError
+ * naming the files left: retrying those never duplicates the saved ones.
  */
 export async function addPhotos(files: Blob[], target: PhotoTarget): Promise<string[]> {
   const now = Date.now();
   const ids: string[] = [];
-  for (const [n, { file, takenAt }] of (await inCaptureOrder(files, target.tz)).entries()) {
-    const row = await photoRecord(file, takenAt, target, now + n);
-    await db.photos.add(row);
-    ids.push(row.id);
+  const ordered = await inCaptureOrder(files, target.tz);
+  for (const [n, { file, takenAt }] of ordered.entries()) {
+    try {
+      const row = await photoRecord(file, takenAt, target, now + n);
+      await db.photos.add(row);
+      ids.push(row.id);
+    } catch (err) {
+      throw new PhotoBatchError(
+        ids,
+        ordered.slice(n).map((o) => o.file),
+        err,
+      );
+    }
   }
   return ids;
 }
@@ -177,17 +209,18 @@ export async function deletePhoto(id: string): Promise<void> {
   await db.transaction('rw', db.photos, db.kv, () => deletePhotosWhere('id', id));
 }
 
-/** File extension for a photo blob (as stored on the NAS and in backups). */
-export function photoExt(blob: Blob): string {
-  return blob.type.includes('png') ? 'png' : blob.type.includes('webp') ? 'webp' : 'jpg';
-}
-
-/** Trigger a download so the photo can be saved off-device, then deleted here. */
-export function downloadPhoto(photo: Photo): void {
+/**
+ * Trigger a download of the original bytes, named for what they are. The
+ * format is read beforehand (see photoFormats): the tap must stay synchronous.
+ */
+export function downloadPhoto(
+  photo: Photo,
+  format: PhotoFormat = photoFormat(new Uint8Array(), photo.blob.type),
+): void {
   const url = URL.createObjectURL(photo.blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `systema-${photo.kind}-${photo.createdAt}.${photoExt(photo.blob)}`;
+  a.download = `systema-${photo.kind}-${photo.createdAt}.${format.ext}`;
   document.body.appendChild(a);
   a.click();
   a.remove();

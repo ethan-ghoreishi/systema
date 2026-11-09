@@ -137,7 +137,11 @@ export function validateBackup(value: unknown): asserts value is Backup {
         (typeof r.lng === 'number' && Number.isFinite(r.lng) && Math.abs(r.lng) <= 180)) &&
       Array.isArray(r.checklist) &&
       r.checklist.every(
-        (c: unknown) => object(c) && strings(c, 'id text') && typeof c.done === 'boolean',
+        (c: unknown) =>
+          object(c) &&
+          strings(c, 'id text') &&
+          typeof c.done === 'boolean' &&
+          optional(c, 'fromPlan', 'boolean'),
       ) &&
       optionalNumbers(r, 'visitedAt') &&
       optional(r, 'tz legName bookAhead bookingRef', 'string') &&

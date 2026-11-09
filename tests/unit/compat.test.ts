@@ -3,7 +3,11 @@ import { validateBackup } from '../../src/lib/backup-validation';
 import { mergeRecords, type SyncRecords } from '../../src/lib/sync';
 import { validateBackup as oldValidate } from './fixtures/old-backup-validation';
 import { mergeRecords as oldMerge } from './fixtures/old-sync';
-import type { Backup } from '../../src/lib/export';
+import { BACKUP_JSON, readBackupFile, type Backup } from '../../src/lib/export';
+import { revisedStop } from '../../src/lib/plan-revision';
+import { extractStopsFromPlan } from '../../src/lib/stops';
+import { zip } from '../../src/lib/zip';
+import type { Stop } from '../../src/lib/db';
 
 // An iPhone can run the previous version for days (updates wait for Home).
 // Everything this version writes must still be readable and mergeable there.
@@ -396,4 +400,191 @@ it('retains reviewed-route metadata through the previous validator and merge', (
   expect(merged.stops[0]).toMatchObject({ offPlan: true, planSource: s.stops[0].planSource });
   (s.stops[0].planSource as any).checklist = [{ text: 'Bad', done: 'yes' }];
   expect(() => validateBackup(s)).toThrow(/stops/);
+});
+
+// Plan-generated checklist provenance. Top level: the acceptance check names this test alone.
+const texts = (s: Stop) => s.checklist.map((c) => [c.text, c.done, !!c.fromPlan]);
+const plan = (...items: string[]) =>
+  extractStopsFromPlan(
+    `## Route\n### Duomo\nNotes\n${items.map((t) => `- [ ] ${t}`).join('\n')}`,
+  )[0];
+
+it('repeated plan revisions retire only proven untouched generated checklist items', () => {
+  const written = plan(
+    'Buy tickets',
+    'Find the crypt',
+    'See the cloister',
+    'Ask for the roof',
+    'Old cue',
+    'Light a candle',
+  );
+  // The plan also wrote one item already ticked.
+  const rev0 = {
+    ...written,
+    checklist: [...written.checklist, { text: 'Pre-booked', done: true }],
+  };
+  // As the traveller left it: one ticked, one deleted, one recreated by hand,
+  // own additions (one with the plan's own wording), one edited, and one
+  // from before items were marked (its origin unknown).
+  const start: Stop = {
+    id: 'duomo',
+    tripId: 't1',
+    cityId: null,
+    name: 'Duomo',
+    notes: 'Notes',
+    visited: false,
+    order: 0,
+    createdAt: 1,
+    planSource: rev0,
+    checklist: [
+      { id: 'buy', text: 'Buy tickets', done: true, fromPlan: true },
+      { id: 'crypt', text: 'Find the crypt', done: false, fromPlan: true },
+      { id: 'cloister', text: 'See the cloister', done: false, fromPlan: true },
+      { id: 'legacy', text: 'Old cue', done: false },
+      { id: 'candle', text: 'Light a candle', done: false },
+      { id: 'water', text: 'Bring water', done: false },
+      { id: 'tower', text: 'Check the tower', done: false },
+      { id: 'edited', text: 'Find the crypt door', done: false, fromPlan: true },
+      // Written ticked, unticked since: edited, so it stays.
+      { id: 'unticked', text: 'Pre-booked', done: false, fromPlan: true },
+    ],
+  };
+
+  const rev1 = plan('See the cloister', 'Check the tower', 'Climb the dome');
+  const one = revisedStop(start, rev1);
+  expect(texts(one)).toEqual([
+    ['Buy tickets', true, true],
+    ['See the cloister', false, true],
+    ['Old cue', false, false],
+    ['Light a candle', false, false],
+    ['Bring water', false, false],
+    ['Check the tower', false, false],
+    ['Find the crypt door', false, true],
+    ['Pre-booked', false, true],
+    ['Climb the dome', false, true],
+  ]);
+  // Surviving items keep their identity and tick.
+  expect(one.checklist.slice(0, 8).map((c) => c.id)).toEqual([
+    'buy',
+    'cloister',
+    'legacy',
+    'candle',
+    'water',
+    'tower',
+    'edited',
+    'unticked',
+  ]);
+
+  const rev2 = plan('Climb the dome', 'Ask for the roof');
+  const two = revisedStop(one, rev2);
+  expect(texts(two)).toEqual([
+    ['Buy tickets', true, true],
+    ['Old cue', false, false],
+    ['Light a candle', false, false],
+    ['Bring water', false, false],
+    ['Check the tower', false, false],
+    ['Find the crypt door', false, true],
+    ['Pre-booked', false, true],
+    ['Climb the dome', false, true],
+    ['Ask for the roof', false, true],
+  ]);
+  const dome = two.checklist.find((c) => c.text === 'Climb the dome')!;
+  expect(dome.id).toBe(one.checklist.find((c) => c.text === 'Climb the dome')!.id);
+  // Deleted by hand while this plan still lists it: it stays deleted.
+  const pruned = {
+    ...two,
+    checklist: two.checklist.filter((c) => c.text !== 'Ask for the roof'),
+  };
+  expect(texts(revisedStop(pruned, rev2)).map(([t]) => t)).not.toContain('Ask for the roof');
+
+  // Ticked after the second revision: a ticked item is never retired.
+  const ticked = {
+    ...two,
+    checklist: two.checklist.map((c) => (c.id === dome.id ? { ...c, done: true } : c)),
+  };
+  const rev3 = plan('Ask for the roof');
+  const three = revisedStop(ticked, rev3);
+  expect(texts(three)).toEqual([
+    ['Buy tickets', true, true],
+    ['Old cue', false, false],
+    ['Light a candle', false, false],
+    ['Bring water', false, false],
+    ['Check the tower', false, false],
+    ['Find the crypt door', false, true],
+    ['Pre-booked', false, true],
+    ['Climb the dome', true, true],
+    ['Ask for the roof', false, true],
+  ]);
+  // Re-applying the same plan changes nothing.
+  expect(revisedStop(three, rev3)).toEqual(three);
+
+  // A later plan happens to list the edited item's text and the unticked one,
+  // unticked: they stay, and are the traveller's from now on.
+  const rev4 = plan('Find the crypt door', 'Pre-booked', 'Ask for the roof');
+  const four = revisedStop(three, rev4);
+  expect(texts(four)).toEqual([
+    ['Buy tickets', true, true],
+    ['Old cue', false, false],
+    ['Light a candle', false, false],
+    ['Bring water', false, false],
+    ['Check the tower', false, false],
+    ['Find the crypt door', false, false],
+    ['Pre-booked', false, false],
+    ['Climb the dome', true, true],
+    ['Ask for the roof', false, true],
+  ]);
+  expect(revisedStop(four, rev4)).toEqual(four);
+  // The next plan drops all three: only the untouched generated one goes.
+  const roof = three.checklist.find((c) => c.text === 'Ask for the roof')!.id;
+  const five = revisedStop(four, plan());
+  expect(five.checklist.map((c) => c.id)).toEqual([
+    'buy',
+    'legacy',
+    'candle',
+    'water',
+    'tower',
+    'edited',
+    'unticked',
+    dome.id,
+  ]);
+  // Negative control: before the plan dropped it, the untouched one was there.
+  expect(four.checklist.map((c) => c.id)).toContain(roof);
+
+  // No planSource (a record from an older version): nothing is retired, even
+  // when the previous plan text lists the item.
+  const legacy = { ...start, planSource: undefined };
+  expect(revisedStop(legacy, rev1, rev0).checklist.map((c) => c.id)).toEqual(
+    expect.arrayContaining(['crypt', 'cloister', 'legacy', 'candle']),
+  );
+
+  // The mark survives this and the previous validator, the previous merge,
+  // this merge, and a ZIP backup read back.
+  const s = snapshot();
+  s.stops = [{ ...three, tripId: s.trips[0].id }];
+  expect(() => validateBackup(s)).not.toThrow();
+  expect(() => oldValidate(s)).not.toThrow();
+  const bad = snapshot();
+  bad.stops = [
+    { ...three, checklist: [{ id: 'x', text: 'x', done: false, fromPlan: 'yes' as any }] },
+  ];
+  expect(() => validateBackup(bad)).toThrow();
+  const recs = { ...s, kv: [], photosMeta: s.photosMeta! } as unknown as SyncRecords;
+  const renamed = { ...recs, stops: [{ ...recs.stops[0], notes: 'Edited elsewhere' }] };
+  for (const merge of [oldMerge, mergeRecords] as const) {
+    const { merged } = merge(recs as any, renamed as any, recs as any, true);
+    expect(merged.stops[0].checklist).toEqual(three.checklist);
+    expect(merged.stops[0].notes).toBe('Edited elsewhere');
+  }
+});
+
+it('a ZIP backup carries checklist provenance back unchanged', async () => {
+  const s = snapshot();
+  const stop = {
+    ...s.stops[0],
+    checklist: [{ id: 'g', text: 'Climb', done: false, fromPlan: true }],
+  };
+  s.stops = [stop];
+  const file = await zip([{ name: BACKUP_JSON, data: new Blob([JSON.stringify(s)]) }]);
+  const { backup } = await readBackupFile(file);
+  expect(backup.stops[0].checklist).toEqual(stop.checklist);
 });

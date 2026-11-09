@@ -74,7 +74,8 @@
 
 <div class="trip-cover trip-cover--{size}" data-cover={photoUrl ? 'photo' : kind}>
   {#if photoUrl}
-    <img src={photoUrl} alt="" loading="lazy" />
+    <!-- A photo this browser can't decode falls back to the drawing; the photo is untouched. -->
+    <img src={photoUrl} alt="" loading="lazy" onerror={() => (photoUrl = null)} />
   {:else if kind === 'journey'}
     <div class="journey-card" aria-label="Journey">
       {#if size === 'thumb'}

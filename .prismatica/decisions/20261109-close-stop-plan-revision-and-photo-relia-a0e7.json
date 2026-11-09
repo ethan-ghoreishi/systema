@@ -1,0 +1,11 @@
+{
+  "id": "20261109-close-stop-plan-revision-and-photo-relia-a0e7",
+  "contractId": "20261109-close-stop-plan-revision-and-photo-relia-a0e7",
+  "patchId": "6d78a380803438c159f0f9599fa1b0e7d3aea9fb",
+  "decision": "approved",
+  "by": "owner",
+  "at": "2026-11-09T19:16:13.244Z",
+  "algorithm": "ed25519",
+  "signature": "bi1wi22NwYYSZTKXQhJqzF70qna+DoRHgeS74KxFwsjvnI1pbvVhqC6dE4bvYer5jeSwNa7PsnRIUQfYkZzhDA==",
+  "publicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAxxaiErDKWXw9qQrVISVCyYQrsfvEEbOKmcLKt92Rkro=\n-----END PUBLIC KEY-----\n"
+}

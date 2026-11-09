@@ -207,9 +207,20 @@ subscription.**
      Unvisited places stay with the trip, ready for another visit. One tap
      **extracts stops from the plan**. Use **Paste revised plan** to review the
      new order, match renamed places, and apply the plan and Stops together.
+     When two of your places could be the same plan entry (a city the trip
+     returns to, or a renamed place), the review asks which one it is, or
+     whether it is new, before it applies. A city the trip visits twice never
+     decides a new place's leg: it stays unassigned until you choose.
      Omitted places stay under **Kept off the route**, with visits, bookings,
      photos and Moments intact. Unchanged imported text updates; personal edits
      and existing pins stay. Missing pins can be filled from the new plan.
+     Discovery items the plan wrote and you never ticked go when a revision no
+     longer lists them; ticked items, your own and older ones stay.
+     A place added by hand joins the leg the planned route ends in (or the leg
+     you pick beside the box) and sits with that leg's places. Photos are kept
+     exactly as taken, HEIC included; one this browser can't show offers
+     **Save the original**. If storage fills part-way through a batch, the
+     photos saved stay and **Retry** offers only the rest.
      Plan edits save after review; journal text still autosaves.
   3. **Expenses** — capture is an amount and one tap: stable quick picks set the category; city, currency, date, destination and
      payment default from the leg you're in; the rest is under More details.
@@ -282,6 +293,8 @@ to a chosen trip and a booked coach, a destination and an option written by
 hand, a quoted fare through booking to a corrected price in Expenses, a sheet
 making room for the on-screen keyboard, v3 → v4 → v5 database upgrades, and NAS sync, partial backups, retries and diagnostics against a fake
 receiver — plus the real PHP receiver (current, previous and original) in CI.
+The [travel reliability closure](docs/travel-reliability-closure.md) lists the
+focused proof route for Stop identity, plan revisions and photo originals.
 
 ### On the iPhone (what emulation can't show)
 
