@@ -1,6 +1,7 @@
 import type { Table } from 'dexie';
 import { validateBackup } from './backup-validation';
-import { photoExt, photoRef, photoRefs, photoTime } from './photos';
+import { photoRef, photoRefs, photoTime } from './photos';
+import { blobFormat, photoFormat } from './photo-format';
 import { GONE, visitedPlaces, zoneOf, compareMoments, momentWhen } from './moments';
 import { instantToWall, wallLabel } from './tz';
 import { isZip, unzip, verifyZip, zip } from './zip';
@@ -425,9 +426,14 @@ export function toRecords(b: Backup): SyncRecords {
   };
 }
 
+/** Own bytes, typed by what they are rather than what a file name or older copy said. */
+function typed(buf: ArrayBuffer, declared: string): Blob {
+  return new Blob([buf], { type: photoFormat(new Uint8Array(buf).subarray(0, 32), declared).mime });
+}
+
 async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
-  const res = await fetch(dataUrl);
-  return res.blob();
+  const blob = await (await fetch(dataUrl)).blob();
+  return typed(await blob.arrayBuffer(), blob.type);
 }
 
 export const BACKUP_JSON = 'systema-backup.json';
@@ -479,10 +485,19 @@ export async function buildZipBackup(
     ],
     async () => {
       const data = await buildDataBackup();
-      await db.photos.each((p) => names.push({ id: p.id, ext: photoExt(p.blob) }));
+      await db.photos.each((p) =>
+        names.push({ id: p.id, ext: photoFormat(new Uint8Array(), p.blob.type).ext }),
+      );
       return data;
     },
   );
+  // Named for what the bytes are, not what an older copy called them (a HEIC
+  // synced or restored before this version is typed JPEG). Read after the
+  // snapshot: waiting on a Blob inside it could let its transaction commit.
+  for (const n of names) {
+    const p = await db.photos.get(n.id);
+    if (p) n.ext = (await blobFormat(p.blob)).ext;
+  }
   return zip(
     [
       { name: BACKUP_JSON, data: new Blob([JSON.stringify(data)], { type: 'application/json' }) },
@@ -509,10 +524,13 @@ export async function readBackupFile(
     if (!json) throw new Error(`Not a systema backup: ${BACKUP_JSON} is missing.`);
     const backup = JSON.parse(await json.data.text());
     validateBackup(backup);
+    // Only a first guess: the bytes decide when the photo is copied in (importBackup).
     const types: Record<string, string> = {
       jpg: 'image/jpeg',
       png: 'image/png',
       webp: 'image/webp',
+      heic: 'image/heic',
+      heif: 'image/heif',
     };
     const files = new Map(
       entries
@@ -774,7 +792,8 @@ export async function importBackup(
     const batch: typeof zipToAdd = [];
     for (let bytes = 0; i < zipToAdd.length && (!batch.length || bytes < 16e6); i += 1) {
       const p = zipToAdd[i];
-      const blob = new Blob([await p.blob.arrayBuffer()], { type: p.blob.type });
+      // Typed by its bytes: an older backup named a HEIC .jpg.
+      const blob = typed(await p.blob.arrayBuffer(), p.blob.type);
       bytes += blob.size;
       batch.push({ ...p, blob });
     }

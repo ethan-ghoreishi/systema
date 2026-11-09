@@ -18,8 +18,9 @@
     newStopCandidates,
     returnToRoute,
     cityIds,
+    legLabel,
   } from '../../lib/stops';
-  import { addPhotos, photoTime } from '../../lib/photos';
+  import { addPhotos, PhotoBatchError, photoTime } from '../../lib/photos';
   import { instantToWall, wallToInstant, wallLabel } from '../../lib/tz';
   import {
     GONE,
@@ -177,16 +178,30 @@
 
   // ---- list ----
   let newStopName = $state('');
+  // The leg a new stop joins: the one the planned route ends in (places kept
+  // off the route say nothing about where the trip is), the only leg, or —
+  // with several legs and no route yet — none until one is chosen. The
+  // choice stays for the next stop; each can still be moved on the stop itself.
+  let pickedLeg = $state<string | null | undefined>(undefined);
+  const newStopLeg = $derived(
+    pickedLeg !== undefined && (pickedLeg === null || cityNameById.has(pickedLeg))
+      ? pickedLeg
+      : plannedStops.length
+        ? (plannedStops[plannedStops.length - 1].cityId ?? null)
+        : cities.length === 1
+          ? cities[0].id
+          : null,
+  );
   async function addStopNow() {
     if (!newStopName.trim()) return;
-    // A new stop is appended, so it joins the leg the list ends in — or the
-    // first leg when there are no stops yet. Without legs it is unassigned.
-    // The leg can be changed on the stop itself.
-    const cityId = stops.length
-      ? (stops[stops.length - 1].cityId ?? null)
-      : (cities[0]?.id ?? null);
-    await addStop(trip.id, newStopName, cityId);
+    const name = newStopName;
     newStopName = '';
+    try {
+      await addStop(trip.id, name, newStopLeg);
+    } catch (err) {
+      newStopName = name;
+      failed(err);
+    }
   }
   async function extractNow() {
     const n = await importStopsFromPlan(trip.id, trip.planText, stops, cities);
@@ -376,11 +391,25 @@
   }
 
   // ---- detail: photos + checklist ----
-  async function onPhotos(files: File[]) {
+  // Photos of a batch that stopped part-way, kept to retry for that stop only.
+  let unsaved = $state<{ stopId: string; files: Blob[]; saved: number; reason: string } | null>(
+    null,
+  );
+  async function onPhotos(files: Blob[]) {
     if (!selected) return;
+    const stopId = selected.id;
     const tz = zoneOf(selected, cities);
-    await addPhotos(files, { tripId: trip.id, stopId: selected.id, kind: 'stop', tz });
-    flashSaved();
+    unsaved = null;
+    try {
+      await addPhotos(files, { tripId: trip.id, stopId, kind: 'stop', tz });
+      flashSaved();
+    } catch (err) {
+      // What saved stays saved; only the rest is offered again, so nothing is added twice.
+      unsaved =
+        err instanceof PhotoBatchError
+          ? { stopId, files: err.remaining, saved: err.saved.length, reason: err.message }
+          : { stopId, files, saved: 0, reason: err instanceof Error ? err.message : String(err) };
+    }
   }
 
   let newItemText = $state('');
@@ -567,7 +596,7 @@
           onchange={(e) => saveCity((e.currentTarget as HTMLSelectElement).value || null)}
         >
           {#each cities as c (c.id)}
-            <option value={c.id}>{c.name || 'Unnamed leg'}</option>
+            <option value={c.id}>{legLabel(c, cities)}</option>
           {/each}
           <option value="">Unassigned</option>
         </select>
@@ -667,6 +696,16 @@
       <span class="label">Photos</span>
       {#if photos.length}
         <PhotoGallery {photos} label={selected.name} />
+      {/if}
+      {#if unsaved?.stopId === selected.id}
+        {@const left = unsaved.files}
+        <p role="alert" class="hint hint--warn">
+          {unsaved.saved} photo{unsaved.saved === 1 ? '' : 's'} saved; {left.length} not saved: {unsaved.reason}.
+          Free some space if storage is full, then retry. The photos already saved stay as they are.
+        </p>
+        <button class="btn btn--ghost" onclick={() => onPhotos(left)}
+          >Retry {left.length} photo{left.length === 1 ? '' : 's'}</button
+        >
       {/if}
       <PhotoPicker onFiles={onPhotos} />
       <p class="hint">
@@ -846,6 +885,19 @@
           }}
         >
           <input class="field" placeholder="Add a stop" bind:value={newStopName} />
+          {#if cities.length >= 2}
+            <select
+              class="field"
+              aria-label="Leg for the new stop"
+              value={newStopLeg ?? ''}
+              onchange={(e) => (pickedLeg = (e.currentTarget as HTMLSelectElement).value || null)}
+            >
+              {#each cities as c (c.id)}
+                <option value={c.id}>{legLabel(c, cities)}</option>
+              {/each}
+              <option value="">Unassigned</option>
+            </select>
+          {/if}
           <button class="icon-btn" type="submit" aria-label="Add stop"><Icon name="plus" /></button>
         </form>
 

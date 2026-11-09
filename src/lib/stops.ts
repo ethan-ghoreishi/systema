@@ -6,32 +6,62 @@ import { deletePhotosWhere } from './photos';
 
 /** Stop + checklist mutations over Dexie. */
 
+/**
+ * The trip's places with `stop` on the route beside the last place on its own
+ * leg — appended, it would read as a leg the trip returns to. A leg with no
+ * place yet goes before the first later leg's places when `cities` say which
+ * those are, else at the route's end. Places kept off the route stay after it.
+ */
+function onRoute(others: Stop[], stop: Stop, cities: City[] = []): Stop[] {
+  const route = others.filter((s) => !s.offPlan);
+  let at = route.map((s) => s.cityId).lastIndexOf(stop.cityId) + 1;
+  if (!at) {
+    const legOrder = (id: string | null) => cities.find((c) => c.id === id)?.order;
+    const mine = legOrder(stop.cityId);
+    const later = mine == null ? -1 : route.findIndex((s) => (legOrder(s.cityId) ?? -1) > mine);
+    at = later < 0 ? route.length : later;
+  }
+  route.splice(at, 0, stop);
+  return [...route, ...others.filter((s) => s.offPlan)];
+}
+
+/**
+ * Add a place by hand on its leg's part of the route. Positions are worked
+ * out inside the write from the stored list, so places kept off the route,
+ * gaps or ties left by older versions, and quick successive adds can't put
+ * it out of place or give two places one position.
+ */
 export async function addStop(
   tripId: string,
   name: string,
   cityId: string | null = null,
 ): Promise<string> {
-  const order = await db.stops.where('tripId').equals(tripId).count();
   const id = newId();
-  const stop: Stop = {
-    id,
-    tripId,
-    cityId,
-    name: name.trim(),
-    notes: '',
-    checklist: [],
-    visited: false,
-    order,
-    createdAt: Date.now(),
-  };
-  await db.stops.add(stop);
+  await db.transaction('rw', db.stops, db.cities, async () => {
+    const others = await db.stops.where('tripId').equals(tripId).sortBy('order');
+    const cities = await db.cities.where('tripId').equals(tripId).toArray();
+    const stop: Stop = {
+      id,
+      tripId,
+      cityId,
+      name: name.trim(),
+      notes: '',
+      checklist: [],
+      visited: false,
+      order: 0,
+      createdAt: Date.now(),
+    };
+    const was = new Map(others.map((s) => [s.id, s.order]));
+    await db.stops.bulkPut(
+      onRoute(others, stop, cities)
+        .map((s, order) => ({ ...s, order }))
+        .filter((s) => was.get(s.id) !== s.order),
+    );
+  });
   return id;
 }
 
-/**
- * Put a retained place back on the route, beside the last place on its own
- * leg — appended, it would read as a leg the trip returns to.
- */
+/** Put a retained place back on the route (see onRoute). */
 export async function returnToRoute(id: string): Promise<void> {
   await db.transaction('rw', db.stops, async () => {
     const stop = await db.stops.get(id);
@@ -39,11 +69,8 @@ export async function returnToRoute(id: string): Promise<void> {
     const others = (await db.stops.where('tripId').equals(stop.tripId).sortBy('order')).filter(
       (s) => s.id !== id,
     );
-    const route = others.filter((s) => !s.offPlan);
-    const at = route.map((s) => s.cityId).lastIndexOf(stop.cityId);
-    route.splice(at < 0 ? route.length : at + 1, 0, { ...stop, offPlan: false });
     await db.stops.bulkPut(
-      [...route, ...others.filter((s) => s.offPlan)].map((s, order) => ({ ...s, order })),
+      onRoute(others, { ...stop, offPlan: false }).map((s, order) => ({ ...s, order })),
     );
   });
 }
@@ -203,13 +230,43 @@ export interface Progress {
   total: number;
 }
 
+/**
+ * A checklist item the plan wrote, marked as such: only an item known to be
+ * the plan's own, never ticked, can be retired by a later revision.
+ */
+export function planItem(item: { text: string; done: boolean }): ChecklistItem {
+  return { id: newId(), text: item.text, done: item.done, fromPlan: true };
+}
+
 export function checklistProgress(stop: Stop): Progress {
   return { done: stop.checklist.filter((c) => c.done).length, total: stop.checklist.length };
 }
 
-/** A trip's legs by name, for matching a plan's `# <City>` blocks to them. */
-export function cityIds(cities: City[]): Map<string, string> {
-  return new Map(cities.map((c) => [c.name.trim().toLowerCase(), c.id]));
+/**
+ * A trip's legs by name, for matching a plan's `# <City>` blocks to them. A
+ * city the trip returns to names every one of its legs: the heading alone
+ * can't say which visit it means.
+ */
+export function cityIds(cities: City[]): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const c of cities) {
+    const k = c.name.trim().toLowerCase();
+    out.set(k, [...(out.get(k) ?? []), c.id]);
+  }
+  return out;
+}
+
+/**
+ * How a leg reads in a list of legs: its name, and its place in the trip
+ * when another leg has the same name — "Vienna · leg 3". Never a guessed date.
+ */
+export function legLabel(city: City, cities: City[]): string {
+  const name = city.name || 'Unnamed leg';
+  const legs = [...cities].sort((a, b) => a.order - b.order);
+  const repeats = legs.filter(
+    (c) => c.name.trim().toLowerCase() === city.name.trim().toLowerCase(),
+  );
+  return repeats.length > 1 ? `${name} · leg ${legs.indexOf(city) + 1}` : name;
 }
 
 export interface StopCandidate {
@@ -465,27 +522,32 @@ const key = (name: string) => name.trim().toLowerCase();
 
 /**
  * The stop already in the list that a plan candidate is, if any. Same name,
- * and — where both sides say which city they are in — the same city: two
+ * and — where the plan says which city — on one of that city's legs: two
  * cities can each have a Duomo, and neither should swallow the other. A stop
- * that doesn't say which city it is in (added before the trip had legs, or on
+ * that doesn't say which leg it is on (added before the trip had legs, or on
  * a single-city trip) can stand for a candidate from any city, but only for
- * one of them: `taken` carries the stops already spoken for, so a lone
- * unassigned "Duomo" no longer makes both cities' Duomos look present.
+ * one of them: `taken` carries the stops already spoken for. Two equally good
+ * stops — a city the trip returns to, with that place on two of its legs —
+ * are 'ambiguous': the place is there, but which record it is can't be said.
  */
 function matchStop(
   c: StopCandidate,
   existing: Stop[],
-  cityIdByName: Map<string, string>,
+  legsByName: Map<string, string[]>,
   taken: Set<string>,
-): Stop | undefined {
-  const want = c.city ? cityIdByName.get(key(c.city)) : undefined;
+): Stop | 'ambiguous' | undefined {
+  // A named city with no leg of that name (deleted, or not a city) matches only places with no leg.
+  const legs = c.city ? (legsByName.get(key(c.city)) ?? []) : undefined;
   const named = existing.filter((s) => !taken.has(s.id) && key(s.name) === key(c.name));
-  // The stop in the candidate's own city first; only then one with no city.
-  return (
-    named.find((s) => !!want && s.cityId === want) ??
-    named.find((s) => !want || !s.cityId) ??
-    undefined
-  );
+  // The stop on the candidate's own leg first; only then one with no leg.
+  for (const tier of [
+    named.filter((s) => !!legs && !!s.cityId && legs.includes(s.cityId)),
+    named.filter((s) => !legs || !s.cityId),
+  ]) {
+    if (tier.length === 1) return tier[0];
+    if (tier.length > 1) return 'ambiguous';
+  }
+  return undefined;
 }
 
 /** Candidates not already present as stops (by name, within their own city). */
@@ -493,12 +555,12 @@ export function newStopCandidates(
   planText: string,
   existing: Stop[],
   knownCities: string[] = [],
-  cityIdByName: Map<string, string> = new Map(),
+  cityIdByName: Map<string, string[]> = new Map(),
 ): StopCandidate[] {
   const taken = new Set<string>();
   return extractStopsFromPlan(planText, knownCities).filter((c) => {
     const match = matchStop(c, existing, cityIdByName, taken);
-    if (match) taken.add(match.id);
+    if (match && match !== 'ambiguous') taken.add(match.id);
     return !match;
   });
 }
@@ -511,7 +573,7 @@ export function guideBackfill(
   planText: string,
   existing: Stop[],
   knownCities: string[] = [],
-  cityIdByName: Map<string, string> = new Map(),
+  cityIdByName: Map<string, string[]> = new Map(),
 ) {
   const out: {
     id: string;
@@ -520,8 +582,9 @@ export function guideBackfill(
   const taken = new Set<string>();
   for (const c of extractStopsFromPlan(planText, knownCities)) {
     const stop = matchStop(c, existing, cityIdByName, taken);
-    if (stop) taken.add(stop.id);
-    if (!stop) continue;
+    // Which of two same-named places it means is unknown: fill neither.
+    if (!stop || stop === 'ambiguous') continue;
+    taken.add(stop.id);
     const patch: { guide?: StopGuide; bookAhead?: string; lat?: number; lng?: number } = {};
     if (stop.lat == null && stop.lng == null && c.lat != null && c.lng != null) {
       patch.lat = c.lat;
@@ -568,16 +631,22 @@ export async function importStopsFromPlan(
     for (const b of backfill) await db.stops.update(b.id, b.patch);
     if (fresh.length === 0) return 0;
 
-    const base = await db.stops.where('tripId').equals(tripId).count();
+    // After every stored position: a count can repeat one when an order has gaps.
+    const base = Math.max(-1, ...existing.map((s) => s.order)) + 1;
     const now = Date.now();
+    const legOf = (c: StopCandidate) => {
+      // One leg of that name, or none: a city the trip returns to can't say which visit.
+      const legs = c.city ? cityIdByName.get(key(c.city)) : undefined;
+      return legs?.length === 1 ? legs[0] : null;
+    };
     const rows: Stop[] = fresh.map((c, i) => ({
       id: newId(),
       tripId,
-      cityId: c.city ? (cityIdByName.get(key(c.city)) ?? null) : null,
+      cityId: legOf(c),
       name: c.name,
       planSource: c,
       notes: c.notes,
-      checklist: c.checklist.map((item) => ({ id: newId(), text: item.text, done: item.done })),
+      checklist: c.checklist.map(planItem),
       visited: false,
       lat: c.lat,
       lng: c.lng,

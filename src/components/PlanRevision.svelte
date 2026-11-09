@@ -1,8 +1,15 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
   import type { City, Stop, Trip } from '../lib/db';
-  import { extractStopsFromPlan } from '../lib/stops';
-  import { planCityId, planMatches, planRetained, savePlanRevision } from '../lib/plan-revision';
+  import { extractStopsFromPlan, legLabel } from '../lib/stops';
+  import {
+    planChoices,
+    planCityId,
+    planRetained,
+    reviewMatches,
+    savePlanRevision,
+    UNDECIDED,
+  } from '../lib/plan-revision';
 
   let {
     trip,
@@ -31,7 +38,7 @@
   let reviewing = $state(untrack(() => !!initialText.trim()));
   let matches = $state<string[]>(
     untrack(() =>
-      planMatches(
+      reviewMatches(
         extractStopsFromPlan(
           initialText,
           snapshot.cities.map((c) => c.name),
@@ -48,8 +55,13 @@
   // and only the rows the traveller opens carry the full list of places.
   let openRows = $state<number[]>([]);
   const name = (s: string) => s.trim().toLocaleLowerCase();
-  const cityName = (id: string | null | undefined) =>
-    snapshot.cities.find((city) => city.id === id)?.name;
+  const legName = (id: string | null) => snapshot.cities.find((c) => c.id === id)?.name ?? '';
+  const cityName = (id: string | null | undefined) => {
+    const city = snapshot.cities.find((c) => c.id === id);
+    return city && legLabel(city, snapshot.cities);
+  };
+  const recordLabel = (s: { name: string; cityId: string | null; visited: boolean }) =>
+    `${s.name}${cityName(s.cityId) ? ` · ${cityName(s.cityId)}` : ''}${s.visited ? ' · visited' : ''}`;
   const candidates = $derived(
     extractStopsFromPlan(
       text,
@@ -57,10 +69,14 @@
     ),
   );
   const retained = $derived(planRetained(snapshot.stops, matches, previousText, snapshot.cities));
-  const valid = $derived(new Set(matches.filter(Boolean)).size === matches.filter(Boolean).length);
+  const chosen = $derived(matches.filter((id) => id && id !== UNDECIDED));
+  const valid = $derived(new Set(chosen).size === chosen.length);
+  // Places two or more existing records could be: each needs the traveller's choice.
+  const choices = $derived(planChoices(candidates, snapshot.stops, snapshot.cities));
+  const undecided = $derived(matches.filter((id) => id === UNDECIDED).length);
   onMount(() => dialog.showModal());
   function review() {
-    matches = planMatches(candidates, snapshot.stops, snapshot.cities);
+    matches = reviewMatches(candidates, snapshot.stops, snapshot.cities);
     openRows = [];
     reviewing = true;
   }
@@ -103,8 +119,10 @@
       >
       <h2 class="modal-title" id="revision-title">{reviewing ? 'Review Stops' : 'Paste plan'}</h2>
       {#if reviewing}
-        <button class="btn btn--primary btn--sm" disabled={saving || !valid} onclick={save}
-          >Apply plan</button
+        <button
+          class="btn btn--primary btn--sm"
+          disabled={saving || !valid || !!undecided}
+          onclick={save}>Apply plan</button
         >
       {:else}
         <button class="btn btn--primary btn--sm" disabled={!text.trim()} onclick={review}
@@ -123,43 +141,48 @@
         {#each candidates as c, i (i)}
           {@const matched = snapshot.stops.find((s) => s.id === matches[i])}
           {@const matchedCity = cityName(matched?.cityId)}
+          {@const deciding = matches[i] === UNDECIDED || choices[i]?.length > 1}
+          {@const open = deciding || openRows.includes(i)}
           <div class="revision-row">
-            {#if openRows.includes(i)}
+            {#if open}
               <label class="label" for={`match-${i}`}
                 >{i + 1}. {c.name}{c.city ? ` · ${c.city}` : ''}</label
               >
             {:else}
               <span class="label">{i + 1}. {c.name}{c.city ? ` · ${c.city}` : ''}</span>
             {/if}
-            <p class="hint">
-              {matched
-                ? `Keeps your record${matched.name === c.name ? '' : ` “${matched.name}”`}${matchedCity ? ` · ${matchedCity}` : ''}${matched.visited ? ' · visited' : ''}`
-                : 'New place'}
+            <p class={matches[i] === UNDECIDED ? 'hint hint--warn' : 'hint'}>
+              {matches[i] === UNDECIDED
+                ? `${choices[i].length} of your places could be this one. Choose which record it is, or add it as a new place.`
+                : matched
+                  ? `Keeps your record${matched.name === c.name ? '' : ` “${matched.name}”`}${matchedCity ? ` · ${matchedCity}` : ''}${matched.visited ? ' · visited' : ''}`
+                  : 'New place'}
             </p>
             {#if matched && matched.lat == null && matched.lng == null && c.lat != null && c.lng != null}
               <p class="hint">
                 Missing map pin will be filled from the plan. Check its accuracy before navigating.
               </p>
             {/if}
-            {#if matched && c.city && matchedCity && name(matchedCity) !== name(c.city)}
+            {#if matched && c.city && matchedCity && name(legName(matched.cityId)) !== name(c.city)}
               <p class="hint hint--warn">
                 This record belongs to {matchedCity} and stays there, even though the plan lists it under
                 {c.city}. Match a place from {c.city} instead, or move it in Stops after applying.
               </p>
             {/if}
-            {#if !matched && snapshot.cities.length && !planCityId(c, snapshot.cities)}
+            {#if !matched && matches[i] !== UNDECIDED && snapshot.cities.length && !planCityId(c, snapshot.cities)}
               <p class="hint">
                 City is missing or ambiguous. This new place will be unassigned; choose its leg in
                 Stops.
               </p>
             {/if}
-            {#if openRows.includes(i)}
+            {#if open}
               <select class="field" id={`match-${i}`} bind:value={matches[i]} disabled={saving}>
+                {#if deciding}
+                  <option value={UNDECIDED} disabled>Choose…</option>
+                {/if}
                 <option value="">Add as a new place</option>
-                {#each snapshot.stops as s (s.id)}
-                  <option value={s.id}
-                    >{s.name}{cityName(s.cityId) ? ` · ${cityName(s.cityId)}` : ''} · keep this record</option
-                  >
+                {#each deciding ? snapshot.stops.filter( (s) => choices[i].includes(s.id), ) : snapshot.stops as s (s.id)}
+                  <option value={s.id}>{recordLabel(s)} · keep this record</option>
                 {/each}
               </select>
             {:else}
@@ -173,6 +196,10 @@
             {/if}
           </div>
         {/each}
+        {#if undecided}<p class="hint hint--warn" role="alert">
+            Choose for {undecided} place{undecided > 1 ? 's' : ''} that more than one of your records
+            could be.
+          </p>{/if}
         {#if !valid}<p class="hint hint--warn" role="alert">
             Choose each existing place only once.
           </p>{/if}

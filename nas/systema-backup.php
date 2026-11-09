@@ -326,6 +326,14 @@ if ($kind === 'photo') {
     $ext = 'jpg';
   }
   $file = $BASE . '/photos/' . $id . '.' . $ext;
+  // One file per photo: a copy stored under another extension (an older app
+  // named some PNGs .jpg) is this photo's copy, and a replace overwrites it.
+  $stored = array_values(array_filter(glob($BASE . '/photos/' . $id . '.*') ?: [], function ($f) {
+    return substr($f, -4) !== '.tmp';
+  }));
+  if ($stored) {
+    $file = $stored[0];
+  }
   // A stored copy is kept unless the app found it damaged and asks to replace it.
   if (file_exists($file) && ($_GET['replace'] ?? '') !== '1') {
     reply(200, [

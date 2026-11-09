@@ -1,6 +1,8 @@
 <script lang="ts">
   import { liveQuery } from 'dexie';
   import { db, type Photo, type Trip } from '../lib/db';
+  import { downloadPhoto } from '../lib/photos';
+  import { blobFormat, type PhotoFormat } from '../lib/photo-format';
   import { renderPlan } from '../lib/markdown';
   import { splitJournal, assignPhotos } from '../lib/journal';
   import { realExpenses, tripTotalGBP } from '../lib/expenses';
@@ -52,6 +54,14 @@
     };
   });
 
+  // Photos this browser can't decode, with their format read ahead of the Save tap.
+  let undecodable = $state<Record<string, PhotoFormat>>({});
+  function failed(p: Photo) {
+    void blobFormat(p.blob).then((f) => {
+      undecodable[p.id] = f;
+    });
+  }
+
   function captionFor(p: Photo): string {
     if (p.momentId && momentTitleById[p.momentId]) return momentTitleById[p.momentId];
     return p.stopId ? (stopNameById[p.stopId] ?? '') : '';
@@ -62,6 +72,18 @@
     [...stops, ...($momentsQ ?? [])].filter((r) => r.lat != null && r.lng != null),
   );
 </script>
+
+{#snippet photo(p: Photo)}
+  {#if undecodable[p.id]}
+    {@const format = undecodable[p.id]}
+    <p class="hint">Preview unavailable in this browser. The original is kept unchanged.</p>
+    <button class="btn btn--ghost btn--sm" onclick={() => downloadPhoto(p, format)}
+      >Save the original</button
+    >
+  {:else}
+    <img src={urls[p.id]} alt={captionFor(p)} loading="lazy" onerror={() => failed(p)} />
+  {/if}
+{/snippet}
 
 <div class="journal">
   <div class="card journal-meta">
@@ -99,7 +121,7 @@
     {:else if assignment.photoForSegment[i]}
       {@const p = assignment.photoForSegment[i]!}
       <figure class="journal-photo">
-        <img src={urls[p.id]} alt={captionFor(p)} loading="lazy" />
+        {@render photo(p)}
         <figcaption>{captionFor(p)}</figcaption>
       </figure>
     {/if}
@@ -111,7 +133,7 @@
       <div class="journal-gallery-grid">
         {#each assignment.leftovers as p (p.id)}
           <figure class="journal-photo journal-photo--small">
-            <img src={urls[p.id]} alt={captionFor(p)} loading="lazy" />
+            {@render photo(p)}
             <figcaption>{captionFor(p)}</figcaption>
           </figure>
         {/each}

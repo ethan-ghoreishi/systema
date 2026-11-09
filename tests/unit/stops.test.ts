@@ -198,8 +198,8 @@ describe('newStopCandidates', () => {
     'Anchor: Brunelleschi’s dome',
   ].join('\n');
   const legs = new Map([
-    ['bologna', 'c1'],
-    ['florence', 'c2'],
+    ['bologna', ['c1']],
+    ['florence', ['c2']],
   ]);
 
   it("imports a city's stop whose name another city already uses", () => {
