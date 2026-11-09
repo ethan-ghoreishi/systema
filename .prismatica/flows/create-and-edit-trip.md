@@ -17,10 +17,9 @@ truth:
       changes: A trip and any preset expense placeholders are created.
       assumes: []
       evidence:
-        method: inferred
-        at: 2026-11-09T14:16:18.512Z
-        commit: b35a63f7b1d71d1f18b3f3b5151644d86394d49f
-        note: Code reading; mapped tests are pointers, not manual verification.
+        method: manual
+        at: 2026-11-09T20:02:09.184Z
+        commit: c485e59cd81b6bd1b6880b60ed752a53bd6b1e18
     - actor: Traveller
       action: Add or edit city legs, currency, times, accommodation and travel details.
       shows: Saved feedback, derived trip information and chronology problems are
@@ -28,20 +27,18 @@ truth:
       changes: Fields save locally; impossible arrival/departure ordering is refused.
       assumes: []
       evidence:
-        method: inferred
-        at: 2026-11-09T14:16:18.512Z
-        commit: b35a63f7b1d71d1f18b3f3b5151644d86394d49f
-        note: Code reading; mapped tests are pointers, not manual verification.
+        method: manual
+        at: 2026-11-09T20:02:09.184Z
+        commit: c485e59cd81b6bd1b6880b60ed752a53bd6b1e18
     - actor: Traveller
       action: Finish editing and return to the trip.
       shows: The trip opens with its plan and departure information.
       changes: The saved trip is available from Home without requiring a network.
       assumes: []
       evidence:
-        method: inferred
-        at: 2026-11-09T14:16:18.512Z
-        commit: b35a63f7b1d71d1f18b3f3b5151644d86394d49f
-        note: Code reading; mapped tests are pointers, not manual verification.
+        method: manual
+        at: 2026-11-09T20:02:09.184Z
+        commit: c485e59cd81b6bd1b6880b60ed752a53bd6b1e18
   endsWith: The trip has saved legs and travel details that feed planning and
     preparation.
   variations: []
@@ -132,4 +129,3 @@ _none stated_
 ## Involves
 
 _not specified_
-
