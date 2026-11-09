@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "app": {
+    "name": "systema"
+  },
+  "mode": "govern",
+  "stack": ["typescript", "eslint", "vitest", "playwright", "github-actions", "prettier"],
+  "mainBranch": "main",
+  "wipLimit": 2,
+  "defaultTier": "normal",
+  "tierRules": [
+    {
+      "tier": "heavy",
+      "paths": [
+        "**/auth/**",
+        "**/payment*/**",
+        "**/*migration*",
+        "**/*schema*",
+        "src/lib/db.ts",
+        "src/lib/backup-validation.ts",
+        "src/lib/export.ts",
+        "src/lib/sync.ts",
+        "src/lib/nas.svelte.ts",
+        "src/lib/photos.ts",
+        "src/lib/expenses.ts",
+        "src/lib/needs.ts"
+      ]
+    }
+  ],
+  "checks": {
+    "typecheck": {
+      "enabled": true,
+      "command": "npm run check"
+    },
+    "lint": {
+      "enabled": true,
+      "command": "npm run lint"
+    },
+    "unit": {
+      "enabled": true,
+      "command": "npx vitest run --reporter=json"
+    },
+    "build": {
+      "enabled": true,
+      "command": "npm run build"
+    },
+    "journeys": {
+      "enabled": true,
+      "command": "npx playwright test"
+    },
+    "secrets": {
+      "enabled": true,
+      "mode": "regex"
+    }
+  },
+  "owner": {
+    "publicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAxxaiErDKWXw9qQrVISVCyYQrsfvEEbOKmcLKt92Rkro=\n-----END PUBLIC KEY-----\n"
+  },
+  "releaseTrackingSince": "2026-11-09T13:54:39.775Z"
+}

@@ -1,0 +1,37 @@
+# Prismatica merge gate — the one choke point.
+# The gate runs one EXACT published version, fetched straight from the npm
+# registry, so this repository needs no Prismatica dependency of its own:
+#     npx --yes prismatica@0.11.0 gate
+# Upgrading is deliberate: change that one version below when you choose to.
+# `prismatica doctor` tells you which version this file pins and which one you
+# are running locally, so any skew between them is visible rather than silent.
+name: Prismatica Gate
+on:
+  pull_request:
+    branches:
+      - main
+permissions:
+  contents: read
+jobs:
+  prismatica-gate:
+    name: prismatica-gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: install this repository's own check dependencies
+        run: |
+          if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
+            npm ci
+          else
+            echo "no npm lock file at the repository root — nothing to install"
+          fi
+      - name: install browser test dependencies
+        run: npx playwright install --with-deps chromium webkit
+      - name: prismatica gate
+        run: npx --yes prismatica@0.11.0 gate

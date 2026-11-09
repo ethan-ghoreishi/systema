@@ -28,3 +28,6 @@ test-results
 *.sln
 *.sw?
 .dbg/
+.prismatica/evidence/blobs/
+.claude/prismatica-scope-hook.mjs
+.claude/settings.local.json
