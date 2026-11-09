@@ -19,20 +19,18 @@ truth:
       changes: Local opportunities and options are created or refreshed.
       assumes: []
       evidence:
-        method: inferred
-        at: 2026-11-09T14:16:18.512Z
-        commit: b35a63f7b1d71d1f18b3f3b5151644d86394d49f
-        note: Code reading; mapped tests are pointers, not manual verification.
+        method: manual
+        at: 2026-11-09T20:01:57.340Z
+        commit: d12c91d7de838bceeb183290310eaaf65aee68b3
     - actor: Traveller
       action: Open a destination, edit research or options and compare estimates.
       shows: Costs, stale fares, assumptions and missing inputs are shown.
       changes: Research and option edits persist locally.
       assumes: []
       evidence:
-        method: inferred
-        at: 2026-11-09T14:16:18.512Z
-        commit: b35a63f7b1d71d1f18b3f3b5151644d86394d49f
-        note: Code reading; mapped tests are pointers, not manual verification.
+        method: manual
+        at: 2026-11-09T20:01:57.340Z
+        commit: d12c91d7de838bceeb183290310eaaf65aee68b3
     - actor: Traveller
       action: Choose an option.
       shows: A linked trip appears with known facts and a list of details still to
@@ -41,10 +39,9 @@ truth:
         research and alternatives remain.
       assumes: []
       evidence:
-        method: inferred
-        at: 2026-11-09T14:16:18.512Z
-        commit: b35a63f7b1d71d1f18b3f3b5151644d86394d49f
-        note: Code reading; mapped tests are pointers, not manual verification.
+        method: manual
+        at: 2026-11-09T20:01:57.340Z
+        commit: d12c91d7de838bceeb183290310eaaf65aee68b3
   endsWith: A linked trip is available for planning without losing the research
     behind the choice.
   variations: []
@@ -133,4 +130,3 @@ _none stated_
 ## Involves
 
 _not specified_
-
