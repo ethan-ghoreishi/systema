@@ -39,7 +39,7 @@
  * systema -> Settings -> NAS sync. See docs/nas-backup-setup.md.
  */
 
-$TOKEN = 'CHANGE-ME-to-a-long-random-string';
+$TOKEN = 'CHANGE ME: a long random string';
 $KEEP_DATA = 60; // most recent data snapshots to keep
 $KEEP_DAYS = 90; // plus the newest snapshot of each of this many days
 $BASE = __DIR__ . '/systema-backups';

@@ -1003,6 +1003,29 @@ test('undecodable photo previews keep the original available to save', async ({ 
   // The cover falls back to its drawing rather than a broken image.
   await page.goto(`/#/trip/${t.trip}/edit`);
   await expect(page.locator('.trip-cover--cover')).not.toHaveAttribute('data-cover', 'photo');
+  // The picker labels the two it can't show, still offers them, and shows the PNG.
+  const thumbs = page.getByRole('button', { name: 'Use this photo as the cover' });
+  await expect(thumbs).toHaveCount(3);
+  await page.locator('.cover-grid').scrollIntoViewIfNeeded(); // thumbnails load lazily
+  await expect(page.getByText('No preview in this browser')).toHaveCount(2);
+  await expect
+    .poll(() =>
+      page
+        .locator('.cover-thumb img')
+        .evaluateAll((imgs) => imgs.map((i) => (i as HTMLImageElement).naturalWidth)),
+    )
+    .toEqual([32]);
+  // A cover upload that can't be stored says so instead of failing silently.
+  await run(page, async (m) => {
+    m.db.photos.add = () => Promise.reject(new Error('QuotaExceededError'));
+  });
+  await page.locator('input[type=file][accept="image/*"]').setInputFiles({
+    name: 'cover.png',
+    mimeType: 'image/png',
+    buffer: fixture('png'),
+  });
+  await expect(page.getByRole('alert')).toHaveText('Cover photo not set: QuotaExceededError');
+  await page.reload();
 
   // The journal says so, keeps the original saveable, and still shows the PNG.
   await page.goto(`/#/trip/${t.trip}/plan`);

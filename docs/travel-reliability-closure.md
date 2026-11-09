@@ -63,7 +63,7 @@ Each was either changed or checked and left as it is.
 | Exports (trip pack, CSV, prompts)                                                                                       | Checked clean: they read `text`/`done`                           |
 | Stop ingestion (`addPhotos`)                                                                                            | Fixed                                                            |
 | Moment and receipt ingestion (`preparePhotos` plus a component transaction)                                             | Already atomic; proven                                           |
-| Cover ingestion (`CoverPicker`)                                                                                         | Checked: a single photo; see limits                              |
+| Cover ingestion and picker (`CoverPicker`)                                                                              | Fixed: a failed upload says so; undecodable thumbnails say so    |
 | Galleries and viewer (`PhotoGallery`)                                                                                   | Fixed                                                            |
 | Single download (`downloadPhoto`)                                                                                       | Fixed                                                            |
 | Share (`ExportTab.manifestFiles`)                                                                                       | Fixed                                                            |
@@ -173,10 +173,6 @@ These are accepted, not fixed.
 - **Repeated ambiguity.** A plan that lists the same place on two visits to a
   city asks which record is which each time it is applied. That is the price
   of never guessing.
-- **Cover upload and picker.** A failed single-photo cover upload still has
-  no message (it saves nothing), and the cover picker's thumbnail grid shows
-  the browser's broken-image icon for a photo it can't decode (the cover
-  itself falls back to its drawing). Both are outside the six targets.
 
 ## Owner check (not automated)
 

@@ -47,13 +47,22 @@
     void updateTrip(trip.id, { coverMode: 'photo', coverPhotoId: photoId });
   }
 
+  let uploadError = $state('');
+  // Decoding is per browser: a photo this one can't show may still be the cover elsewhere.
+  let noPreview = $state<Record<string, boolean>>({});
+
   async function onUpload(e: Event) {
     const input = e.currentTarget as HTMLInputElement;
     const file = input.files?.[0];
     input.value = '';
     if (!file) return;
-    const [photoId] = await addPhotos([file], { tripId: trip.id, kind: 'cover' });
-    await updateTrip(trip.id, { coverMode: 'photo', coverPhotoId: photoId });
+    uploadError = '';
+    try {
+      const [photoId] = await addPhotos([file], { tripId: trip.id, kind: 'cover' });
+      await updateTrip(trip.id, { coverMode: 'photo', coverPhotoId: photoId });
+    } catch (err) {
+      uploadError = `Cover photo not set: ${err instanceof Error ? err.message : String(err)}`;
+    }
   }
 </script>
 
@@ -79,16 +88,37 @@
             aria-label="Use this photo as the cover"
             onclick={() => pickPhoto(p.id)}
           >
-            <img src={urls[p.id]} alt="" loading="lazy" />
+            {#if noPreview[p.id]}
+              <span class="cover-no-preview">No preview in this browser</span>
+            {:else}
+              <img
+                src={urls[p.id]}
+                alt=""
+                loading="lazy"
+                onerror={() => (noPreview[p.id] = true)}
+              />
+            {/if}
           </button>
         {/each}
       </div>
     {:else}
       <p class="hint">No photos on this trip yet — upload one below.</p>
     {/if}
+    {#if uploadError}<p class="hint hint--warn" role="alert">{uploadError}</p>{/if}
     <label class="btn btn--ghost">
       Upload a cover photo
       <input type="file" accept="image/*" hidden onchange={onUpload} />
     </label>
   {/if}
 </div>
+
+<style>
+  .cover-no-preview {
+    display: grid;
+    place-items: center;
+    height: 100%;
+    padding: 4px;
+    font-size: 0.75rem;
+    color: var(--ink-soft);
+  }
+</style>
