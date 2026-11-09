@@ -391,24 +391,27 @@
   }
 
   // ---- detail: photos + checklist ----
-  // Photos of a batch that stopped part-way, kept to retry for that stop only.
-  let unsaved = $state<{ stopId: string; files: Blob[]; saved: number; reason: string } | null>(
-    null,
-  );
-  async function onPhotos(files: Blob[]) {
+  // Photos of batches that stopped part-way, kept per stop until retried.
+  // Another selection, on this stop or another, adds to them, never replaces them.
+  let unsaved = $state<Record<string, { files: Blob[]; saved: number; reason: string }>>({});
+  async function onPhotos(files: Blob[], retry = false) {
     if (!selected) return;
     const stopId = selected.id;
     const tz = zoneOf(selected, cities);
-    unsaved = null;
+    // A retry takes the pending files out at once, so a second tap can't save them twice.
+    if (retry) delete unsaved[stopId];
     try {
       await addPhotos(files, { tripId: trip.id, stopId, kind: 'stop', tz });
       flashSaved();
     } catch (err) {
       // What saved stays saved; only the rest is offered again, so nothing is added twice.
-      unsaved =
-        err instanceof PhotoBatchError
-          ? { stopId, files: err.remaining, saved: err.saved.length, reason: err.message }
-          : { stopId, files, saved: 0, reason: err instanceof Error ? err.message : String(err) };
+      const batch = err instanceof PhotoBatchError;
+      const pending = unsaved[stopId];
+      unsaved[stopId] = {
+        files: [...(pending?.files ?? []), ...(batch ? err.remaining : files)],
+        saved: (pending?.saved ?? 0) + (batch ? err.saved.length : 0),
+        reason: err instanceof Error ? err.message : String(err),
+      };
     }
   }
 
@@ -697,13 +700,14 @@
       {#if photos.length}
         <PhotoGallery {photos} label={selected.name} />
       {/if}
-      {#if unsaved?.stopId === selected.id}
-        {@const left = unsaved.files}
+      {#if unsaved[selected.id]}
+        {@const pending = unsaved[selected.id]}
+        {@const left = pending.files}
         <p role="alert" class="hint hint--warn">
-          {unsaved.saved} photo{unsaved.saved === 1 ? '' : 's'} saved; {left.length} not saved: {unsaved.reason}.
+          {pending.saved} photo{pending.saved === 1 ? '' : 's'} saved; {left.length} not saved: {pending.reason}.
           Free some space if storage is full, then retry. The photos already saved stay as they are.
         </p>
-        <button class="btn btn--ghost" onclick={() => onPhotos(left)}
+        <button class="btn btn--ghost" onclick={() => onPhotos(left, true)}
           >Retry {left.length} photo{left.length === 1 ? '' : 's'}</button
         >
       {/if}

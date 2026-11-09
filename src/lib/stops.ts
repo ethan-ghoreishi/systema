@@ -215,7 +215,10 @@ export async function addChecklistItem(stop: Stop, text: string): Promise<void> 
 export async function toggleChecklistItem(stop: Stop, itemId: string): Promise<void> {
   await db.stops.update(stop.id, (s) => {
     const item = s.checklist.find((c) => c.id === itemId);
-    if (item) item.done = !item.done;
+    if (!item) return;
+    item.done = !item.done;
+    // Touched by the traveller: no later revision may retire it.
+    delete item.fromPlan;
   });
 }
 
@@ -521,33 +524,39 @@ export function extractStopsFromPlan(
 const key = (name: string) => name.trim().toLowerCase();
 
 /**
- * The stop already in the list that a plan candidate is, if any. Same name,
- * and — where the plan says which city — on one of that city's legs: two
- * cities can each have a Duomo, and neither should swallow the other. A stop
- * that doesn't say which leg it is on (added before the trip had legs, or on
- * a single-city trip) can stand for a candidate from any city, but only for
- * one of them: `taken` carries the stops already spoken for. Two equally good
- * stops — a city the trip returns to, with that place on two of its legs —
- * are 'ambiguous': the place is there, but which record it is can't be said.
+ * The existing stops a plan candidate could be: none (a new place), one, or
+ * several (ambiguous — which record it is can't be said). The one rule both
+ * reviewed revision and legacy import/presence/backfill use. Same name, or the
+ * name it was imported under. Where the plan says which city, a stop on one of
+ * that city's legs first — two cities can each have a Duomo — and only then a
+ * stop with no leg (added before the trip had legs); a city the trip no longer
+ * has matches only those. With no city heading, any leg's stop of that name
+ * may be it. `taken` carries the stops already spoken for.
  */
+export function stopChoices(
+  c: StopCandidate,
+  existing: Stop[],
+  legsByName: Map<string, string[]>,
+  taken: Set<string>,
+): Stop[] {
+  const legs = c.city ? (legsByName.get(key(c.city)) ?? []) : undefined;
+  const named = existing.filter(
+    (s) =>
+      !taken.has(s.id) && [s.name, s.planSource?.name].some((n) => n && key(n) === key(c.name)),
+  );
+  if (!legs) return named;
+  const own = named.filter((s) => !!s.cityId && legs.includes(s.cityId));
+  return own.length ? own : named.filter((s) => !s.cityId);
+}
+
 function matchStop(
   c: StopCandidate,
   existing: Stop[],
   legsByName: Map<string, string[]>,
   taken: Set<string>,
 ): Stop | 'ambiguous' | undefined {
-  // A named city with no leg of that name (deleted, or not a city) matches only places with no leg.
-  const legs = c.city ? (legsByName.get(key(c.city)) ?? []) : undefined;
-  const named = existing.filter((s) => !taken.has(s.id) && key(s.name) === key(c.name));
-  // The stop on the candidate's own leg first; only then one with no leg.
-  for (const tier of [
-    named.filter((s) => !!legs && !!s.cityId && legs.includes(s.cityId)),
-    named.filter((s) => !legs || !s.cityId),
-  ]) {
-    if (tier.length === 1) return tier[0];
-    if (tier.length > 1) return 'ambiguous';
-  }
-  return undefined;
+  const choices = stopChoices(c, existing, legsByName, taken);
+  return choices.length > 1 ? 'ambiguous' : choices[0];
 }
 
 /** Candidates not already present as stops (by name, within their own city). */

@@ -518,6 +518,38 @@ it('repeated plan revisions retire only proven untouched generated checklist ite
   // Re-applying the same plan changes nothing.
   expect(revisedStop(three, rev3)).toEqual(three);
 
+  // A later plan happens to list the edited item's text and the unticked one,
+  // unticked: they stay, and are the traveller's from now on.
+  const rev4 = plan('Find the crypt door', 'Pre-booked', 'Ask for the roof');
+  const four = revisedStop(three, rev4);
+  expect(texts(four)).toEqual([
+    ['Buy tickets', true, true],
+    ['Old cue', false, false],
+    ['Light a candle', false, false],
+    ['Bring water', false, false],
+    ['Check the tower', false, false],
+    ['Find the crypt door', false, false],
+    ['Pre-booked', false, false],
+    ['Climb the dome', true, true],
+    ['Ask for the roof', false, true],
+  ]);
+  expect(revisedStop(four, rev4)).toEqual(four);
+  // The next plan drops all three: only the untouched generated one goes.
+  const roof = three.checklist.find((c) => c.text === 'Ask for the roof')!.id;
+  const five = revisedStop(four, plan());
+  expect(five.checklist.map((c) => c.id)).toEqual([
+    'buy',
+    'legacy',
+    'candle',
+    'water',
+    'tower',
+    'edited',
+    'unticked',
+    dome.id,
+  ]);
+  // Negative control: before the plan dropped it, the untouched one was there.
+  expect(four.checklist.map((c) => c.id)).toContain(roof);
+
   // No planSource (a record from an older version): nothing is retired, even
   // when the previous plan text lists the item.
   const legacy = { ...start, planSource: undefined };

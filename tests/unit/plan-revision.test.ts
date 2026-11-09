@@ -199,21 +199,40 @@ describe('revised routes', () => {
       ['Mozart house', 'Salzburg'],
       ['Belvedere', 'Vienna'],
     ]);
-    // Every plausible record, by name or by the name it was imported under.
-    // Fortress has one record: the first entry takes it, the second can't.
+    // Every plausible record, by name or by the name it was imported under. A
+    // record on the named city's leg comes before one with no leg; the renamed
+    // Albertina is found by its import name. Fortress has one record: the
+    // first entry takes it, the second can't.
     expect(planChoices(candidates, rows, vsv)).toEqual([
       ['b1', 'b2'],
-      ['alb', 'alb-loose'],
+      ['alb'],
       ['fortress'],
       [],
       [],
       ['b1', 'b2'],
     ]);
     // Review asks about ambiguity; only a true absence is a new place.
-    expect(reviewMatches(candidates, rows, vsv)).toEqual(['?', '?', 'fortress', '', '', '?']);
+    expect(reviewMatches(candidates, rows, vsv)).toEqual(['?', 'alb', 'fortress', '', '', '?']);
     expect(UNDECIDED).toBe('?');
-    // Unreviewed matching (the defect's view) would have shown all three as new.
-    expect(planMatches(candidates, rows, vsv)).toEqual(['', '', 'fortress', '', '', '']);
+    // Unreviewed matching (the defect's view) would have shown both Belvederes as new.
+    expect(planMatches(candidates, rows, vsv)).toEqual(['', 'alb', 'fortress', '', '', '']);
+
+    // An import name on one leg and the same name on the other: still ambiguous.
+    const aliasRows = [rows[1], place('alb2', 'Albertina', 'v2')];
+    expect(reviewMatches([candidates[1]], aliasRows, vsv)).toEqual(['?']);
+
+    // No city heading on a trip with several legs: the name can't say which
+    // leg, so any leg's record of that name may be it — never a new place.
+    const bare = extractStopsFromPlan('## Route\n### Museum\nHall', vsvNames);
+    expect(bare.map((c) => c.city)).toEqual([undefined]);
+    const museum = place('m1', 'Museum', 'sb');
+    expect(reviewMatches(bare, [museum], vsv)).toEqual(['m1']);
+    expect(reviewMatches(bare, [museum, place('m2', 'Museum', 'v2')], vsv)).toEqual(['?']);
+    // Unassigned and assigned alike: no heading gives one more evidence than the other.
+    expect(reviewMatches(bare, [museum, place('m0', 'Museum', null)], vsv)).toEqual(['?']);
+    // Twice in a headingless plan with one record: the first reuses it, the second is new.
+    const twice = extractStopsFromPlan('## Route\n### Museum\nA\n### Museum\nB', vsvNames);
+    expect(reviewMatches(twice, [museum], vsv)).toEqual(['m1', '']);
   });
 
   it('repeated-city plan logic never picks a leg a heading cannot name', () => {
@@ -269,6 +288,32 @@ describe('revised routes', () => {
       '?',
       '',
     ]);
+
+    // A place renamed by hand is still the one it was imported as, on every
+    // path: present for legacy import, backfilled, and reused by review.
+    const renamed = [
+      place('mine', 'My fortress', 'sb', {
+        planSource: { name: 'Fortress', notes: 'River', checklist: [] },
+      }),
+    ];
+    const fortress = '# Salzburg\n## Route\n### Fortress\nAnchor: Funicular';
+    expect(newStopCandidates(fortress, renamed, vsvNames, ids)).toEqual([]);
+    expect(guideBackfill(fortress, renamed, vsvNames, ids)).toEqual([
+      { id: 'mine', patch: { guide: { anchor: 'Funicular' } } },
+    ]);
+    expect(reviewMatches(extractStopsFromPlan(fortress, vsvNames), renamed, vsv)).toEqual(['mine']);
+    // Legacy presence and review agree on every case above.
+    for (const [text, rows] of [
+      [plan, imported],
+      [plan, later],
+      [graz, later],
+      [bare, later],
+      [fortress, renamed],
+    ] as const) {
+      const found = reviewMatches(extractStopsFromPlan(text, vsvNames), rows, vsv);
+      const fresh = newStopCandidates(text, rows, vsvNames, ids);
+      expect(fresh.length).toBe(found.filter((m) => m === '').length);
+    }
   });
 
   it('ignores nested commentary headings and recovers bold location labels', () => {

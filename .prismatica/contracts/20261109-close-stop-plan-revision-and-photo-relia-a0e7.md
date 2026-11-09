@@ -4,7 +4,7 @@ title: Close Stop, plan revision and photo reliability gaps
 issue: https://github.com/ethan-ghoreishi/systema/issues/26
 intent: 20261109-close-stop-plan-revision-and-photo-relia-a0e7
 tier: heavy
-stage: build
+stage: review
 baseline:
   commit: 8f57daae54927b0dfb610dbd4574b9dc5e8977b4
   branch: main

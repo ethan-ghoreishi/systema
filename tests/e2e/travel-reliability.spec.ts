@@ -217,7 +217,8 @@ test('ambiguous plan matches require a deliberate reuse or new-place decision', 
         }),
         row('fortress', 'Fortress', sb, 2),
         row('b2', 'Belvedere', v2, 3),
-        row('alb-loose', 'Albertina', null, 4),
+        // The plan's name on the other Vienna leg: either could be the plan's Albertina.
+        row('alb-loose', 'Albertina', v2, 4),
       ]);
       await m.db.trips.update(trip, { planText: plan });
       return { trip, v1, sb, v2 };
@@ -256,7 +257,7 @@ test('ambiguous plan matches require a deliberate reuse or new-place decision', 
     'Choose…',
     'Add as a new place',
     'My print room · Vienna · leg 1 · keep this record',
-    'Albertina · keep this record',
+    'Albertina · Vienna · leg 3 · keep this record',
   ]);
 
   // Cancelling writes nothing.
@@ -302,10 +303,10 @@ test('ambiguous plan matches require a deliberate reuse or new-place decision', 
     ['Belvedere', t.v1, false],
     ['My print room', t.v1, false],
     ['Albertina', null, false],
-    ['Albertina', null, false],
     ['Fortress', t.sb, false],
     ['Mozart house', t.sb, false],
     ['Belvedere', t.v2, false],
+    ['Albertina', t.v2, false],
   ]);
 });
 
@@ -687,9 +688,58 @@ test('photo batch failures preserve committed records and retry without duplicat
     png,
   ]);
   // The Stop's photos, from first to last, are exactly as saved above.
+  const kept = [sha(existing), early, late, png, heic, webp];
   expect(
     (await photos()).filter((p) => p.stopId === t.stop && !p.momentId).map((p) => p.sha),
-  ).toEqual([sha(existing), early, late, png, heic, webp]);
+  ).toEqual(kept);
+
+  // More photos picked while some still wait: the waiting ones stay offered,
+  // on their own stop, and every photo is saved once.
+  const more = [3, 4, 5, 6, 7].map((d) => ({
+    name: `more-${d}.jpg`,
+    mimeType: 'image/jpeg',
+    buffer: jpegTakenAt(`2026:10:0${d} 10:00:00`, 2_000 + d),
+  }));
+  const [a, b, c, d, e] = more.map((f) => sha(f.buffer));
+  const other = await run(
+    page,
+    async (m, trip: string) => m.addStop(trip, 'Park Güell', null),
+    t.trip,
+  );
+  const onStop = async (stop: string) =>
+    (await photos())
+      .filter((p) => p.stopId === stop && !p.momentId)
+      .map((p) => p.sha)
+      .sort();
+  // Same-document moves, so the waiting photos are what the page still holds.
+  const open = (stop: string) =>
+    page.evaluate((h) => (location.hash = h), `#/trip/${t.trip}/stops/${stop}`);
+  await open(t.stop);
+  await failPhotoWrites(page, 1);
+  await library.setInputFiles(more.slice(0, 3));
+  await expect(alert).toContainText('1 photo saved; 2 not saved: Synthetic quota exceeded');
+  await allowPhotoWrites(page);
+  await library.setInputFiles(more[3]);
+  await expect.poll(() => onStop(t.stop)).toEqual([...kept, a, d].sort());
+  await expect(alert).toContainText('1 photo saved; 2 not saved');
+  await expect(page.getByRole('button', { name: 'Retry 2 photos' })).toBeVisible();
+
+  // Another stop's failed selection waits there, and leaves this one's alone.
+  await open(other);
+  await expect(alert).toHaveCount(0);
+  await failPhotoWrites(page, 0);
+  await library.setInputFiles(more[4]);
+  await expect(alert).toContainText('0 photos saved; 1 not saved');
+  await allowPhotoWrites(page);
+  await open(t.stop);
+  await page.getByRole('button', { name: 'Retry 2 photos' }).click();
+  await expect(alert).toHaveCount(0);
+  await expect.poll(() => onStop(t.stop)).toEqual([...kept, a, b, c, d].sort());
+  await open(other);
+  await page.getByRole('button', { name: 'Retry 1 photo' }).click();
+  await expect(alert).toHaveCount(0);
+  await expect.poll(() => onStop(other)).toEqual([e]);
+  expect(await onStop(t.stop)).toEqual([...kept, a, b, c, d].sort());
 });
 
 /** A stored ZIP's entries, read here rather than by the app's own reader. */
@@ -1188,7 +1238,8 @@ test('travel reliability family proof preserves identities and originals across 
     ['Cathedral', t.sb, true],
   ];
   const checklist = [
-    ['Find the gate', true, true],
+    // Ticked by the traveller: theirs now, never retirable.
+    ['Find the gate', true, false],
     ['Old cue', false, false],
     ['Upper terrace', false, true],
   ];
