@@ -18,20 +18,18 @@ truth:
       changes: The chosen view is remembered locally.
       assumes: []
       evidence:
-        method: inferred
-        at: 2026-11-09T14:16:18.512Z
-        commit: b35a63f7b1d71d1f18b3f3b5151644d86394d49f
-        note: Code reading; mapped tests are pointers, not manual verification.
+        method: manual
+        at: 2026-11-09T20:02:35.902Z
+        commit: be142780d9d0649df3ab0c80864c305a7ebf0ab6
     - actor: Traveller
       action: Open directions for a Stop with a pin.
       shows: Google Maps opens for the destination.
       changes: Opening directions does not mark a visit.
       assumes: []
       evidence:
-        method: inferred
-        at: 2026-11-09T14:16:18.512Z
-        commit: b35a63f7b1d71d1f18b3f3b5151644d86394d49f
-        note: Code reading; mapped tests are pointers, not manual verification.
+        method: manual
+        at: 2026-11-09T20:02:35.902Z
+        commit: be142780d9d0649df3ab0c80864c305a7ebf0ab6
     - actor: Traveller
       action: Mark a visit, correct its time, or edit notes, checklist and photos.
       shows: Saved feedback and the Visited view show the recorded history; a photo
@@ -41,10 +39,9 @@ truth:
         already saved stay, and a retry never adds them twice.
       assumes: []
       evidence:
-        method: inferred
-        at: 2026-11-09T17:20:00.000Z
-        note: Code reading in the change lane; mapped tests are pointers, not manual
-          verification.
+        method: manual
+        at: 2026-11-09T20:02:35.902Z
+        commit: be142780d9d0649df3ab0c80864c305a7ebf0ab6
   endsWith: Actual visits are recorded while the planned order remains distinct.
   variations:
     - name: Add a place by hand
@@ -144,4 +141,3 @@ _none stated_
 ## Involves
 
 _not specified_
-
