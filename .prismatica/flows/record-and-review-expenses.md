@@ -18,10 +18,9 @@ truth:
       changes: The purchase remains a draft.
       assumes: []
       evidence:
-        method: inferred
-        at: 2026-11-09T14:16:18.512Z
-        commit: b35a63f7b1d71d1f18b3f3b5151644d86394d49f
-        note: Code reading; mapped tests are pointers, not manual verification.
+        method: manual
+        at: 2026-11-09T20:03:09.489Z
+        commit: 6fff2334ab18ae0a6a95fe8fbaa4280e766ba283
     - actor: Traveller
       action: Save the purchase and optional receipts, reviewing any duplicate warning.
       shows: The expense appears or the draft remains with an error; missing rates are
@@ -29,10 +28,9 @@ truth:
       changes: Expense and receipts save together; a manual GBP amount is retained.
       assumes: []
       evidence:
-        method: inferred
-        at: 2026-11-09T14:16:18.512Z
-        commit: b35a63f7b1d71d1f18b3f3b5151644d86394d49f
-        note: Code reading; mapped tests are pointers, not manual verification.
+        method: manual
+        at: 2026-11-09T20:03:09.489Z
+        commit: 6fff2334ab18ae0a6a95fe8fbaa4280e766ba283
     - actor: Systema
       action: Show real spending totals and resolve pending conversion when rates
         become available.
@@ -41,10 +39,9 @@ truth:
         estimates remain separate from spending.
       assumes: []
       evidence:
-        method: inferred
-        at: 2026-11-09T14:16:18.512Z
-        commit: b35a63f7b1d71d1f18b3f3b5151644d86394d49f
-        note: Code reading; mapped tests are pointers, not manual verification.
+        method: manual
+        at: 2026-11-09T20:03:09.489Z
+        commit: 6fff2334ab18ae0a6a95fe8fbaa4280e766ba283
   endsWith: The purchase and receipts are saved, and the ledger states any missing price.
   variations: []
   rules: []
@@ -132,4 +129,3 @@ _none stated_
 ## Involves
 
 _not specified_
-
