@@ -21,10 +21,9 @@ truth:
       changes: Cached app resources are stored separately from IndexedDB records.
       assumes: []
       evidence:
-        method: inferred
-        at: 2026-11-09T14:16:18.512Z
-        commit: b35a63f7b1d71d1f18b3f3b5151644d86394d49f
-        note: Code reading; mapped tests are pointers, not manual verification.
+        method: manual
+        at: 2026-11-09T20:02:46.566Z
+        commit: d9be43941d6c9af1d77b821d13d1c67f2a23661e
     - actor: Traveller
       action: Install through supported browser controls or open the cached app
         offline.
@@ -33,10 +32,9 @@ truth:
       changes: Ordinary edits continue locally.
       assumes: []
       evidence:
-        method: inferred
-        at: 2026-11-09T14:16:18.512Z
-        commit: b35a63f7b1d71d1f18b3f3b5151644d86394d49f
-        note: Code reading; mapped tests are pointers, not manual verification.
+        method: manual
+        at: 2026-11-09T20:02:46.566Z
+        commit: d9be43941d6c9af1d77b821d13d1c67f2a23661e
     - actor: Systema
       action: Check for updates on focus and periodically; defer a requested reload
         until Home with no open dialog.
@@ -45,10 +43,9 @@ truth:
       changes: App resources update without clearing IndexedDB.
       assumes: []
       evidence:
-        method: inferred
-        at: 2026-11-09T14:16:18.512Z
-        commit: b35a63f7b1d71d1f18b3f3b5151644d86394d49f
-        note: Code reading; mapped tests are pointers, not manual verification.
+        method: manual
+        at: 2026-11-09T20:02:46.566Z
+        commit: d9be43941d6c9af1d77b821d13d1c67f2a23661e
   endsWith: The cached app works offline and an update can load at its guarded
     reload point.
   variations: []
@@ -137,4 +134,3 @@ _none stated_
 ## Involves
 
 _not specified_
-
