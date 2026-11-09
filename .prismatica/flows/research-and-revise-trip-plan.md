@@ -18,10 +18,9 @@ truth:
       changes: Preferences are remembered; the app makes no AI request.
       assumes: []
       evidence:
-        method: inferred
-        at: 2026-11-09T14:16:18.512Z
-        commit: b35a63f7b1d71d1f18b3f3b5151644d86394d49f
-        note: Code reading; mapped tests are pointers, not manual verification.
+        method: manual
+        at: 2026-11-09T20:03:19.715Z
+        commit: bfd8da936cb379bab7a219ff0628cc8b3df7f788
     - actor: Traveller
       action: Run the prompt outside Systema and paste the answer, or edit the
         existing plan.
@@ -31,10 +30,9 @@ truth:
       changes: The plan remains a draft until review is applied.
       assumes: []
       evidence:
-        method: inferred
-        at: 2026-11-09T17:10:00.000Z
-        note: Code reading in the change lane; mapped tests are pointers, not manual
-          verification.
+        method: manual
+        at: 2026-11-09T20:03:19.715Z
+        commit: bfd8da936cb379bab7a219ff0628cc8b3df7f788
     - actor: Traveller
       action: Decide each ambiguous place, review the other matches and apply the plan.
       shows: Apply stays unavailable until every ambiguous place is decided; the plan
@@ -46,10 +44,9 @@ truth:
         ticked, hand-added and older items stay.
       assumes: []
       evidence:
-        method: inferred
-        at: 2026-11-09T17:10:00.000Z
-        note: Code reading in the change lane; mapped tests are pointers, not manual
-          verification.
+        method: manual
+        at: 2026-11-09T20:03:19.715Z
+        commit: bfd8da936cb379bab7a219ff0628cc8b3df7f788
   endsWith: The revised plan and Stops are saved together with personal records retained.
   variations: []
   rules:
@@ -149,4 +146,3 @@ _none_
 ## Involves
 
 _not specified_
-
