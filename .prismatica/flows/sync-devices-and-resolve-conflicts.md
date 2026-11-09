@@ -22,10 +22,9 @@ truth:
         pushing.
       assumes: []
       evidence:
-        method: inferred
-        at: 2026-11-09T14:16:18.512Z
-        commit: b35a63f7b1d71d1f18b3f3b5151644d86394d49f
-        note: Code reading; mapped tests are pointers, not manual verification.
+        method: manual
+        at: 2026-11-09T20:03:30.324Z
+        commit: 13e7ab7d0af2a08d537b131f3fa7d730540fa33e
     - actor: Systema
       action: Push a changed merged snapshot, retrying when the receiver reports a
         newer snapshot.
@@ -34,20 +33,18 @@ truth:
         snapshot.
       assumes: []
       evidence:
-        method: inferred
-        at: 2026-11-09T14:16:18.512Z
-        commit: b35a63f7b1d71d1f18b3f3b5151644d86394d49f
-        note: Code reading; mapped tests are pointers, not manual verification.
+        method: manual
+        at: 2026-11-09T20:03:30.324Z
+        commit: 13e7ab7d0af2a08d537b131f3fa7d730540fa33e
     - actor: Traveller
       action: Review edits made on two devices and choose the version to keep.
       shows: Settings presents both versions of a recorded conflict.
       changes: The selected resolution participates in subsequent sync.
       assumes: []
       evidence:
-        method: inferred
-        at: 2026-11-09T14:16:18.512Z
-        commit: b35a63f7b1d71d1f18b3f3b5151644d86394d49f
-        note: Code reading; mapped tests are pointers, not manual verification.
+        method: manual
+        at: 2026-11-09T20:03:30.324Z
+        commit: 13e7ab7d0af2a08d537b131f3fa7d730540fa33e
     - actor: Traveller
       action: Check the NAS copy or retry failed photos.
       shows: Health checks identify missing or failed files.
@@ -55,10 +52,9 @@ truth:
         never removes photos.
       assumes: []
       evidence:
-        method: inferred
-        at: 2026-11-09T14:16:18.512Z
-        commit: b35a63f7b1d71d1f18b3f3b5151644d86394d49f
-        note: Code reading; mapped tests are pointers, not manual verification.
+        method: manual
+        at: 2026-11-09T20:03:30.324Z
+        commit: 13e7ab7d0af2a08d537b131f3fa7d730540fa33e
   endsWith: Devices converge through the NAS and conflicting edits remain reviewable.
   variations: []
   rules: []
@@ -154,4 +150,3 @@ _none stated_
 ## Involves
 
 _not specified_
-
