@@ -22,6 +22,23 @@ Kept as they were (proven by their existing tests):
 `a stale plan review refuses concurrent edits and an unstructured paste keeps the route`,
 and `a place put back on the route stays there when the plan is applied again`.
 
+### How Check traces each acceptance check
+
+Check traces only Vitest test names. The browser journeys named above still
+run in the journeys gate, and ac-9's runs against real PHP receivers.
+
+- **Traced to a Vitest test, the pure logic:**
+  - ac-2: `review separates ambiguous plan matches from no match and uses each record once`
+  - ac-3: `repeated-city plan logic never picks a leg a heading cannot name`
+  - ac-4: `repeated plan revisions retire only proven untouched generated checklist items`
+  - ac-5: `re-applying the same plan to a trip that returns to a city changes nothing`
+  - ac-7: `ZIP restore reads HEIC and HEIF originals back byte for byte under any entry name`
+- **Named in the contract as `manual:` checks verified by their journey:**
+  ac-1, ac-6, ac-8, ac-10 and ac-11 (Playwright), and ac-9 (Playwright with
+  real PHP receivers, as CI runs it). Each needs IndexedDB, the UI, a download
+  or a receiver, which Node Vitest cannot reach.
+- **Owner only:** ac-12.
+
 ## Family proof plan
 
 ### Invariants
@@ -115,7 +132,8 @@ genuine image-sequence form, and a unit test covers the `mif1` header.
 Copy and run from the repository root:
 
 ```sh
-npx vitest run tests/unit/photos.test.ts tests/unit/compat.test.ts tests/unit/stops.test.ts
+npx vitest run tests/unit/photos.test.ts tests/unit/compat.test.ts tests/unit/stops.test.ts \
+  tests/unit/plan-revision.test.ts
 npx playwright test tests/e2e/travel-reliability.spec.ts
 
 # Real receivers, in a temporary folder (as CI does):

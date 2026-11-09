@@ -1,6 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { planCityId, planMatches, revisedStop } from '../../src/lib/plan-revision';
-import { extractStopsFromPlan, guideBackfill } from '../../src/lib/stops';
+import {
+  planChoices,
+  planCityId,
+  planMatches,
+  reviewMatches,
+  revisedStop,
+  UNDECIDED,
+} from '../../src/lib/plan-revision';
+import {
+  cityIds,
+  extractStopsFromPlan,
+  guideBackfill,
+  newStopCandidates,
+} from '../../src/lib/stops';
 import { keepMomentDate } from '../../src/lib/moments';
 import { instantToWall, wallToInstant } from '../../src/lib/tz';
 import type { Moment, Stop } from '../../src/lib/db';
@@ -146,6 +158,119 @@ describe('revised routes', () => {
     const withNew = [...candidates, { ...candidate, name: 'Kunsthistorisches', city: 'Vienna' }];
     expect(planMatches(withNew, unassigned, returning)).toEqual(['st0', 'st1', 'st2', 'loose']);
   });
+  // Vienna, Salzburg, then Vienna again: the shape that once put every
+  // Vienna place on the last visit and showed ambiguity as a new place.
+  const vsv = [
+    { id: 'v1', tripId: 't', name: 'Vienna', currency: 'EUR', order: 0 },
+    { id: 'sb', tripId: 't', name: 'Salzburg', currency: 'EUR', order: 1 },
+    { id: 'v2', tripId: 't', name: 'Vienna', currency: 'EUR', order: 2 },
+  ];
+  const vsvNames = vsv.map((c) => c.name);
+  const place = (id: string, name: string, cityId: string | null, extra = {}): Stop => ({
+    ...stop,
+    id,
+    name,
+    cityId,
+    notes: '',
+    guide: undefined,
+    planSource: undefined,
+    ...extra,
+  });
+
+  it('review separates ambiguous plan matches from no match and uses each record once', () => {
+    const plan =
+      '# Vienna\n## Route\n### Belvedere\nUpper\n### Albertina\nPrints\n# Salzburg\n## Route\n### Fortress\nRiver\n### Fortress\nAgain\n### Mozart house\nBirthplace\n# Vienna\n## Route\n### Belvedere\nLower';
+    const rows = [
+      place('b1', 'Belvedere', 'v1', { visited: true }),
+      // Renamed by hand; the plan still calls it Albertina.
+      place('alb', 'My print room', 'v1', {
+        planSource: { name: 'Albertina', notes: 'Prints', checklist: [] },
+      }),
+      place('fortress', 'Fortress', 'sb'),
+      place('b2', 'Belvedere', 'v2'),
+      place('alb-loose', 'Albertina', null),
+    ];
+    const candidates = extractStopsFromPlan(plan, vsvNames);
+    expect(candidates.map((c) => [c.name, c.city])).toEqual([
+      ['Belvedere', 'Vienna'],
+      ['Albertina', 'Vienna'],
+      ['Fortress', 'Salzburg'],
+      ['Fortress', 'Salzburg'],
+      ['Mozart house', 'Salzburg'],
+      ['Belvedere', 'Vienna'],
+    ]);
+    // Every plausible record, by name or by the name it was imported under.
+    // Fortress has one record: the first entry takes it, the second can't.
+    expect(planChoices(candidates, rows, vsv)).toEqual([
+      ['b1', 'b2'],
+      ['alb', 'alb-loose'],
+      ['fortress'],
+      [],
+      [],
+      ['b1', 'b2'],
+    ]);
+    // Review asks about ambiguity; only a true absence is a new place.
+    expect(reviewMatches(candidates, rows, vsv)).toEqual(['?', '?', 'fortress', '', '', '?']);
+    expect(UNDECIDED).toBe('?');
+    // Unreviewed matching (the defect's view) would have shown all three as new.
+    expect(planMatches(candidates, rows, vsv)).toEqual(['', '', 'fortress', '', '', '']);
+  });
+
+  it('repeated-city plan logic never picks a leg a heading cannot name', () => {
+    const plan =
+      '# Vienna\n## Route\n### Belvedere\nAnchor: Upper palace\n### Naschmarkt\nAnchor: Stalls\n# Salzburg\n## Route\n### Fortress\nAnchor: Funicular\n# Vienna\n## Route\n### Prater\nWheel';
+    // Both Vienna legs answer to the name; neither is chosen for it.
+    expect([...cityIds(vsv)]).toEqual([
+      ['vienna', ['v1', 'v2']],
+      ['salzburg', ['sb']],
+    ]);
+    // As a legacy import leaves them: only the one-leg city is assigned.
+    const imported = [
+      place('bel', 'Belvedere', null),
+      place('nasch', 'Naschmarkt', null),
+      place('fort', 'Fortress', 'sb', { guide: { anchor: 'Funicular' } }),
+      place('prater', 'Prater', null),
+    ];
+    const ids = cityIds(vsv);
+    // Present, so repeated application adds nothing.
+    expect(newStopCandidates(plan, imported, vsvNames, ids)).toEqual([]);
+
+    // The traveller puts Belvedere on the first visit and adds one on the second.
+    const later = [
+      place('bel', 'Belvedere', 'v1'),
+      place('nasch', 'Naschmarkt', null),
+      place('fort', 'Fortress', 'sb', { guide: { anchor: 'Funicular' } }),
+      place('prater', 'Prater', null),
+      place('bel2', 'Belvedere', 'v2'),
+    ];
+    // Two equally good Belvederes: present, and neither filled. The one
+    // unassigned Naschmarkt is the plan's, so it is.
+    expect(newStopCandidates(plan, later, vsvNames, ids)).toEqual([]);
+    expect(guideBackfill(plan, later, vsvNames, ids)).toEqual([
+      { id: 'nasch', patch: { guide: { anchor: 'Stalls' } } },
+    ]);
+    // A leg the trip no longer has matches only unassigned places: never a Vienna one.
+    const graz = '# Graz\n## Route\n### Belvedere\nAnchor: Elsewhere';
+    expect(newStopCandidates(graz, later, vsvNames, ids).map((c) => [c.name, c.city])).toEqual([
+      ['Belvedere', 'Graz'],
+    ]);
+    expect(guideBackfill(graz, later, vsvNames, ids)).toEqual([]);
+    // No city heading: the name alone can't say which Belvedere.
+    const bare = '## Route\n### Belvedere\nAnchor: Somewhere';
+    expect(newStopCandidates(bare, later, vsvNames, ids)).toEqual([]);
+    expect(guideBackfill(bare, later, vsvNames, ids)).toEqual([]);
+    // Reviewed revision: Belvedere waits for a decision each time; nothing else moves.
+    const revised = `${plan}\n### Belvedere\nLower palace\n### Hofburg\nTreasury`;
+    expect(reviewMatches(extractStopsFromPlan(revised, vsvNames), later, vsv)).toEqual([
+      '?',
+      'nasch',
+      'fort',
+      'prater',
+      '?',
+      '',
+    ]);
+  });
+
   it('ignores nested commentary headings and recovers bold location labels', () => {
     const text =
       '## Route\n### Riverside Walk\n**Location:** 41.9, 12.4\n#### What to see\nA detail\n### Market\nNotes';

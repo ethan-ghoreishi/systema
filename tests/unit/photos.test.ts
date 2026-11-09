@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { nasExt, photoFormat, sniffFormat } from '../../src/lib/photo-format';
+import { blobFormat, nasExt, photoFormat, sniffFormat } from '../../src/lib/photo-format';
+import { BACKUP_JSON, readBackupFile } from '../../src/lib/export';
+import { zip } from '../../src/lib/zip';
 
 // Genuine images written by macOS ImageIO (sips) and libwebp (cwebp) from one
 // 32×32 test pattern; hashes taken with `shasum -a 256` when they were made
@@ -48,5 +50,52 @@ describe('photo formats', () => {
       ['jpg', 'jpg', 'jpg', 'png', 'webp'],
     );
     expect(nasExt({ ext: 'bin', mime: '' })).toBe('jpg');
+  });
+
+  it('ZIP restore reads HEIC and HEIF originals back byte for byte under any entry name', async () => {
+    const backup = {
+      app: 'systema',
+      version: 1,
+      exportedAt: '2026-11-09T10:00:00.000Z',
+      trips: [],
+      cities: [],
+      stops: [],
+      expenses: [],
+      fxRates: [],
+      photos: [],
+      settings: [],
+    };
+    // This version names entries by their bytes; an older one named HEIC/HEIF .jpg.
+    const entries: [string, string][] = [
+      ['p-heic', 'photos/p-heic.heic'],
+      ['p-heif', 'photos/p-heif.heif'],
+      ['old-heic', 'photos/old-heic.jpg'],
+      ['old-heif', 'photos/old-heif.jpg'],
+      ['p-jpg', 'photos/p-jpg.jpg'],
+      ['p-png', 'photos/p-png.png'],
+      ['p-webp', 'photos/p-webp.webp'],
+    ];
+    const source = (id: string) => id.split('-')[1];
+    const file = await zip([
+      { name: BACKUP_JSON, data: new Blob([JSON.stringify(backup)]) },
+      ...entries.map(([id, name]) => ({ name, data: new Blob([read(source(id))]) })),
+    ]);
+    const { files } = await readBackupFile(file);
+    expect([...files.keys()]).toEqual(entries.map(([id]) => id));
+    for (const [id] of entries) {
+      const ext = source(id) as keyof typeof FIXTURES;
+      const blob = files.get(id)!;
+      const bytes = Buffer.from(await blob.arrayBuffer());
+      expect(createHash('sha256').update(bytes).digest('hex')).toBe(FIXTURES[ext][0]);
+      // The bytes decide the format, whatever the entry name guessed.
+      expect(await blobFormat(blob)).toEqual({ ext, mime: FIXTURES[ext][1] });
+    }
+    // A damaged archive is refused before anything comes back.
+    const damaged = new Uint8Array(await file.arrayBuffer());
+    const heic = read('heic');
+    const at = Buffer.from(damaged).indexOf(heic) + heic.length - 1; // the stored HEIC's last byte
+    expect(at).toBeGreaterThan(0);
+    damaged[at] ^= 0xff;
+    await expect(readBackupFile(new Blob([damaged]))).rejects.toThrow(/damaged or incomplete/);
   });
 });
