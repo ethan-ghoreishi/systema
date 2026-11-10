@@ -1,0 +1,92 @@
+{
+  "contractId": "20261110-update-prismatica-ci-gate-to-0-12-0-8165",
+  "event": "check_run",
+  "at": "2026-11-10T13:39:35.056Z",
+  "pass": true,
+  "outcomes": [
+    {
+      "name": "typecheck",
+      "status": "pass",
+      "detail": "npm run check"
+    },
+    {
+      "name": "lint",
+      "status": "pass",
+      "detail": "npm run lint"
+    },
+    {
+      "name": "unit",
+      "status": "pass",
+      "detail": "npx vitest run --reporter=json"
+    },
+    {
+      "name": "build",
+      "status": "pass",
+      "detail": "npm run build"
+    },
+    {
+      "name": "journeys",
+      "status": "pass",
+      "detail": "npx playwright test"
+    },
+    {
+      "name": "secrets",
+      "status": "pass",
+      "detail": "regex fallback: clean"
+    },
+    {
+      "name": "scope",
+      "status": "pass",
+      "detail": "1 changed file(s), all in scope"
+    },
+    {
+      "name": "traceability",
+      "status": "pass",
+      "detail": "1 manual check(s) — owner attests at accept"
+    },
+    {
+      "name": "docs-delta",
+      "status": "pass",
+      "detail": "no docs delta required"
+    },
+    {
+      "name": "contract-state",
+      "status": "pass",
+      "detail": "contract collections are internally consistent"
+    },
+    {
+      "name": "instruction-budget",
+      "status": "pass",
+      "detail": "prismatica-instructions/2: claude 2283 of 32768 bytes (CLAUDE.md 11 B, AGENTS.md 2272 B); codex 2272 of 32768 bytes (AGENTS.md 2272 B)"
+    },
+    {
+      "name": "atlas-uncommitted-main",
+      "status": "pass",
+      "detail": "no uncommitted Atlas records on main"
+    },
+    {
+      "name": "truth-integrity",
+      "status": "pass",
+      "detail": "12 flow(s) + rules verified"
+    },
+    {
+      "name": "flow-proposals",
+      "status": "pass",
+      "detail": "this change files no Flow proposal"
+    },
+    {
+      "name": "atlas-impact",
+      "status": "pass",
+      "detail": "no mapped flow overlaps this change"
+    },
+    {
+      "name": "implementation",
+      "status": "pass",
+      "detail": "attribution, not proof: prismatica 0.12.0 · build sha256:f6e81d1349bc5133 · installed package, not registry-verified"
+    }
+  ],
+  "changedFiles": [
+    ".github/workflows/prismatica-gate.yml"
+  ],
+  "prismaticaVersion": "0.12.0"
+}
